@@ -2,8 +2,10 @@
 //
 // It serves the registry, identity and capability API (ADR-003), policies
 // and approvals (ADR-002/005) and the Action API up to the release boundary
-// (ADR-004), and runs the action sweeper, which also reclaims lapsed worker
-// leases and schedules retries. The execution worker dispatches.
+// (ADR-004), operator resolution of actions that need a human, and runs the
+// action sweeper, which also reclaims lapsed worker and reconciler leases,
+// schedules retries and sends unknown outcomes without proof to a human.
+// The execution worker dispatches and reconciles.
 package main
 
 import (
@@ -28,9 +30,9 @@ func main() {
 				Log:      d.Log, EvaluationTimeout: d.Config.PDPTimeout,
 			})
 			api.New(d.DB, d.Log).WithActions(engine).Register(mux)
-			d.Background(func(ctx context.Context) {
-				action.NewSweeper(engine).Run(ctx, d.Config.SweepInterval)
-			})
+			sweeper := action.NewSweeper(engine)
+			sweeper.ReconcileMaxAge = d.Config.ReconcileMaxAge
+			d.Background(func(ctx context.Context) { sweeper.Run(ctx, d.Config.SweepInterval) })
 			return nil
 		})
 }

@@ -37,20 +37,23 @@ func (p *switchPDP) Evaluate(ctx context.Context, req governance.GovernanceReque
 
 type actionHarness struct {
 	*harness
-	pdp   *switchPDP
-	agent registrytest.Agent
-	key   string // the agent's API key
+	pdp     *switchPDP
+	agent   registrytest.Agent
+	key     string // the agent's API key
+	actions *action.Engine
 }
 
 func newActionHarness(t *testing.T, policy string, limits action.Limits) *actionHarness {
 	t.Helper()
 	pdp := &switchPDP{}
+	var engine *action.Engine
 	h := newHarness(t, func(f *registrytest.Fixture, s *api.Server) {
-		s.WithActions(action.New(f.App, action.Options{Provider: pdp, Limits: limits}))
+		engine = action.New(f.App, action.Options{Provider: pdp, Limits: limits})
+		s.WithActions(engine)
 	})
 	tool := h.f.ActiveTool(t, "erp", "purchase")
 	agent := h.f.ActiveAgent(t, "buyer", tool.Tool)
-	ah := &actionHarness{harness: h, pdp: pdp, agent: agent,
+	ah := &actionHarness{harness: h, pdp: pdp, agent: agent, actions: engine,
 		key: h.issue(identity.KindAgent, agent.Version, "erin", "rita")}
 	ah.activate(policy)
 	return ah

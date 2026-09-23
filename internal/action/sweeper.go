@@ -16,9 +16,11 @@ const SweeperComponent = "sweeper"
 
 // Sweeper is the control plane's background progress loop (ADR-004 actor
 // SWP): it expires overdue actions and approvals (T5, T8, T13, T15, T18),
-// reclaims expired leases (T17, T23, T24), schedules retries (T25-T27),
-// re-evaluates actions left RECEIVED by a PDP outage (T2a) and releases
-// approved actions (T10-T13). Every step is an ordinary compare-and-set
+// reclaims expired leases (T17, T23, T24) and reconciler leases (T33),
+// routes unknown outcomes that no lookup can resolve (T29, T29a) or that
+// reconciliation could not resolve in time (T34), schedules retries
+// (T25-T27), re-evaluates actions left RECEIVED by a PDP outage (T2a) and
+// releases approved actions (T10-T13). Every step is an ordinary compare-and-set
 // transition on the locked row, so the sweeper, workers and API requests
 // may race harmlessly on the same action.
 type Sweeper struct {
@@ -28,16 +30,22 @@ type Sweeper struct {
 	// Grace leaves recently changed RECEIVED and AUTHORIZED actions to the
 	// request that is advancing them (default 2s).
 	Grace time.Duration
+	// ReconcileMaxAge is how long an outcome may stay unknown before a
+	// human must resolve it (T34, default 1h). It also covers connectors no
+	// reconciler serves.
+	ReconcileMaxAge time.Duration
 }
 
 // NewSweeper returns a Sweeper for e.
 func NewSweeper(e *Engine) *Sweeper {
-	return &Sweeper{e: e, Batch: 100, Grace: 2 * time.Second}
+	return &Sweeper{e: e, Batch: 100, Grace: 2 * time.Second, ReconcileMaxAge: time.Hour}
 }
 
 // Stats counts what one pass did.
 type Stats struct {
 	Tenants, Expired, Reclaimed, Retried, Advanced int
+	// Escalated counts unknown outcomes sent to a human (T29, T34).
+	Escalated int
 }
 
 // RunOnce makes one pass over every tenant with open actions.
@@ -153,9 +161,10 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 	// Expired leases (§22): before a dispatch intent the action is safely
 	// re-queued (T17); after one the effect may have happened, so it is
 	// UNKNOWN_OUTCOME (T23) unless the contract is an unrevoked READ_ONLY
-	// (T24, narrowed in ADR-004 Rev 2.3).
+	// (T24, narrowed in ADR-004 Rev 2.3). A lapsed reconciler lease decided
+	// nothing: the outcome is still unknown (T33).
 	lapsedLeases, err := s.ids(ctx, tenant, `SELECT id FROM eacp.actions
-		WHERE state IN ('LEASED', 'EXECUTING') AND leased_until <= now()
+		WHERE state IN ('LEASED', 'EXECUTING', 'RECONCILING') AND leased_until <= now()
 		ORDER BY leased_until LIMIT $1`, s.Batch)
 	if err != nil {
 		return err
@@ -169,11 +178,17 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 				FROM eacp.actions a
 				JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
 				WHERE a.id = $1 FOR UPDATE OF a`, id).Scan(&state, &expired, &readOnly)
-			if errors.Is(err, pgx.ErrNoRows) || (err == nil && (!expired || (state != "LEASED" && state != "EXECUTING"))) {
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && (!expired || (state != "LEASED" &&
+				state != "EXECUTING" && state != "RECONCILING"))) {
 				return nil
 			}
 			if err != nil {
 				return err
+			}
+			if state == "RECONCILING" {
+				return move(ctx, tx, `UPDATE eacp.actions SET state = 'UNKNOWN_OUTCOME',
+					state_reason = 'reconciler lease expired', reconcile_attempts = reconcile_attempts + 1,
+					next_reconcile_at = now() WHERE id = $1 AND state = $2`, id, state)
 			}
 			to, why := "QUEUED", "lease expired before dispatch"
 			if state == "EXECUTING" && readOnly {
@@ -188,6 +203,68 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 			return err
 		}
 		st.Reclaimed++
+	}
+
+	// Unknown outcomes (§20) that no lookup can prove anything about go to a
+	// human (T29), unknown reads are retried (T29a), and reconciliation that
+	// has taken too long gives up to a human (T34). A human sees an outcome
+	// only once every call has settled. Lookups are the reconciler's, in the
+	// execution worker.
+	unknown, err := s.ids(ctx, tenant, `SELECT a.id FROM eacp.actions a
+		JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
+		WHERE a.state = 'UNKNOWN_OUTCOME'
+		  AND (k.side_effects = ARRAY['READ_ONLY'] OR k.reconciliation_lookup = 'none'
+		       OR k.proof_standard = 'none' OR k.revoked_at IS NOT NULL
+		       OR COALESCE(a.outcome_unknown_at, a.state_changed_at) <= now() - make_interval(secs => $2))
+		  AND ((k.side_effects = ARRAY['READ_ONLY'] AND k.revoked_at IS NULL)
+		       OR COALESCE(eacp.outcome_settled_at(a), '-infinity') <= now())
+		ORDER BY a.state_changed_at LIMIT $1`, s.Batch, s.ReconcileMaxAge.Seconds())
+	if err != nil {
+		return err
+	}
+	for _, id := range unknown {
+		escalated := false
+		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
+			var state, proof, lookup string
+			var read, revoked, old bool
+			err := tx.QueryRow(ctx, `SELECT a.state, k.side_effects = ARRAY['READ_ONLY'], k.revoked_at IS NOT NULL,
+				k.proof_standard, k.reconciliation_lookup,
+				COALESCE(a.outcome_unknown_at, a.state_changed_at) <= now() - make_interval(secs => $2)
+				FROM eacp.actions a
+				JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
+				WHERE a.id = $1 FOR UPDATE OF a`, id, s.ReconcileMaxAge.Seconds()).Scan(&state, &read, &revoked,
+				&proof, &lookup, &old)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && state != "UNKNOWN_OUTCOME") {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			var to, why string
+			switch {
+			case read && !revoked:
+				to, why = "RETRY_WAIT", "unknown outcome of a read"
+			case revoked:
+				to, why = "NEEDS_HUMAN_RESOLUTION", "no reconciliation proof: contract revoked"
+			case lookup == "none" || proof == "none":
+				to, why = "NEEDS_HUMAN_RESOLUTION", "no reconciliation proof: proof standard none"
+			case old:
+				to, why = "NEEDS_HUMAN_RESOLUTION", "reconciliation time exhausted"
+			default:
+				return nil
+			}
+			escalated = to == "NEEDS_HUMAN_RESOLUTION"
+			return move(ctx, tx, `UPDATE eacp.actions SET state = $2, state_reason = $3
+				WHERE id = $1 AND state = 'UNKNOWN_OUTCOME'`, id, to, why)
+		})
+		if err != nil {
+			return err
+		}
+		if escalated {
+			st.Escalated++
+		} else {
+			st.Retried++
+		}
 	}
 
 	// Retries (T25-T27): a due retry is re-queued under the pinned policy or

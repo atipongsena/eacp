@@ -156,8 +156,10 @@ func (h *HTTP) Execute(ctx context.Context, c worker.Call) worker.Result {
 	return worker.Result{Outcome: worker.Ambiguous, ErrorClass: data.ErrorClass}
 }
 
-// Lookup reports what the HTTP target currently sees. A 404 is merely
-// absence; the reconciler must consult proof_standard before acting on it.
+// Lookup reports what the HTTP target currently sees: 200 with a reference
+// is found, a JSON 404 not_found is absent and a JSON 409 conflict is a
+// conflict; anything else is unknown. Absence is merely evidence; the
+// reconciler consults the pinned proof_standard before acting on it.
 func (h *HTTP) Lookup(ctx context.Context, c worker.LookupCall) worker.LookupResult {
 	if !validOperationKey(c.OperationKey, c.TenantID) || c.Secret.Reveal() == "" {
 		return worker.LookupResult{Status: worker.LookupUnknown}
@@ -170,7 +172,7 @@ func (h *HTTP) Lookup(ctx context.Context, c worker.LookupCall) worker.LookupRes
 	if err != nil {
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}
-	if r.StatusCode != http.StatusOK && r.StatusCode != http.StatusNotFound {
+	if r.StatusCode != http.StatusOK && r.StatusCode != http.StatusNotFound && r.StatusCode != http.StatusConflict {
 		r.Body.Close()
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}
@@ -184,6 +186,13 @@ func (h *HTTP) Lookup(ctx context.Context, c worker.LookupCall) worker.LookupRes
 	if r.StatusCode == http.StatusNotFound {
 		if data.ErrorClass == "not_found" && data.ExternalReference == "" {
 			return worker.LookupResult{Status: worker.LookupAbsent}
+		}
+		return worker.LookupResult{Status: worker.LookupUnknown}
+	}
+	if r.StatusCode == http.StatusConflict {
+		// Several records carry the key: a human must decide (ADR-004 T34).
+		if data.ErrorClass == "conflict" && data.ExternalReference == "" {
+			return worker.LookupResult{Status: worker.LookupConflict}
 		}
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}

@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A, Phases 1–6 complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4). Phase 7 has not started.
+Current status: **Slice A, Phases 1–7 complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5). Phase 8 has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -27,6 +27,7 @@ Current status: **Slice A, Phases 1–6 complete** (Platform Foundation; Registr
 - Action transactions bind exactly one actor: `storage.SetActor` (principal), `storage.SetAgent` (an authenticated agent version), `storage.SetSystem` (a named component such as `sweeper`) or `storage.SetWorker` (a worker id and its lease generation). `eacp.actor()` stays principal-only; action guards use `eacp.actor_context()` (migrations 00005, 00006).
 - Every worker write is fenced by the database: lease-holder moves check the worker id and generation set by `storage.SetWorker` (`eacp.assert_lease_holder`). A dispatch intent (T16) commits before any external call, and nothing is dispatched without one.
 - Only `execution-worker` may be configured with connector secrets (`config.Options.AllowConnectorSecrets`). Never log, store or journal a secret value; the worker drops connector-returned fields that contain one.
+- A reconciler transaction binds `storage.SetReconciler` (a reconciler id and its lease generation). Negative evidence proves nothing unless the pinned contract is AUTHORITATIVE and every call has settled; a human sees an unknown outcome only once it has settled (ADR-004 Rev 2.5).
 - Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
 
 ## Commands
@@ -63,8 +64,12 @@ internal/registry    principals, roles, groups, credentials, agents, versions,
 internal/registry/registrytest  bootstrapped fixture for tests
 internal/governance  local PDP, JCS digests, policy versions and decision evidence
 internal/approval    approval request, vote and one-time grant transactions
-internal/action      Action API engine: submission, evaluation, release boundary, cancel, sweeper
-internal/worker      claim, heartbeat, fenced dispatch intent and results, host-bound secrets, worker loop
+internal/action      Action API engine: submission, evaluation, release boundary, cancel, sweeper,
+                     operator resolution, evidence
+internal/worker      claim, heartbeat, fenced dispatch intent and results, host-bound secrets, worker loop,
+                     reconciler (lookup under the pinned proof standard)
+internal/connector   HTTP connector (execute, lookup)
+internal/fakeerp     credential-protected Fake ERP with a durable operation log
 internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions
 migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests

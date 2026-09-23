@@ -19,7 +19,7 @@ import (
 //	alice, bob   human admin
 //	erin         human registry_editor
 //	rita, ravi   human registry_approver
-//	otto         human operator
+//	otto, opal   human operator
 //	audra        human auditor
 //	carol        human, no roles
 //	amy, ben, cy human approver
@@ -34,6 +34,7 @@ var cast = []struct {
 	{"rita", "human", []string{"registry_approver"}},
 	{"ravi", "human", []string{"registry_approver"}},
 	{"otto", "human", []string{"operator"}},
+	{"opal", "human", []string{"operator"}},
 	{"audra", "human", []string{"auditor"}},
 	{"carol", "human", nil},
 	{"amy", "human", []string{"approver"}},

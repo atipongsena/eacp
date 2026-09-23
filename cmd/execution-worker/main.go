@@ -1,11 +1,13 @@
 // Command execution-worker executes queued actions (ADR-004, MASTER_PLAN
 // §79): it claims actions from PostgreSQL under a fenced lease, commits a
 // dispatch intent before any external call and records each result, or
-// late-result evidence, under its lease generation.
+// late-result evidence, under its lease generation. Its reconciler resolves
+// UNKNOWN_OUTCOME actions by looking their operation key up under a fenced
+// reconciler lease (ADR-004 T28-T34).
 //
 // Connector credentials are loaded here and nowhere else (ADR-001 §3):
 // only this service accepts EACP_CONNECTOR_SECRETS_FILE, and their values
-// are redacted from its logs. Phase 6 registers the HTTP connector.
+// are redacted from its logs. The HTTP connector is registered.
 package main
 
 import (
@@ -39,16 +41,25 @@ func main() {
 				}
 				id = host
 			}
+			connectors := map[string]worker.Connector{"http": connector.NewHTTP()}
 			w, err := worker.New(d.DB, worker.Options{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
-				PollInterval: d.Config.WorkerPollInterval, Secrets: secrets,
-				Connectors: map[string]worker.Connector{"http": connector.NewHTTP()}, Log: d.Log,
+				PollInterval: d.Config.WorkerPollInterval, Secrets: secrets, Connectors: connectors, Log: d.Log,
 			})
 			if err != nil {
 				return err
 			}
-			d.Log.Info("worker ready", "worker_id", id, "bindings", len(secrets.Bindings()), "protocols", 1)
+			r, err := worker.NewReconciler(d.DB, worker.ReconcilerOptions{
+				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
+				PollInterval: 2 * d.Config.WorkerPollInterval, MaxAttempts: d.Config.ReconcileMaxAttempts,
+				MaxAge: d.Config.ReconcileMaxAge, Secrets: secrets, Connectors: connectors, Log: d.Log,
+			})
+			if err != nil {
+				return err
+			}
+			d.Log.Info("worker ready", "worker_id", id, "bindings", len(secrets.Bindings()), "protocols", len(connectors))
 			d.Background(w.Run)
+			d.Background(r.Run)
 			return nil
 		})
 }

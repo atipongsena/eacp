@@ -43,6 +43,14 @@ type Config struct {
 	SweepInterval      time.Duration
 	PDPTimeout         time.Duration
 
+	// Reconciliation (ADR-004 T33/T34): how many inconclusive lookups, and
+	// how long an unknown outcome may last, before a human must resolve it.
+	// The reconciler (execution-worker) applies both; the sweeper
+	// (controlplane-api) also applies the age, for connectors no reconciler
+	// serves.
+	ReconcileMaxAttempts int
+	ReconcileMaxAge      time.Duration
+
 	// Execution worker (AllowConnectorSecrets only). WorkerID defaults to
 	// the host name at startup; ConnectorSecretsFile is optional, and a
 	// worker without credentials claims nothing.
@@ -136,6 +144,12 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	}
 	cfg.SweepInterval = duration("EACP_ACTION_SWEEP_INTERVAL", "1s", time.Hour)
 	cfg.PDPTimeout = duration("EACP_PDP_TIMEOUT", "5s", time.Minute)
+	attempts, err := strconv.Atoi(get("EACP_RECONCILE_MAX_ATTEMPTS", "10"))
+	if err != nil || attempts < 1 || attempts > 50 {
+		errs = append(errs, errors.New("EACP_RECONCILE_MAX_ATTEMPTS: must be an integer in [1, 50]"))
+	}
+	cfg.ReconcileMaxAttempts = attempts
+	cfg.ReconcileMaxAge = duration("EACP_RECONCILE_MAX_AGE", "1h", 24*time.Hour)
 
 	if opts.AllowConnectorSecrets {
 		cfg.WorkerID = get("EACP_WORKER_ID", "")
@@ -179,6 +193,8 @@ func (c Config) LogValue() slog.Value {
 		slog.Int64("action_max_queued_global", c.MaxQueuedGlobal),
 		slog.Duration("action_sweep_interval", c.SweepInterval),
 		slog.Duration("pdp_timeout", c.PDPTimeout),
+		slog.Int("reconcile_max_attempts", c.ReconcileMaxAttempts),
+		slog.Duration("reconcile_max_age", c.ReconcileMaxAge),
 		slog.String("worker_id", c.WorkerID),
 		slog.Duration("worker_lease", c.WorkerLease),
 		slog.Int("worker_concurrency", c.WorkerConcurrency),

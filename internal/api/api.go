@@ -61,6 +61,7 @@ var (
 	policyAdmin      = []string{"admin"}
 	actionApprover   = []string{"approver"}
 	actionReader     = []string{"operator", "auditor"}
+	operator         = []string{"operator"}
 )
 
 // Register mounts every route on mux.
@@ -107,6 +108,11 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/actions", s.agent(s.submitAction))
 	mux.Handle("GET /v1/actions/{id}", s.either(actionReader, s.getAction))
 	mux.Handle("POST /v1/actions/{id}/cancel", s.either(anyPrincipal, s.cancelAction))
+	mux.Handle("GET /v1/actions", p(actionReader, s.listActions))
+	mux.Handle("GET /v1/actions/{id}/evidence", p(actionReader, s.actionEvidence))
+	mux.Handle("POST /v1/actions/{id}/resolutions", p(operator, s.resolveAction))
+	mux.Handle("POST /v1/actions/{id}/resolutions/{rid}/confirm", p(operator, s.decideResolution(true)))
+	mux.Handle("POST /v1/actions/{id}/resolutions/{rid}/withdraw", p(operator, s.decideResolution(false)))
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

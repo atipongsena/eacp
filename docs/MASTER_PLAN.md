@@ -3412,6 +3412,8 @@ delayed visibility (record สร้างแล้วแต่ lookup ยัง
 
 # 81. Phase 7 — UNKNOWN_OUTCOME, Reconciliation & Human Resolution (Slice A)
 
+**Implementation status (2026-09-23): delivered.** Migration 00007 adds T28–T37 and T29a to the action trigger. It also adds immutable reconciliation checks per reconciler lease generation, and two-person operator resolutions. The execution worker runs a fenced reconciler that applies the pinned proof standard. Only AUTHORITATIVE absence, after every call has settled and with no reported success, permits a retry with the same operation key or FAILED; BEST_EFFORT absence is STILL_UNKNOWN. Conflicts, exhaustion and contracts without proof go to NEEDS_HUMAN_RESOLUTION, and only once every call has settled. Operators resolve through `/v1/actions/{id}/resolutions` or `eacpctl action`. The resolver is separated from the subject and the agent's owners, and every retry needs a second operator. The flagship Fake ERP tests run the real HTTP connector, worker, sweeper and reconciler. Decisions are recorded in ADR-004 Rev 2.5. The review is in `docs/reviews/2026-09-23-phase7-code-review.md`.
+
 Implement:
 
 ```text

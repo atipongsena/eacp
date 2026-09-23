@@ -276,9 +276,17 @@ func TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate(t *testing.T) {
 	}
 	// The call goes out, then the worker freezes past its lease.
 	time.Sleep(1800 * time.Millisecond)
-	v.sweep() // T23: the effect may have happened
-	if got := v.get(a.ID); got.State != "UNKNOWN_OUTCOME" {
-		t.Fatalf("after lease loss = %s", got.State)
+	// T23: the effect may have happened. The contract offers no proof, and
+	// the call has settled once the lease lapsed, so the same sweep hands
+	// the unknown outcome to a human (T29).
+	v.sweep()
+	if got := v.get(a.ID); got.State != "NEEDS_HUMAN_RESOLUTION" ||
+		got.StateReason != "no reconciliation proof: proof standard none" {
+		t.Fatalf("after lease loss = %s (%s)", got.State, got.StateReason)
+	}
+	if n := v.count(`SELECT count(*) FROM eacp.audit_events WHERE convert_from(payload, 'UTF8')::jsonb->'subject'->>'id' = $1::text
+		AND convert_from(payload, 'UTF8')::jsonb->'data'->>'to' = 'UNKNOWN_OUTCOME'`, a.ID); n != 1 {
+		t.Fatalf("UNKNOWN_OUTCOME journaled %d times", n)
 	}
 	// Nothing is re-dispatched, by any worker, however often it runs.
 	w := v.worker("fresh")
@@ -293,7 +301,7 @@ func TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate(t *testing.T) {
 	if err != nil || !c.Late {
 		t.Fatalf("late completion = %+v %v", c, err)
 	}
-	if got := v.get(a.ID); got.State != "UNKNOWN_OUTCOME" || got.ExternalReference != "" {
+	if got := v.get(a.ID); got.State != "NEEDS_HUMAN_RESOLUTION" || got.ExternalReference != "" {
 		t.Fatalf("late result changed the action: %+v", got)
 	}
 }

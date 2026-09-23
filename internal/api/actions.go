@@ -226,3 +226,106 @@ func (s *Server) cancelAction(w http.ResponseWriter, r *http.Request, c identity
 	}
 	return err
 }
+
+// listActions is GET /v1/actions?state=&limit= for operators and auditors:
+// the tenant's actions in one state, oldest first (e.g. the
+// NEEDS_HUMAN_RESOLUTION queue).
+func (s *Server) listActions(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		return badRequest{"state is required"}
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			return badRequest{"limit must be between 1 and 200"}
+		}
+		limit = n
+	}
+	views, err := s.actions.List(r.Context(), c.TenantID, state, limit)
+	if err != nil {
+		return err
+	}
+	if views == nil {
+		views = []action.View{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"actions": views})
+	return nil
+}
+
+// actionEvidence is GET /v1/actions/{id}/evidence for operators and
+// auditors: every attempt, reconciliation check and resolution.
+func (s *Server) actionEvidence(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	ev, err := s.actions.Evidence(r.Context(), c.TenantID, id)
+	if err == nil {
+		writeJSON(w, http.StatusOK, ev)
+	}
+	return err
+}
+
+type resolveBody struct {
+	Outcome           string `json:"outcome"`
+	Reason            string `json:"reason"`
+	Evidence          string `json:"evidence"`
+	ExternalReference string `json:"external_reference"`
+}
+
+// writeResolution answers 200 when the resolution moved the action and 202
+// for a retry proposal that awaits a second operator.
+func writeResolution(w http.ResponseWriter, v action.View, res action.ResolutionView) {
+	code := http.StatusOK
+	if res.State == "PROPOSED" {
+		code = http.StatusAccepted
+	}
+	writeJSON(w, code, map[string]any{"action": v, "resolution": res})
+}
+
+// resolveAction is POST /v1/actions/{id}/resolutions (operators, ADR-004
+// T35-T37): succeeded or failed applies at once; retry is proposed and
+// needs a second operator's confirmation. The database enforces separation
+// of duties and the evidence each outcome needs.
+func (s *Server) resolveAction(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var in resolveBody
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	v, res, err := s.actions.Resolve(r.Context(), actionActor(c), id, action.Resolution{Outcome: in.Outcome,
+		Reason: in.Reason, Evidence: in.Evidence, ExternalReference: in.ExternalReference})
+	if err == nil {
+		writeResolution(w, v, res)
+	}
+	return err
+}
+
+// decideResolution is POST /v1/actions/{id}/resolutions/{rid}/confirm or
+// /withdraw (operators). Only a second, distinct operator confirms a retry.
+func (s *Server) decideResolution(confirm bool) handler {
+	return func(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+		id, err := pathID(r, "id")
+		if err != nil {
+			return err
+		}
+		rid, err := pathID(r, "rid")
+		if err != nil {
+			return err
+		}
+		var in reasonBody
+		if err := decode(r, &in); err != nil {
+			return err
+		}
+		v, res, err := s.actions.DecideResolution(r.Context(), actionActor(c), id, rid, confirm, in.Reason)
+		if err == nil {
+			writeResolution(w, v, res)
+		}
+		return err
+	}
+}

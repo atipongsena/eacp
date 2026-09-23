@@ -69,11 +69,19 @@ type LookupCall struct {
 	Secret       Secret
 }
 
+// LookupStatus is what a lookup by operation key saw. Only the reconciler
+// interprets it, under the pinned contract's proof standard (ADR-004 §20.2).
 type LookupStatus string
 
 const (
-	LookupFound   LookupStatus = "found"
-	LookupAbsent  LookupStatus = "absent"
+	// LookupFound: exactly one record carries the operation key.
+	LookupFound LookupStatus = "found"
+	// LookupAbsent: the target certified that no record carries the key.
+	// Proof of no effect only under an AUTHORITATIVE contract.
+	LookupAbsent LookupStatus = "absent"
+	// LookupConflict: more than one record carries the key.
+	LookupConflict LookupStatus = "conflict"
+	// LookupUnknown: anything else, including errors and malformed answers.
 	LookupUnknown LookupStatus = "unknown"
 )
 
@@ -84,8 +92,9 @@ type LookupResult struct {
 
 // Connector performs calls for one protocol. Execute must respect ctx: the
 // worker sets its deadline inside the lease and cancels it when the lease
-// is lost or a cancellation is requested. Lookup only reports evidence;
-// Phase 7 decides whether absence proves no effect under the pinned contract.
+// is lost or a cancellation is requested. Lookup only reports evidence; the
+// Reconciler decides whether absence proves no effect under the pinned
+// contract.
 type Connector interface {
 	Execute(ctx context.Context, c Call) Result
 	Lookup(ctx context.Context, c LookupCall) LookupResult

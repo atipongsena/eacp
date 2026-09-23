@@ -43,6 +43,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.SweepInterval != time.Second || cfg.PDPTimeout != 5*time.Second {
 		t.Errorf("SweepInterval = %v, PDPTimeout = %v, want 1s and 5s", cfg.SweepInterval, cfg.PDPTimeout)
 	}
+	if cfg.ReconcileMaxAttempts != 10 || cfg.ReconcileMaxAge != time.Hour {
+		t.Errorf("reconcile limits = %d %v, want 10 and 1h", cfg.ReconcileMaxAttempts, cfg.ReconcileMaxAge)
+	}
 }
 
 func TestLoadReadsOverrides(t *testing.T) {
@@ -60,6 +63,8 @@ func TestLoadReadsOverrides(t *testing.T) {
 		"EACP_ACTION_MAX_QUEUED_GLOBAL":     "50",
 		"EACP_ACTION_SWEEP_INTERVAL":        "250ms",
 		"EACP_PDP_TIMEOUT":                  "2s",
+		"EACP_RECONCILE_MAX_ATTEMPTS":       "3",
+		"EACP_RECONCILE_MAX_AGE":            "20m",
 	}), Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -68,7 +73,8 @@ func TestLoadReadsOverrides(t *testing.T) {
 		cfg.LogLevel != slog.LevelDebug || cfg.LogFormat != "text" ||
 		cfg.OTelExporter != "otlp" || cfg.OTelEndpoint != "collector:4318" ||
 		cfg.ShutdownTimeout != 3*time.Second || cfg.MaxQueuedPerTenant != 5 || cfg.MaxQueuedGlobal != 50 ||
-		cfg.SweepInterval != 250*time.Millisecond || cfg.PDPTimeout != 2*time.Second {
+		cfg.SweepInterval != 250*time.Millisecond || cfg.PDPTimeout != 2*time.Second ||
+		cfg.ReconcileMaxAttempts != 3 || cfg.ReconcileMaxAge != 20*time.Minute {
 		t.Fatalf("overrides not applied: %+v", cfg)
 	}
 }
@@ -108,6 +114,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"zero sweep interval":       {"EACP_ACTION_SWEEP_INTERVAL": "0s"},
 		"unparsable pdp timeout":    {"EACP_PDP_TIMEOUT": "later"},
 		"pdp timeout over a minute": {"EACP_PDP_TIMEOUT": "2m"},
+		"zero reconcile attempts":   {"EACP_RECONCILE_MAX_ATTEMPTS": "0"},
+		"too many reconciles":       {"EACP_RECONCILE_MAX_ATTEMPTS": "51"},
+		"reconcile age over a day":  {"EACP_RECONCILE_MAX_AGE": "25h"},
 	}
 	for name, vars := range cases {
 		t.Run(name, func(t *testing.T) {

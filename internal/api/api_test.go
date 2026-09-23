@@ -46,7 +46,7 @@ func newHarness(t *testing.T, opts ...func(*registrytest.Fixture, *api.Server)) 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	h := &harness{t: t, f: f, srv: srv, logs: logs, keys: map[string]string{}}
-	for _, who := range []string{"alice", "bob", "erin", "rita", "ravi", "otto", "audra", "carol", "amy", "ben", "cy"} {
+	for _, who := range []string{"alice", "bob", "erin", "rita", "ravi", "otto", "opal", "audra", "carol", "amy", "ben", "cy"} {
 		// Two admins: neither may approve their own proposal nor their own key.
 		proposer, approver := "alice", "bob"
 		if who == "bob" {

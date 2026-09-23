@@ -6,7 +6,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A · Phases 1–5 are complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent. Connectors and the Fake ERP are Phase 6.
+> **Status: early development.** Slice A · Phases 1–7 are complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution. Slice A hardening and the demo are Phase 8.
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -15,7 +15,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 
 This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-001-product-boundary-and-enforcement-point.md).
 
-## What exists today (Phases 1–5)
+## What exists today (Phases 1–7)
 
 | Capability | Evidence |
 |---|---|
@@ -44,8 +44,12 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Fenced dispatch intent before any call, with drift re-check (T16a/T16b) and an attempt row per dispatch; fenced results and late-result evidence | `internal/worker` (lease race, stale worker never dispatches twice) |
 | Lease reclaim, retries by contract, cancel requests while executing | `internal/action/sweeper.go`, `internal/action/execution_test.go` |
 | Worker connector credentials are tenant-namespaced and host-bound; agents receive none | `internal/worker/secrets.go`, `test/security` |
+| HTTP connector and credential-protected Fake ERP with a durable operation-key lookup and failure scenarios | `internal/connector`, `internal/fakeerp`, `internal/worker/http_integration_test.go` |
+| Fenced reconciler: lookup under the pinned proof standard; only authoritative, settled absence permits a retry with the same key or `FAILED`; conflicts and exhaustion go to a human | `migrations/00007_reconciliation.sql`, `internal/worker/reconciler.go`, `internal/worker/reconcile_schema_test.go` |
+| Fake ERP flagship tests: lost response → one record; delayed visibility → no retry; killed worker → no blind re-dispatch | `internal/worker/reconcile_integration_test.go` |
+| Operator resolution with separation of duties and a two-person retry; queue and evidence for operators and auditors | `internal/action/resolution.go`; `GET /v1/actions?state=`, `GET /v1/actions/{id}/evidence`, `POST /v1/actions/{id}/resolutions`; `eacpctl action` |
 
-The worker registers the Phase 6 HTTP connector. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
+The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start
 

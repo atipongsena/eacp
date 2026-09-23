@@ -1,6 +1,6 @@
 # ADR-004: Action State Machine and Execution Semantics
 
-- **Status:** Accepted — Rev 2.4 (Phase 6 HTTP connector and Fake ERP protocol, 2026-09-23; Rev 2.3 Phase 5 worker, lease and fencing; Rev 2.2 Phase 4 pre-dispatch; Rev 2.1 amended after Codex adversarial review)
+- **Status:** Accepted — Rev 2.5 (Phase 7 reconciliation and human resolution, 2026-09-23; Rev 2.4 Phase 6 HTTP connector and Fake ERP protocol; Rev 2.3 Phase 5 worker, lease and fencing; Rev 2.2 Phase 4 pre-dispatch; Rev 2.1 amended after Codex adversarial review)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes (hard gate)
 - **Related:** MASTER_PLAN §18, §19, §20, §22, §23, §29, §31, §103; ADR-001, ADR-005; detail ADRs 007–010 and 013 must conform to this ADR
@@ -88,16 +88,16 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 | T26 | `RETRY_WAIT` | `AUTHORIZED` | Backoff elapsed | Policy version **changed**, so the action must pass the release boundary again (T10–T12) | SWP |
 | T27 | `RETRY_WAIT` | `FAILED` | Retry budget (attempts, elapsed, cost) exhausted | — | SWP |
 | T28 | `UNKNOWN_OUTCOME` | `RECONCILING` | Reconciler claims (reconciler lease, generation incremented) | Connector reconciliation `lookup` supported | REC |
-| T29 | `UNKNOWN_OUTCOME` | `NEEDS_HUMAN_RESOLUTION` | Pinned contract proof standard `NONE`, no lookup, or the contract has been revoked | Not READ_ONLY | REC / SWP |
+| T29 | `UNKNOWN_OUTCOME` | `NEEDS_HUMAN_RESOLUTION` | Pinned contract proof standard `NONE`, no lookup, or the contract has been revoked | Not READ_ONLY. **Every call has settled** (Rev 2.5). | REC / SWP (**Slice A: SWP**, Rev 2.5) |
 | T29a | `UNKNOWN_OUTCOME` | `RETRY_WAIT` | — | The pinned contract is **READ_ONLY** and not revoked. No lookup is needed. | SWP |
 | T30 | `RECONCILING` | `SUCCEEDED` | **Positive evidence**: an external record carrying this action's operation key | Fenced by reconciler generation | REC |
 | T31 | `RECONCILING` | `RETRY_WAIT` | **Authoritative negative evidence** (see Proof standard) | Retry policy allows it. Same operation key. | REC |
 | T32 | `RECONCILING` | `FAILED` | Authoritative negative evidence | Retry not allowed or budget exhausted | REC |
 | T33 | `RECONCILING` | `UNKNOWN_OUTCOME` | "Not found" under `BEST_EFFORT`, a lookup error, or reconciler lease lost | `reconcile_attempts := reconcile_attempts + 1`, with backoff | REC / SWP |
-| T34 | `RECONCILING` / `UNKNOWN_OUTCOME` | `NEEDS_HUMAN_RESOLUTION` | Conflict (for example multiple records, or a mismatched amount) **or** reconcile attempts or time exhausted | — | REC / SWP |
+| T34 | `RECONCILING` / `UNKNOWN_OUTCOME` | `NEEDS_HUMAN_RESOLUTION` | Conflict (for example multiple records, or a mismatched amount) **or** reconcile attempts or time exhausted | From `UNKNOWN_OUTCOME`: every call has settled (Rev 2.5) | REC / SWP |
 | T35 | `NEEDS_HUMAN_RESOLUTION` | `SUCCEEDED` | Operator resolves as succeeded | Reason and external evidence reference are required | OPR |
 | T36 | `NEEDS_HUMAN_RESOLUTION` | `FAILED` | Operator resolves as not executed | Reason and evidence are required | OPR |
-| T37 | `NEEDS_HUMAN_RESOLUTION` | `RETRY_WAIT` | Operator authorises a retry | Reason required. Same operation key. **High-risk actions need a second, distinct operator** (two-person rule). | OPR (+OPR) |
+| T37 | `NEEDS_HUMAN_RESOLUTION` | `RETRY_WAIT` | Operator authorises a retry | Reason required. Same operation key. **High-risk actions need a second, distinct operator** (two-person rule). **Slice A: every retry** (Rev 2.5). | OPR (+OPR) |
 
 **Anything not listed is forbidden.** In particular:
 - `EXECUTING → QUEUED` doesn't exist. A re-dispatch happens only via `RETRY_WAIT` under T20, T24, T31 or T37.
@@ -284,6 +284,71 @@ The response is bounded to 16 KiB. A 2xx response needs an external reference to
 
 **Fake ERP proof boundary.** Fake ERP requires the worker bearer credential on its privileged API and records the derived principal, never the token, in its audit log. It appends and syncs an effect and its audit entry before responding, reloads that log on restart, and stops serving privileged operations after an uncertain log write. A registered connector's `create_po` tool has immediate lookup visibility and can be certified `AUTHORITATIVE` when its contract matches the deployment. Its `create_po_eventual` tool permits delayed visibility and must be certified `BEST_EFFORT`; its 404 is never authoritative negative evidence. Native operation keys deduplicate. The same key on a correlation-only call may produce multiple records, in which case lookup reports a conflict. Neither the connector nor Fake ERP claims exactly-once execution.
 
+## Phase 7 implementation (Rev 2.5)
+
+Phase 7 implements T28–T37 and T29a in `migrations/00007_reconciliation.sql`, `internal/worker/reconciler.go`, `internal/action/sweeper.go` and `internal/action/resolution.go`. As in earlier phases, each rule lives in the `eacp.actions_guard` trigger, which applies to raw SQL too, and is tested as `eacp_app` (`internal/worker/reconcile_schema_test.go`).
+
+**Settle rule.** An attempt's call may still take effect until its `call_deadline`. The outcome of an action is **settled** at `max(call_deadline) + greatest(call_timeout, 1 s)` over all its attempts (`eacp.outcome_settled_at`). The database refuses, before that time:
+- negative evidence (T31, T32);
+- handing the action to a human (T29, and T34 from `UNKNOWN_OUTCOME`). A late result is then already part of the evidence an operator sees.
+
+On entering `UNKNOWN_OUTCOME` from `EXECUTING` (T22, T23), `next_reconcile_at` is set to the settle time or now, whichever is later, and `reconcile_attempts` is reset. A found record (T30) needs no settling: positive evidence is final.
+
+**Reconciler lease.** The reconciler runs inside `execution-worker`, which is the only service holding connector secrets. It reuses the action's lease columns:
+- T28 claims an action that is due, with `FOR UPDATE SKIP LOCKED`, and increments `lease_generation`. The transaction's actor is `storage.SetReconciler` (component `reconciler`, with a reconciler id and a generation).
+- `eacp.assert_lease_holder` expects the `reconciler` component in `RECONCILING`. A stale worker or a stale reconciler is fenced out by the same generation check.
+- There is no reconciler heartbeat. A lookup's timeout is the smaller of the contract's call budget and half the lease.
+- A lapsed reconciler lease is returned by the sweeper (T33, reason `reconciler lease expired`), counted as an attempt and backed off.
+
+Candidates come from the SECURITY DEFINER hint `eacp.reconcilable_actions`, like the worker's claim hint. The claim itself re-checks everything under RLS.
+
+**Evidence.** Each lookup writes one immutable `eacp.reconciliation_checks` row per generation (`found`, `absent`, `unknown` or `conflict`), in the same transaction as the move it justifies. The guard trigger stamps the reconciler, the time, the pinned proof standard and the contract version, and UPDATE is revoked. T30–T34 from `RECONCILING` each require the check recorded in their own transaction. The HTTP connector reports a conflict (`LookupConflict`) only for a 409 whose body is `{"error_class":"conflict"}` with no reference; anything else is unknown. The worker drops a found reference that contains a connector secret.
+
+**Decisions** (`decide`, and enforced again by the trigger):
+
+| Lookup | Condition | Move |
+|---|---|---|
+| found | No attempt reported a different reference | T30 `SUCCEEDED` with the found reference |
+| found | An attempt (late ones included) reported a different reference | T34 conflict |
+| conflict | — | T34 |
+| absent | Proof standard not `AUTHORITATIVE` | T33 still unknown (T34 once exhausted) |
+| absent | An attempt reported success | T34 conflict: a reported success is never overruled by absence |
+| absent | Not settled | T33 |
+| absent | `AUTHORITATIVE`, settled, and a retry is possible (no cancel, not expired, attempts left) | T31 `RETRY_WAIT` with the same operation key |
+| absent | `AUTHORITATIVE`, settled, and no retry is possible | T32 `FAILED` |
+| unknown | — | T33 (T34 once exhausted) |
+
+T31 and T32 are mutually exclusive in the database: T32 applies **only** when a retry is not possible. An authoritatively absent effect with a retry left is therefore retried, never failed.
+
+**Bounds.** The reconciler gives up after `EACP_RECONCILE_MAX_ATTEMPTS` lookups (default 10, range 1–50), and after `EACP_RECONCILE_MAX_AGE` since the outcome became unknown (default 1 hour, at most 24 hours). Backoff between lookups is capped at one hour. `reconcile_attempts` is **not** capped in the database. A sweeper T33 after a lapsed lease could otherwise strand an action. The age backstop in the sweeper bounds it instead.
+
+**Sweeper routing.** The sweeper does no lookups. For an `UNKNOWN_OUTCOME` action:
+- an unrevoked READ_ONLY contract is retried at once (T29a);
+- once the outcome has settled, a revoked contract, or one with lookup or proof standard `none`, goes to a human (T29);
+- once settled, an action older than the maximum age goes to a human as well (T34).
+
+T29 means "no usable lookup". The trigger turns an `UNKNOWN_OUTCOME → NEEDS_HUMAN_RESOLUTION` move into T34 when a usable lookup exists. The reconciler never performs T29.
+
+**Human resolution (§20.3).** Operators resolve through `eacp.action_resolutions`: POST `/v1/actions/{id}/resolutions`, then `/confirm` or `/withdraw`, or `eacpctl action resolve|confirm|withdraw`.
+- Every resolution needs the `operator` role. The resolver may not be the action's subject, the agent's owner, or a member of the owning group. A reason is always required.
+- `succeeded` needs evidence and the external reference, and applies at once (T35).
+- `failed` needs evidence and applies at once (T36).
+- `retry` is only **proposed**. A **second, distinct operator** applies it (T37); either operator may withdraw it. Every retry is two-person in Slice A, because a retry dispatches the effect again.
+- The database allows one open proposal per action. Proposals are voided when the action leaves `NEEDS_HUMAN_RESOLUTION`.
+- Applying a resolution moves the action in the same transaction (`action_resolutions_apply`). Resolutions and their decisions are journaled as `action.resolution`.
+
+The queue (`GET /v1/actions?state=`) and the evidence (`GET /v1/actions/{id}/evidence`, which returns attempts including late results, checks and resolutions) are available to operators and auditors.
+
+**Verification.** The Fake ERP flagship tests in `internal/worker/reconcile_integration_test.go` run the real HTTP connector, worker, sweeper and reconciler:
+- lost responses (reset, timeout, 5xx after effect) → `SUCCEEDED` with one ERP record;
+- delayed visibility under `BEST_EFFORT` → no retry → a human, or `SUCCEEDED` once visible;
+- a worker killed after the dispatch intent → T23 → found, or authoritative absence → one retry with the same key;
+- authoritative absence → `FAILED` only once no retry remains;
+- a duplicate correlation key → conflict → a human;
+- no credential in checks or the journal.
+
+Nothing here claims exactly-once execution: the claim is at most one effect per operation key where the target deduplicates, and otherwise an explicit human decision.
+
 ## Consequences
 
 **Positive**
@@ -302,7 +367,9 @@ The response is bounded to 16 KiB. A 2xx response needs an external reference to
 |---|---|
 | Whether a given target's error is truly no-effect | Treated as ambiguous unless listed in the certified contract |
 | Whether a lookup source is strongly consistent | Treated as `BEST_EFFORT` unless certified |
-| Default reconcile attempts and time limit | Finite and configurable. Exhaustion goes to `NEEDS_HUMAN_RESOLUTION`, never `FAILED`. |
+| Default reconcile attempts and time limit | Finite and configurable (Rev 2.5: 10 lookups, 1 hour). Exhaustion goes to `NEEDS_HUMAN_RESOLUTION`, never `FAILED`. |
+| Which operator resolutions are high risk (T37) | All of them: every retry needs a second operator, and every resolution is separated from the subject and the agent's owners (Rev 2.5) |
+| When a lookup's absence is final while a call may still be in flight | Only after every call has settled (Rev 2.5 settle rule) |
 | Whether a retry after a long wait needs new governance | Yes, if the policy version changed (T26) |
 | Whether cancel during `EXECUTING` means failure | No. It goes to `UNKNOWN_OUTCOME` (T22). |
 

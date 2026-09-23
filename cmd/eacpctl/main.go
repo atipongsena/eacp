@@ -19,6 +19,16 @@
 //	eacpctl agent list
 //	eacpctl agent inspect <id|name>
 //	eacpctl connector register --name --endpoint --secret-ref [--protocol http]
+//
+// Actions and human resolution, through the API (operators, ADR-004 T35-T37):
+//
+//	eacpctl action list --state NEEDS_HUMAN_RESOLUTION [--limit N]
+//	eacpctl action get|evidence <action-id>
+//	eacpctl action resolve <action-id> --outcome succeeded|failed|retry --reason <text>
+//	        [--evidence <text>] [--external-reference <ref>]
+//	eacpctl action confirm|withdraw <action-id> <resolution-id> --reason <text>
+//	                          a retry applies only when a second operator confirms it
+//
 //	eacpctl api <METHOD> <PATH> [JSON]      any other API call
 package main
 
@@ -38,6 +48,7 @@ const usage = `usage:
   eacpctl tenant create --slug <slug> --name <name> --admin <spec> --admin <spec>
   eacpctl agent register|list|inspect ...
   eacpctl connector register ...
+  eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]`
 
 func main() {
@@ -64,6 +75,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runAgent(ctx, args[1:], getenv, out)
 	case "connector":
 		return runConnector(ctx, args[1:], getenv, out)
+	case "action":
+		return runAction(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
 	default:

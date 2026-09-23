@@ -3,8 +3,10 @@
 // evaluation (T2-T5), approval outcomes (T6-T9, driven by the approval rows),
 // release, re-approval and denial at release (T10-T13), cancellation
 // (T9, T13, T15, T18 and cancel requests after dispatch intent) and the
-// sweeper (expiry, lease reclaim T17/T18/T23/T24 and retry scheduling
-// T25-T27). Claims, dispatch and results are internal/worker.
+// sweeper (expiry, lease reclaim T17/T18/T23/T24/T33, retry scheduling
+// T25-T27 and unknown outcomes without a usable lookup T29/T29a/T34) and
+// operator resolution of NEEDS_HUMAN_RESOLUTION (T35-T37). Claims,
+// dispatch, results and reconciliation lookups are internal/worker.
 //
 // The governance provider is only called with no transaction open (ADR-005
 // §5a). Every transition is a compare-and-set on the locked action row, and
@@ -114,6 +116,10 @@ type View struct {
 	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
 	ExternalReference string     `json:"external_reference,omitempty"`
 	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty"`
+	// Reconciliation (Phase 7): inconclusive reconciliation attempts since
+	// the outcome became unknown, and when the next one is due.
+	ReconcileAttempts int        `json:"reconcile_attempts,omitempty"`
+	NextReconcileAt   *time.Time `json:"next_reconcile_at,omitempty"`
 }
 
 // Terminal reports whether the action can no longer change (ADR-004).
@@ -150,6 +156,8 @@ type row struct {
 	AttemptCount                               int
 	NextAttemptAt, CancelRequestedAt           *time.Time
 	ExternalReference                          *string
+	ReconcileAttempts                          int
+	NextReconcileAt                            *time.Time
 }
 
 const rowColumns = `id, agent_id, agent_version_id, idempotency_key, subject, operation, target,
@@ -158,7 +166,7 @@ const rowColumns = `id, agent_id, agent_version_id, idempotency_key, subject, op
 	decision_evidence_id, policy_bundle_id, policy_version, enforced_payload::text, enforced_digest,
 	approval_request_id, connector_contract_id, connector_contract_version, released_at,
 	created_at, state_changed_at, lease_generation, attempt_count, next_attempt_at,
-	cancel_requested_at, external_reference`
+	cancel_requested_at, external_reference, reconcile_attempts, next_reconcile_at`
 
 func scanRow(r pgx.Row) (row, error) {
 	var x row
@@ -168,7 +176,7 @@ func scanRow(r pgx.Row) (row, error) {
 		&x.StateReason, &x.DecisionEvidenceID, &x.PolicyBundleID, &x.PolicyVersion, &x.EnforcedPayload,
 		&x.EnforcedDigest, &x.ApprovalRequestID, &x.ConnectorContractID, &x.ConnectorContractVersion,
 		&x.ReleasedAt, &x.CreatedAt, &x.StateChangedAt, &x.LeaseGeneration, &x.AttemptCount,
-		&x.NextAttemptAt, &x.CancelRequestedAt, &x.ExternalReference)
+		&x.NextAttemptAt, &x.CancelRequestedAt, &x.ExternalReference, &x.ReconcileAttempts, &x.NextReconcileAt)
 	return x, err
 }
 
@@ -192,7 +200,7 @@ func (r row) view() View {
 		ApprovalRequestID: r.ApprovalRequestID, ConnectorContractVersion: r.ConnectorContractVersion,
 		NotAfter: r.NotAfter, CreatedAt: r.CreatedAt, StateChangedAt: r.StateChangedAt, ReleasedAt: r.ReleasedAt,
 		LeaseGeneration: r.LeaseGeneration, AttemptCount: r.AttemptCount, NextAttemptAt: r.NextAttemptAt,
-		CancelRequestedAt: r.CancelRequestedAt,
+		CancelRequestedAt: r.CancelRequestedAt, ReconcileAttempts: r.ReconcileAttempts, NextReconcileAt: r.NextReconcileAt,
 	}
 	if r.ExternalReference != nil {
 		v.ExternalReference = *r.ExternalReference

@@ -223,6 +223,22 @@ func SetWorker(ctx context.Context, tx pgx.Tx, workerID string, generation int64
 	return nil
 }
 
+// SetReconciler records that reconciler reconcilerID, holding (or claiming)
+// reconciler lease generation generation, performs the transaction's action
+// changes (migration 00007). Like a worker, a reconciler whose generation
+// is not the action's current one cannot commit.
+func SetReconciler(ctx context.Context, tx pgx.Tx, reconcilerID string, generation int64) error {
+	if reconcilerID == "" || generation < 1 {
+		return fmt.Errorf("storage: reconciler id and a positive lease generation are required")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.system_actor', 'reconciler', true),
+		set_config('app.worker_id', $1, true), set_config('app.lease_generation', $2, true)`,
+		reconcilerID, strconv.FormatInt(generation, 10)); err != nil {
+		return fmt.Errorf("storage: set reconciler: %w", err)
+	}
+	return nil
+}
+
 // SetTraceparent carries a W3C traceparent into the transaction so the
 // outbox trigger can attach it to events. An empty value is a no-op.
 func SetTraceparent(ctx context.Context, tx pgx.Tx, traceparent string) error {
