@@ -283,6 +283,10 @@ Network                → agent runtime ไม่มี egress ไป privilege
 
 JIT / short-lived credentials อยู่ Phase 22 (§96)
 
+**ขอบเขตของ claim (Rev 2.1):** claim "cannot bypass" ใช้ได้กับ **conforming deployment** (ADR-001 §3a)
+
+คือ target system ออก privileged credential ให้เฉพาะ EACP worker/proxy และ agent ไม่มี network route ไปถึง target
+
 **หลักฐานที่ Slice A ต้องแสดงได้:**
 
 ```text
@@ -685,7 +689,9 @@ type GovernanceDecision struct {
 
 EACP นิยาม revalidation เองว่า = เรียก `Evaluate` ซ้ำด้วย snapshot ปัจจุบันก่อนเข้า atomic boundary (§15)
 
-ถ้า error, timeout หรือ response ไม่ครบ → **fail closed** (`Deny`) สำหรับ action ใหม่ที่มี side effect
+ถ้า error, timeout หรือ response ไม่ครบ → **fail closed** สำหรับ action ใหม่ที่มี side effect
+
+Rev 2.1: fail closed ในที่นี้หมายถึง action จะยังไม่ execute โดยยังค้างเป็น RECEIVED และ API ตอบ 503 ให้ retry ได้ ไม่ได้หมายถึงการ DENIED แบบถาวร (ADR-002 §6)
 
 แต่ห้ามบล็อก cancel, reconciliation read และ containment
 
@@ -840,7 +846,12 @@ Quorum: ต้องครบจำนวน vote ที่ policy กำหน�
     deny vote เดียว → DENIED (short-circuit)
 Policy version เปลี่ยนก่อน consume → grant เดิมใช้ไม่ได้
     → revalidate ใหม่
-    → allow: ไปต่อได้ / escalate: ขอ approval ใหม่ / deny: DENIED
+    → allow: ไปต่อได้ (void request/grant เดิม) / escalate: ขอ approval ใหม่ / deny: DENIED
+Policy version เป็น immutable และมี tenant policy pointer ที่ถูก lock ร่วมกัน
+    ระหว่าง activation กับ release/dispatch (ADR-005 §5)
+Policy / allowlist / contract activation เป็น two-person operation
+    และคนที่ author หรือ activate ห้าม approve action ที่พึ่งพาสิ่งนั้น
+Team owner: ตรวจ membership จาก group_memberships ถ้า resolve ไม่ได้ → ปฏิเสธ vote
 ทุก vote และ grant มี authorization basis และ audit event
 ```
 
@@ -992,7 +1003,7 @@ RECONCILING ──positive evidence───────────────
 RECONCILING ──authoritative negative evidence────► RETRY_WAIT or FAILED
 RECONCILING ──"not found" only / still unknown──► UNKNOWN_OUTCOME (backoff)
 RECONCILING ──conflict / attempts exhausted─────► NEEDS_HUMAN_RESOLUTION
-NEEDS_HUMAN_RESOLUTION ──operator resolution────► SUCCEEDED | FAILED | QUEUED (retry, same operation key)
+NEEDS_HUMAN_RESOLUTION ──operator resolution────► SUCCEEDED | FAILED | RETRY_WAIT (retry, same operation key)
 ```
 
 Terminal:
@@ -1005,7 +1016,7 @@ Crash recovery (สรุป):
 
 | State ตอน crash | Recovery |
 |---|---|
-| RECEIVED | Governance sweeper ประเมินใหม่ (Evaluate เป็น pure function) หรือ EXPIRED เมื่อเลย `not_after` |
+| RECEIVED | Governance sweeper ประเมินใหม่ (Evaluate เป็น pure function) หรือ EXPIRED เมื่อเลย `not_after` ถ้า PDP ล่มจะยังเป็น RECEIVED และ API ตอบ 503 (ไม่ถูก DENIED) |
 | PENDING_APPROVAL / AUTHORIZED / QUEUED / RETRY_WAIT | อยู่ใน Postgres (durable) แล้วทำงานต่อได้เลย |
 | LEASED (ยังไม่มี dispatch intent) | Lease หมด → กลับ QUEUED ได้อย่างปลอดภัย เพราะยังไม่มี side effect |
 | EXECUTING | Lease หมด → **UNKNOWN_OUTCOME** ห้ามกลับ QUEUED ข้อยกเว้นเดียว: connector ที่ certified READ_ONLY หรือ native-idempotent ให้ re-dispatch ได้ด้วย **operation key เดิม** |
@@ -1309,6 +1320,10 @@ Rev 2 ใช้ **fenced dispatch protocol**:
      UPDATE actions SET state='EXECUTING', dispatch_intent_at=now()
      WHERE id=$1 AND lease_generation=$2 AND state='LEASED'
        AND leased_until > now() + $call_budget
+     + ตรวจใน transaction เดียวกัน (อ่าน registry แบบ FOR SHARE):
+       AgentVersion ACTIVE, tool ยังอยู่ใน allowlist,
+       pinned connector contract ยัง active และไม่ถูก revoke,
+       tenant policy pointer == pinned policy_version (ถ้าไม่ตรง → กลับไป AUTHORIZED)
      + INSERT action_attempts(attempt_no, lease_generation, worker_id,
                               operation_key, dispatched_at)
      ถ้า update 0 rows → ห้ามเรียก external system

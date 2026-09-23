@@ -1,6 +1,6 @@
 # ADR-005: Approval Ownership and the Atomic Execution Boundary
 
-- **Status:** Accepted
+- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §13, §14, §14.1, §14.2, §15, §16, §57, §103 (inv. 2, 7, 10, 14–18); ADR-002, ADR-004
@@ -68,12 +68,17 @@ approval_grants
 
 ### 4. Approver eligibility and separation of duties (conservative)
 
+Eligibility is evaluated **inside the vote transaction** against EACP's canonical `principals`, `principal_roles` and `group_memberships` tables. Those rows are read `FOR SHARE`, so a concurrent role or membership change serialises with the vote. The vote stores a hash of the effective-principal snapshot it was evaluated against.
+
 A vote counts only if **all** of these hold. Otherwise it's rejected with an audit event.
 
-- The approver is authenticated and in the **same tenant**.
+- The approver is an authenticated **human principal** in the **same tenant**. Service principals and agents can't vote.
+- Votes cast through delegation count as the **effective (delegating) human principal**, and every rule below applies to that principal.
 - The approver holds one of `eligible_roles` from the decision's approval requirement.
 - The approver is **not** the requesting subject.
-- The approver is **not** the agent's owner principal. If the owner is a team, the approver is **not a member of the owning team**.
+- The approver is **not** the agent's owner. If the owner is a group or team, the approver is **not a member** of it, resolved through `group_memberships`.
+- **If the owner's membership can't be resolved** (for example an unknown group or a missing membership sync), **the vote is rejected** (fail closed).
+- **Enabling-change SoD:** the approver did **not** author or activate the `policy_version`, allowlist entry, or `connector_contract_version` the action depends on.
 - The approver hasn't already voted on this request.
 - The request is `PENDING` and not expired.
 
@@ -81,7 +86,15 @@ Outcomes:
 - **Any eligible `DENY`** → the request is `DENIED` and the action is `DENIED` (ADR-004 T7).
 - **Quorum of eligible `APPROVE`** → a grant is created and the action is `AUTHORIZED` (T6).
 
-### 5. The release boundary (the atomic execution boundary)
+### 5. Policy versions and the policy pointer (Rev 2.1)
+
+- `policy_bundles(tenant_id, version, content, authored_by, created_at)` is **insert-only**, and versions are immutable.
+- `tenant_policy_pointer(tenant_id PRIMARY KEY, current_version, activated_by, activated_at)` holds **one row per tenant**.
+- **Activation** is a privileged two-person operation: the author and the activator must differ. It's `UPDATE tenant_policy_pointer ... WHERE tenant_id = $t`, which takes the row lock.
+- **Every** transition guarded by policy version reads the pointer with `SELECT ... FOR SHARE`: the release boundary (R1) and dispatch intent (ADR-004 T16). `FOR SHARE` conflicts with the activation's `UPDATE`, so activation and guarded transitions serialise. Under READ COMMITTED, a transaction that waited on the lock re-reads the committed pointer, sees the new version and aborts (R1) or re-routes (T16a). That closes the R0/R1 time-of-check window.
+- The same pattern (immutable versions plus a locked "active" pointer, with two-person activation) applies to **allowlists** and **connector contracts**. The release boundary pins `connector_contract_version` on the action.
+
+### 5a. The release boundary (the atomic execution boundary)
 
 The PDP is **never** called while a DB transaction is open.
 
@@ -100,14 +113,23 @@ Step R1 (ONE transaction, READ COMMITTED, row locks):
     SELECT action FOR UPDATE WHERE id=$a AND state='AUTHORIZED'
         → 0 rows: abort (someone else transitioned it)
     CHECK now() < action.not_after                      else → EXPIRED
-    CHECK current policy_version == decision'.policy_version
-        (policy bundle row read under FOR SHARE)       else → abort, retry R0
-    CHECK agent_version.state == 'ACTIVE'
-          AND tool ∈ allowlist                          else → DENIED
+    SELECT current_version FROM tenant_policy_pointer
+     WHERE tenant_id = $t FOR SHARE
+    CHECK current_version == decision'.policy_version   else → abort, retry R0
+    CHECK agent_version.state == 'ACTIVE'  (FOR SHARE)
+          AND tool ∈ active allowlist      (FOR SHARE)
+          AND active certified connector contract exists (FOR SHARE)
+                                                        else → DENIED
     IF intent = DENY        → UPDATE action → DENIED
     IF intent = RE_APPROVE  → void old request/grant; insert new approval_request
                               bound to new policy_version → PENDING_APPROVAL
     IF intent = RELEASE:
+        IF decision'.policy_version ≠ action.policy_version:
+            -- policy changed and now allows: outstanding approval state is void
+            UPDATE approval_requests SET state='VOIDED'
+             WHERE action_id=$a AND state IN ('PENDING','GRANTED')
+            UPDATE approval_grants SET expires_at = now()
+             WHERE action_id=$a AND consumed_at IS NULL
         IF the action requires approval under decision':
             UPDATE approval_grants
                SET consumed_at = now(), consumed_by_action_id = $a
@@ -119,7 +141,9 @@ Step R1 (ONE transaction, READ COMMITTED, row locks):
             → must affect exactly 1 row, else ROLLBACK (no release)
         reserve budget                (Slice A: no-op hook; Slice B: hard budget)
         UPDATE action SET state='QUEUED', released_at=now(),
-               release_decision_id = decision'.decision_id
+               release_decision_id = decision'.decision_id,
+               policy_version = decision'.policy_version,          -- pinned
+               connector_contract_version = <active contract ver>  -- pinned
          WHERE id=$a AND state='AUTHORIZED'
         INSERT decision evidence (decision')
         INSERT audit journal events (hash-chained)
@@ -130,7 +154,8 @@ COMMIT
 Guarantees:
 - **Either everything happens or nothing does.** A failed check rolls back the grant consumption too, so an approval is never burned without a queued action.
 - **At most one consumption per grant**, because consumption is a conditional `UPDATE ... WHERE consumed_at IS NULL`, and grants are unique per request (invariant 2 and 15).
-- **A grant is valid only for the policy version it was issued under.** A policy change forces re-evaluation. A new `escalate` needs a **new** approval (X2, the conservative choice).
+- **A grant is valid only for the policy version it was issued under.** A policy change forces re-evaluation. A new `escalate` needs a **new** approval (X2, the conservative choice). A new `allow` **voids** the old request and grant in the same transaction, so no stale grant survives.
+- **No time-of-check gap against policy activation**, because both sides lock the tenant policy pointer row (§5).
 - **Nothing is executable before COMMIT.** Workers claim only `QUEUED` rows (ADR-004 T14).
 
 What the release boundary does **not** guarantee: freedom from duplicate *external* effects. That's the job of fenced dispatch, operation identity and reconciliation (ADR-004).
@@ -165,7 +190,8 @@ Human resolution (ADR-004 T35–T37), approval votes, policy bundle changes, all
 | Unresolved | Conservative default |
 |---|---|
 | Whether a policy update should invalidate outstanding grants | Yes, always (§5 R1). |
-| Team membership isn't modelled yet when the owner is a team | Reject a vote from **any** principal listed as owner or owner-team contact until membership is modelled. |
+| Owner-group membership can't be resolved | Reject the vote (fail closed, §4). Slice A models `group_memberships` in EACP. External IdP sync comes later, and until it exists only EACP-managed memberships count. |
+| Whether READ COMMITTED is enough | Yes, because every guarded transition and every conflicting operator change locks the same pointer and registry rows (§5). `SERIALIZABLE` isn't required. Concurrency tests (below) are the proof. |
 | Default grant lifetime | Short and configurable, capped by the action's `not_after`. Expiry means the grant is unusable and the action goes to `EXPIRED` if it wasn't released. |
 | Whether `warn` should require acknowledgement | No approval is required, but `warn` is persisted in evidence and surfaced to operators. |
 | Whether a retry after `RETRY_WAIT` needs a new approval | Only if the policy version changed and re-evaluation returns `escalate` (ADR-004 T26 → T11). |
@@ -179,7 +205,10 @@ Human resolution (ADR-004 T35–T37), approval votes, policy bundle changes, all
   - Transform-then-approve → the worker receives the enforced payload.
   - Self-approval and owner-approval are rejected.
   - A cross-tenant vote is rejected by RLS.
-- **Policy change:** a grant issued under v1, with policy moved to v2 and still escalating → `PENDING_APPROVAL` with a new request, and the old grant `VOIDED`.
+- **Policy change:** a grant issued under v1, with policy moved to v2 and still escalating → `PENDING_APPROVAL` with a new request, and the old grant `VOIDED`. Moved to v2 that **allows** → released, and the old request and grant are voided.
+- **Activation race:** policy activation committed concurrently with R1 (both orders, with injected delays) under READ COMMITTED → an action is never released under a version other than the one committed at release time.
+- **RLS with the real application role** (no `BYPASSRLS`): a missing or wrong `SET LOCAL app.tenant_id` → zero rows, never cross-tenant rows.
+- **SoD:** a team-member vote on a team-owned agent is rejected. A vote with unresolved membership is rejected. A delegated vote is judged as the delegator. The author or activator of the policy the action relies on can't approve it. A self-authored policy can't be self-activated.
 - **Crash injection:**
   - Kill the process inside R1 → after restart the grant is unconsumed and the action is `AUTHORIZED`.
   - Restart all processes while `PENDING_APPROVAL` → the request and votes are intact.

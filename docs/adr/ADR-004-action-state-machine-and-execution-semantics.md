@@ -1,6 +1,6 @@
 # ADR-004: Action State Machine and Execution Semantics
 
-- **Status:** Accepted
+- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes (hard gate)
 - **Related:** MASTER_PLAN §18, §19, §20, §22, §23, §29, §31, §103; ADR-001, ADR-005; detail ADRs 007–010 and 013 must conform to this ADR
@@ -24,12 +24,14 @@ This ADR is the single normative definition of action states, transitions, crash
 3. **One clock.** Lease and expiry comparisons use the database's `now()`, never a worker's clock.
 4. **Terminal states are immutable.**
 5. **Every transition is journaled** (hash-chained, append-only) with actor, reason, and state from and to.
+6. **Pinned, immutable facts.** At the release boundary an action pins `policy_version` and `connector_contract_version`. Both are immutable, insert-only versions. Later decisions (dispatch, sweeper, reconciler) use the **pinned** facts. They may only become **more** conservative if the pinned version has since been **revoked**. Revocation is a monotonic flag, and it can never make an action less restricted.
+7. **Registry reads that guard a transition are row-locked.** The transition reads the agent version, allowlist entry, contract version and tenant policy pointer `FOR SHARE`. Operator changes to those rows take `FOR UPDATE`. That serialises every guard against every concurrent change, with no `SERIALIZABLE` needed.
 
 ## States
 
 | State | Meaning | Terminal |
 |---|---|---|
-| `RECEIVED` | The request is authenticated, passed the capability check, holds its idempotency key and is persisted. It hasn't been evaluated yet. | |
+| `RECEIVED` | The request is authenticated, admitted, holds its idempotency key and is persisted. Capability, contract and governance haven't been evaluated yet (T2/T2a/T3/T4). | |
 | `PENDING_APPROVAL` | The governance verdict was `escalate`. An approval request is bound to `enforced_digest` + `policy_version`. | |
 | `AUTHORIZED` | The action has an allow/warn/transform verdict, or an approval grant, and is awaiting the release boundary. | |
 | `QUEUED` | Passed the release boundary (ADR-005) and is executable. | |
@@ -53,8 +55,9 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 
 | # | From | To | Trigger | Guard (all must hold, else no transition) | Actor |
 |---|---|---|---|---|---|
-| T1 | — | `RECEIVED` | Submission | Agent authenticated. AgentVersion `ACTIVE`. Tool in allowlist **and** has a valid connector contract. Admission limit not exceeded. Idempotency key new (a same-`input_digest` duplicate returns the existing action; a different digest returns 409). | API |
-| T2 | `RECEIVED` | `DENIED` | The capability or contract check fails, **or** verdict `deny`, **or** PDP unavailable/incomplete/digest mismatch (ADR-002) | — | API / GOV |
+| T1 | — | `RECEIVED` | Submission | Agent authenticated (unauthenticated → 401, no action). Admission limit not exceeded (→ 429, no action; metric and log only). Idempotency key new (a same-`input_digest` duplicate returns the existing action; a different digest → 409). **Capability and contract are checked in T2/T3, not here**, so that a denial leaves an auditable action. | API |
+| T2 | `RECEIVED` | `DENIED` | **Deterministic** rejection: AgentVersion not `ACTIVE`, tool not in allowlist, no active certified contract (reason `capability` / `contract`), verdict `deny`, or `digest_mismatch` (a security signal, which also raises an alert) | — | API / GOV |
+| T2a | `RECEIVED` | `RECEIVED` | **Transient** governance failure: PDP unavailable, timeout, or incomplete decision | No transition. The API returns **503 retryable** with `action_id`. A resubmit with the **same** `Idempotency-Key` returns this action and triggers re-evaluation, and the sweeper also re-evaluates. Evaluation is pure, so this is safe. Nothing is executable in `RECEIVED` (fail closed). T5 applies at `not_after`. | API / GOV / SWP |
 | T3 | `RECEIVED` | `AUTHORIZED` | Verdict `allow`, `warn` or `transform` | Decision evidence persisted (complete). Enforced payload persisted. | GOV |
 | T4 | `RECEIVED` | `PENDING_APPROVAL` | Verdict `escalate` | Approval request created, bound to tenant + action + `enforced_digest` + `policy_version` | GOV |
 | T5 | `RECEIVED` | `EXPIRED` | `not_after` passed before evaluation | — | SWP |
@@ -62,27 +65,31 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 | T7 | `PENDING_APPROVAL` | `DENIED` | Any eligible deny vote (short-circuit) | — | APR |
 | T8 | `PENDING_APPROVAL` | `EXPIRED` | Approval request `expires_at` or `not_after` passed | — | SWP |
 | T9 | `PENDING_APPROVAL` | `CANCELLED` | Cancel request | Actor is REQ or OPR | REQ / OPR |
-| T10 | `AUTHORIZED` | `QUEUED` | Release boundary succeeds | See ADR-005: revalidation under the **current** policy version, digest unchanged, grant consumed if required, AgentVersion `ACTIVE`, tool still allowed, `not_after` not passed | REL |
+| T10 | `AUTHORIZED` | `QUEUED` | Release boundary succeeds | See ADR-005: revalidation under the **current** policy version (tenant policy pointer locked `FOR SHARE`), digest unchanged, grant consumed if required, AgentVersion `ACTIVE`, tool still allowed, an active certified contract exists, `not_after` not passed. **Pins** `policy_version` and `connector_contract_version` on the action. | REL |
 | T11 | `AUTHORIZED` | `PENDING_APPROVAL` | Revalidation under a **new** policy version returns `escalate` | The old grant is voided (never consumed). A new request is bound to the new version. | REL |
-| T12 | `AUTHORIZED` | `DENIED` | Revalidation `deny`, AgentVersion not `ACTIVE`, or tool removed from the allowlist | — | REL |
+| T12 | `AUTHORIZED` | `DENIED` | Revalidation `deny`, `digest_changed`, AgentVersion not `ACTIVE`, tool removed from the allowlist, or no active certified contract | — | REL |
 | — | `AUTHORIZED` | `AUTHORIZED` | Revalidation **unavailable** | No transition. Retried later (ADR-002 §6). | REL |
 | T13 | `AUTHORIZED` | `EXPIRED` / `CANCELLED` | `not_after` passed / cancel request | — | SWP / REQ / OPR |
 | T14 | `QUEUED` | `LEASED` | Worker claim (`FOR UPDATE SKIP LOCKED`) | `lease_generation := lease_generation + 1`, `leased_until` set | W |
 | T15 | `QUEUED` | `EXPIRED` / `CANCELLED` | `not_after` passed / cancel request | — | SWP / REQ / OPR |
-| T16 | `LEASED` | `EXECUTING` | **Fenced dispatch intent** | `lease_generation = g`. `leased_until > now() + call_budget`. AgentVersion `ACTIVE`. No cancel requested. (Slice C: kill epoch unchanged.) An `action_attempts` row is inserted in the **same transaction**. | W(g) |
+| T16 | `LEASED` | `EXECUTING` | **Fenced dispatch intent** | One transaction, with registry rows read `FOR SHARE` (principle 7). `lease_generation = g`. `leased_until > now() + call_budget`. AgentVersion `ACTIVE`. Tool **still in the allowlist**. The pinned contract version is **still active and not revoked**. The tenant policy pointer **equals the pinned `policy_version`**. No cancel requested. (Slice C: kill epoch unchanged.) An `action_attempts` row is inserted in the **same transaction**. | W(g) |
+| T16a | `LEASED` | `AUTHORIZED` | Policy pointer ≠ pinned `policy_version` at T16 | Policy drift before dispatch means the action must pass the release boundary again (T10–T12). The lease is released and no dispatch intent is written. | W(g) |
+| T16b | `LEASED` | `DENIED` | At T16: AgentVersion not `ACTIVE`, tool removed from the allowlist, or the pinned contract revoked or superseded | Reason `revoked_before_dispatch`. No dispatch intent is written. | W(g) |
 | T17 | `LEASED` | `QUEUED` | Lease expired, or worker releases voluntarily | No dispatch intent exists | SWP / W(g) |
 | T18 | `LEASED` | `CANCELLED` / `EXPIRED` | Cancel requested / `not_after` passed | No dispatch intent exists; fenced | W(g) / SWP |
 | T19 | `EXECUTING` | `SUCCEEDED` | Definitive success (response includes an external reference) | `lease_generation = g` | W(g) |
 | T20 | `EXECUTING` | `RETRY_WAIT` | Definitive **no-effect** error (listed in the connector contract) | Retry policy allows it. Retry budget remains. `lease_generation = g`. | W(g) |
 | T21 | `EXECUTING` | `FAILED` | Definitive no-effect error | Not retryable, or budget exhausted. `lease_generation = g`. | W(g) |
 | T22 | `EXECUTING` | `UNKNOWN_OUTCOME` | Ambiguous result: timeout or reset after send, a 5xx not certified as no-effect, or a cancel/kill during the call | `lease_generation = g` | W(g) |
-| T23 | `EXECUTING` | `UNKNOWN_OUTCOME` | **Lease expired while EXECUTING** (crash, pause, partition) | The connector is **not** READ_ONLY or natively idempotent | SWP |
-| T24 | `EXECUTING` | `RETRY_WAIT` | Lease expired while EXECUTING | The connector **is** READ_ONLY or natively idempotent. The retry reuses the **same operation key**. | SWP |
+| T22a | `EXECUTING` | `RETRY_WAIT` | Ambiguous result | The pinned contract is **READ_ONLY** and not revoked. Retrying a read is safe by definition. | W(g) |
+| T23 | `EXECUTING` | `UNKNOWN_OUTCOME` | **Lease expired while EXECUTING** (crash, pause, partition) | The pinned contract is **not** READ_ONLY or natively idempotent, **or** it has been revoked since release | SWP |
+| T24 | `EXECUTING` | `RETRY_WAIT` | Lease expired while EXECUTING | The pinned contract **is** READ_ONLY or natively idempotent **and is not revoked**. The retry reuses the **same operation key**. | SWP |
 | T25 | `RETRY_WAIT` | `QUEUED` | Backoff elapsed | Policy version unchanged since the release boundary | SWP |
 | T26 | `RETRY_WAIT` | `AUTHORIZED` | Backoff elapsed | Policy version **changed**, so the action must pass the release boundary again (T10–T12) | SWP |
 | T27 | `RETRY_WAIT` | `FAILED` | Retry budget (attempts, elapsed, cost) exhausted | — | SWP |
 | T28 | `UNKNOWN_OUTCOME` | `RECONCILING` | Reconciler claims (reconciler lease, generation incremented) | Connector reconciliation `lookup` supported | REC |
-| T29 | `UNKNOWN_OUTCOME` | `NEEDS_HUMAN_RESOLUTION` | Connector proof standard `NONE`, or no lookup | — | REC / SWP |
+| T29 | `UNKNOWN_OUTCOME` | `NEEDS_HUMAN_RESOLUTION` | Pinned contract proof standard `NONE`, no lookup, or the contract has been revoked | Not READ_ONLY | REC / SWP |
+| T29a | `UNKNOWN_OUTCOME` | `RETRY_WAIT` | — | The pinned contract is **READ_ONLY** and not revoked. No lookup is needed. | SWP |
 | T30 | `RECONCILING` | `SUCCEEDED` | **Positive evidence**: an external record carrying this action's operation key | Fenced by reconciler generation | REC |
 | T31 | `RECONCILING` | `RETRY_WAIT` | **Authoritative negative evidence** (see Proof standard) | Retry policy allows it. Same operation key. | REC |
 | T32 | `RECONCILING` | `FAILED` | Authoritative negative evidence | Retry not allowed or budget exhausted | REC |
@@ -183,4 +190,9 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
   - Execute then drop the response → reconcile → `SUCCEEDED`, with exactly one ERP record.
   - Delayed visibility under `BEST_EFFORT` → no retry.
   - Worker killed mid-dispatch → exactly one ERP record.
-- **Every** transition row T1–T37 has at least one test that exercises it, and at least one test showing its guard rejecting.
+- **Every** transition row (T1–T37, including the lettered rows) has at least one test that exercises it, and at least one test showing its guard rejecting.
+- **Registry drift between `QUEUED` and T16** (Rev 2.1): tool removed from the allowlist, AgentVersion suspended, contract revoked or superseded, or policy pointer moved. Each must prevent dispatch (T16a/T16b), including when the change commits concurrently with the dispatch-intent transaction.
+- **Transient PDP outage at submission** → `RECEIVED` + 503. Resubmit with the same `Idempotency-Key` after recovery → evaluated normally, and never stuck in `DENIED`.
+- **Crash after T16 commits, before the external call starts** → T23 → reconcile. Under `BEST_EFFORT` → no retry → `NEEDS_HUMAN_RESOLUTION`. Under `AUTHORITATIVE` → negative evidence → retry with the same operation key.
+- **Contract revoked while `EXECUTING` / `UNKNOWN_OUTCOME`** → the conservative path (T23/T29), never T24/T29a.
+- **Model tests include external mutations** (registry, policy and contract changes interleaved with transitions), not just transitions in isolation.

@@ -227,6 +227,21 @@ These line up closely with this review's §6, which has been updated to include 
 
 ---
 
+### 5.4 Second Codex pass: adversarial review of the ADRs (2026-09-23)
+
+This pass used `gpt-5.5`, read-only, with the ADRs and the Rev 2 plan inlined. The verdict was **"not ready as Phase 0 gates"**. All findings were **accepted** and applied as **ADR Rev 2.1**:
+
+| # | Sev. | Finding | Fix applied |
+|---|---|---|---|
+| 1 | Critical | A PDP outage at submission became terminal `DENIED`, so a same-key retry was stuck forever | ADR-004 T2a / ADR-002 §6: stays `RECEIVED` + 503. Only deterministic denies are terminal. |
+| 2 | Critical | The R0/R1 `policy_version` check had a time-of-check gap against concurrent policy activation | ADR-005 §5: immutable policy versions plus a per-tenant pointer row locked `FOR SHARE` by release and dispatch, and `UPDATE` by activation |
+| 3 | High | Dispatch intent didn't recheck the allowlist, contract or policy drift | ADR-004 T16/T16a/T16b |
+| 4 | High | Retry and reconcile decisions depended on mutable contract facts | ADR-004 principle 6: pinned immutable `connector_contract_version`; revocation only makes things more conservative |
+| 5 | High | SoD was underspecified (team owners, delegation, enabling changes) | ADR-005 §4: canonical membership tables, fail closed when unresolved, delegation evaluated as the delegator, enabling-change SoD, two-person activation |
+| 6 | Medium | A capability denial created no auditable action | ADR-004 T1/T2: capability and contract are checked after `RECEIVED` |
+| 7 | Medium | READ_ONLY actions with no lookup were forced to human resolution | ADR-004 T22a/T29a |
+| 8 | Medium | The "cannot bypass" claim was broader than what's enforced | ADR-001 §3a: scoped to conforming deployments, and Fake ERP enforces target-side custody as evidence |
+
 ## 6. Recommended decisions before Phase 0
 
 Severity changes after the cross-review: **H2 → Critical (Phase 0 gate)** and **M3 → High**. H1 is reworded (see §5.2).

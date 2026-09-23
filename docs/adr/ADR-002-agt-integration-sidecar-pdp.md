@@ -1,6 +1,6 @@
 # ADR-002: AGT/ACS Integration via Sidecar PDP
 
-- **Status:** Accepted
+- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §4, §5, §5.1, §12, §13, §83 (Phase 9); ADR-001, ADR-005
@@ -48,11 +48,11 @@ type GovernanceProvider interface {
 
 ### 4. EACP computes digests itself
 
-EACP computes `input_digest` and `enforced_digest` in Go (JCS + SHA-256) from the snapshot it sent and the enforced payload it received. If the provider also reports digests and they differ, the decision is treated as **Deny** (reason `digest_mismatch`). EACP never trusts a digest it didn't compute.
+EACP computes `input_digest` and `enforced_digest` in Go (JCS + SHA-256) from the snapshot it sent and the enforced payload it received. If the provider also reports digests and they differ, the decision is treated as **Deny** (reason `digest_mismatch`) and a security alert is raised. This is deterministic and terminal. EACP never trusts a digest it didn't compute.
 
 ### 5. Decision evidence is mandatory
 
-Every decision is persisted with provider, provider instance ID, policy bundle ID, policy version, verdict, reasons, both digests, decision ID and time. A response missing any required field is **Deny** (reason `incomplete_decision`). This is Codex finding X1.
+Every decision is persisted with provider, provider instance ID, policy bundle ID, policy version, verdict, reasons, both digests, decision ID and time. A response missing any required field is treated as a **transient failure**: nothing becomes executable, the same handling as an unavailable PDP (§6), plus an alert. This is Codex finding X1.
 
 ### 6. Failure behaviour depends on the decision type
 
@@ -60,7 +60,7 @@ This follows Codex's refinement of C1.
 
 | Call path | PDP unavailable / timeout / malformed |
 |---|---|
-| New side-effecting action (submission) | **Deny** (`governance_unavailable`, retryable by the client with the same idempotency key after the outage) |
+| New side-effecting action (submission) | **Nothing becomes executable.** The action stays `RECEIVED` (ADR-004 T2a) and the API returns **503 retryable** with `action_id`. A resubmit with the same `Idempotency-Key`, or the sweeper, re-evaluates it after recovery. The action is never made terminally `DENIED` because of an outage. |
 | Release boundary revalidation (after approval) | **Do not release**: the action stays `AUTHORIZED` and retries until `not_after` → `EXPIRED`. Human approvals aren't wasted by a transient outage, and nothing executes without a fresh decision. |
 | Cancel, reconciliation reads, human resolution, containment (kill, suspend) | **Never consult the PDP.** These must work during a PDP outage. |
 
@@ -95,8 +95,8 @@ This follows Codex's refinement of C1.
 ## Verification
 
 - Unit: the `local` provider returns every verdict type, and `transform` produces an enforced payload and a distinct `enforced_digest`.
-- Security: PDP timeout at submission → `DENIED(governance_unavailable)`. PDP down during release → stays `AUTHORIZED`, no dispatch. Kill and cancel work while the PDP is down.
-- Security: a digest mismatch or incomplete decision → Deny.
+- Security: PDP timeout at submission → `RECEIVED` + 503. After the PDP recovers, a resubmit with the same key is evaluated normally. PDP down during release → stays `AUTHORIZED`, no dispatch. Kill and cancel work while the PDP is down.
+- Security: a digest mismatch → `DENIED(digest_mismatch)` plus an alert. An incomplete decision → stays `RECEIVED` plus an alert.
 - Slice B: conformance suite green for `local` vs `microsoftagt` on the reference policy set.
 
 ## Alternatives considered

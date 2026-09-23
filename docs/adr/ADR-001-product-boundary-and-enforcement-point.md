@@ -1,6 +1,6 @@
 # ADR-001: Product Boundary and Enforcement Point
 
-- **Status:** Accepted
+- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §1, §3.1, §3.2, §45, §65, §70, §103 (inv. 11, 19); ADR-002, ADR-005, ADR-019, ADR-021
@@ -59,6 +59,16 @@ Slice A enforces it with four mechanisms:
 
 An **execution proxy** is any EACP-controlled component that holds credentials and performs side effects under EACP's lease, fencing and journal rules. In Slice A that's the execution worker only. A proxy deployed next to a target system that accepts only EACP-authenticated requests is a future option. It must follow the same ADR-004 execution semantics.
 
+### 3a. Scope of the "cannot bypass" claim (Rev 2.1)
+
+The Slice A claim holds **in a conforming deployment**. A conforming deployment satisfies all of these:
+
+1. **Target-side credential custody:** privileged credentials for each target system are issued **only** to EACP worker or execution-proxy identities. The target rejects every other principal for privileged operations.
+2. **Network:** agent runtimes have no network route to privileged targets.
+3. **Capability:** agents authenticate to EACP with agent credentials that grant nothing at the target.
+
+EACP can't prove condition 1 for arbitrary third-party systems, so the claim is explicitly scoped. For the Slice A demo, **Fake ERP enforces condition 1 itself**: it accepts privileged calls only from the worker's credential, and it records the calling principal for every request. Its audit log is part of the evidence. A production deployment checklist (`docs/security/DEPLOYMENT_CONFORMANCE.md`, Phase 8) documents conditions 1–3. A later capability adds bypass **detection**: target audit logs showing non-EACP principals.
+
 ### 4. Agent integration contract
 
 - Agents call `POST /v1/actions` with an `Idempotency-Key`, and may pass `?wait=<duration>` to receive a synchronous result.
@@ -96,6 +106,7 @@ An **execution proxy** is any EACP-controlled component that holds credentials a
 ## Verification (Slice A exit)
 
 - `test/security`: an agent container calling Fake ERP directly fails (no credential **and** no route).
+- `test/security`: Fake ERP rejects privileged calls from any principal other than the worker's, even with a network route. Its audit log for the demo run shows **only** the worker principal for privileged operations.
 - `test/security`: a tool outside the allowlist → `DENIED(capability)`, with an audit event.
 - `test/security`: a secret canary value never appears in API responses, action rows, journal, traces or logs.
 - `test/security`: submission with a SUSPENDED AgentVersion is rejected, and suspension between release and dispatch prevents dispatch.
