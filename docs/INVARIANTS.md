@@ -1,0 +1,149 @@
+# Slice A invariants and their tests
+
+MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
+
+`test/invariants` checks the map mechanically. It reads the [A] invariants from MASTER_PLAN §103, requires a section here for each, and requires that every test named in a section exists in the named package. `go test -race ./...` with `EACP_TEST_ADMIN_DSN` runs them all. The `test/security` tests also need `EACP_COMPOSE_TEST=1` and the compose stack, and `test/demo` needs `EACP_DEMO=1` (see [DEMO.md](DEMO.md)).
+
+Format: one `## <n> [A]` section per invariant, and one list item per test (`` `package` TestName — what it shows ``).
+
+## 1 [A] A stale worker cannot commit, nor cause a second dispatch
+
+- `internal/worker` TestLeaseRaceHasExactlyOneWinner — two claims: one generation, one winner
+- `internal/worker` TestResultCommitsAreFencedAndNeedTheAttemptOutcome — the database rejects a result from another generation
+- `internal/worker` TestStaleWorkerBeforeIntentNeverDispatches — a reclaimed worker makes no call
+- `internal/worker` TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate — a stale result is only late evidence
+- `internal/worker` TestHeartbeatExtendsOnlyTheHoldersLiveLease — only the holder extends its lease
+- `internal/worker` TestStillUnknownBacksOffAndStaleReconcilersAreFenced — stale reconcilers are fenced out too
+
+## 2 [A] One-time approval cannot release two execution claims
+
+- `internal/action` TestApprovalThenParallelReleasesConsumeTheGrantOnce — parallel releases consume one grant once
+- `internal/approval` TestConcurrentConsumeSucceedsOnce — concurrent consumption succeeds once
+- `internal/approval` TestConsumeBindsDigestAndCanSucceedOnce — a grant binds its digest and is consumed once
+- `internal/approval` TestGrantCannotBeConsumedTwiceOrAfterPolicyChange — no second consumption, and none after a policy change
+
+## 4 [A] Duplicate messages, submissions or reclaims do not duplicate external effects
+
+- `internal/action` TestConcurrentSubmissionsWithOneKeyCreateOneAction — one idempotency key, one action
+- `internal/worker` TestDuplicateSubmissionsProduceOneEffect — concurrent and repeated submissions, one ERP record
+- `internal/worker` TestWorkerKilledWhileExecutingIsReconciledNotRedispatched — a reclaim reconciles and never re-dispatches blindly
+- `internal/worker` TestLoopsSurviveRepeatedDatabaseConnectionLoss — connection storms, one ERP record per operation key
+- `internal/worker` TestWorkerExecutesAQueuedActionOnce — workers claim from PostgreSQL, not from queue messages
+- `internal/connector` TestHTTPExecuteDoesNotReplayAfterAReusedConnectionLosesResponse — the HTTP client never replays a POST
+
+## 5 [A] Timeout after dispatch does not automatically mean failure
+
+- `internal/connector` TestHTTPClassifiesOnlyCertifiedNoEffectAndTreatsLostResponsesAsAmbiguous — timeouts and resets are ambiguous
+- `internal/worker` TestResultsAreClassifiedAndRetriedPerContract — ambiguous results become UNKNOWN_OUTCOME
+- `internal/worker` TestLostResponseIsReconciledToSuccessWithOneRecord — a lost response is reconciled to SUCCEEDED
+
+## 6 [A] An irreversible non-idempotent action is never blindly retried
+
+- `internal/worker` TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate — lease loss during a call → UNKNOWN_OUTCOME, no re-dispatch
+- `internal/worker` TestDelayedVisibilityIsNeverRetried — "not found" under BEST_EFFORT is never a retry
+- `internal/worker` TestNegativeEvidenceNeedsAnAuthoritativeContract — the database refuses retry without authoritative proof
+- `internal/worker` TestDecideAppliesTheProofStandard — the reconciler's decision table
+- `internal/action` TestSweeperReclaimsLapsedLeases — only READ_ONLY actions are retried after lease loss
+
+## 7 [A] Sensitive action governance is revalidated before execution
+
+- `internal/action` TestReleaseRequiresFreshEvidenceAndConsumedGrant — release needs fresh evidence recorded in its transaction
+- `internal/action` TestPolicyChangeAfterGrant — a new policy version re-evaluates and voids the grant
+- `internal/action` TestRegistryDriftBeforeReleaseDenies — registry drift denies at release
+- `internal/worker` TestDispatchIntentRefusesDriftAndRevocation — drift after release blocks the dispatch intent
+- `internal/worker` TestDriftBeforeDispatchNeverCalls — no external call after drift
+
+## 8 [A] Tenant isolation cannot be bypassed
+
+- `internal/storage` TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed — every table forces RLS; cross-tenant paths are pinned and reviewed
+- `internal/storage` TestTenantSeesOnlyItsOwnRows — the RLS convention
+- `internal/storage` TestMissingTenantContextSeesNothing — no tenant context, no rows
+- `internal/service` TestStartRefusesRoleThatCanBypassRLS — services refuse a role that bypasses RLS
+- `internal/worker` TestAnotherTenantSeesAndChangesNothingAfterAFullFlow — after a full flow, another tenant reads and changes nothing in any table
+- `internal/api` TestActionsOfOtherTenantsAreNotFound — the action API answers 404 across tenants
+- `internal/api` TestOtherTenantsResourcesAreNotFound — the registry API answers 404 across tenants
+- `internal/registry` TestCrossTenantReferencesAreRejected — rows cannot reference another tenant's rows
+- `internal/action` TestCrossTenantScansExposeOnlyCountsAndTenantIDs — the SECURITY DEFINER hints expose ids and counts only
+
+## 10 [A] Audit and evidence references remain reconstructible end-to-end
+
+- `internal/worker` TestEvidenceReconstructsTheWholeActionFromItsID — governance → approval → execution → reconciliation → outcome, with the verified journal
+- `internal/action` TestEvidenceIsReconstructibleFromTheAction — decisions, votes and grants join by action_id
+- `internal/api` TestOperatorsResolveActionsOverTheAPI — evidence over the API, with a verified chain
+
+## 11 [A] Agents never hold credentials for privileged systems
+
+- `test/security` TestAgentCannotReachFakeERP — no network path from the agent to the ERP (compose)
+- `test/security` TestAgentCannotReachPostgres — no network path from the agent to the database (compose)
+- `test/security` TestOnlyTheWorkerHoldsConnectorSecrets — only the worker mounts connector secrets (compose)
+- `test/security` TestFakeERPRejectsUnauthenticatedPrivilegedCall — the ERP refuses calls without the credential (compose)
+- `internal/config` TestConnectorSecretsOnlyInTheWorker — every other service refuses a connector-secrets file
+- `internal/worker` TestSecretCanaryNeverLeaks — a canary secret appears in no row, journal, outbox or log
+- `internal/fakeerp` TestFakeERPRejectsUnauthenticatedPrivilegedCalls — privileged ERP calls need the worker credential
+
+## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
+
+- `internal/worker` TestWorkerKilledWhileExecutingIsReconciledNotRedispatched — authoritative absence → one retry with the same key
+- `internal/worker` TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate — nothing else re-dispatches
+- `internal/worker` TestHumanResolutionIsSeparatedJournaledAndTwoPersonForRetry — a human retry needs two operators and keeps the key
+- `internal/worker` TestRestartedServicesFinishEveryPendingAction — an interrupted call is reconciled after a restart, not re-dispatched
+
+## 13 [A] "Not found" alone never authorizes the retry of an irreversible or non-idempotent action
+
+- `internal/worker` TestNegativeEvidenceNeedsAnAuthoritativeContract — BEST_EFFORT absence cannot retry, in raw SQL
+- `internal/worker` TestDecideAppliesTheProofStandard — absence without authority is still unknown
+- `internal/worker` TestDelayedVisibilityIsNeverRetried — the Fake ERP flagship
+- `internal/worker` TestAuthoritativeAbsenceFailsOnlyWhenNoRetryRemains — authoritative absence, settled, with the same key
+
+## 14 [A] An action executes only its enforced payload, bound by digest to its decision and grant
+
+- `internal/worker` TestTamperedEnforcedPayloadIsDeniedWithAnAlert — a changed payload is denied before dispatch
+- `internal/governance` TestDigestsBindTheEnforcedPayload — digests bind the enforced payload
+- `internal/action` TestTransformThenApproveBindsTheEnforcedPayload — approvals bind the transformed payload
+- `internal/action` TestDigestMismatchDeniesAndAlerts — a digest mismatch denies and alerts
+- `internal/connector` TestHTTPExecutePreservesEnforcedPayloadAndNativeKey — the connector sends exactly the enforced payload
+
+## 15 [A] An approval grant is bound, expires, is consumed at most once, and is not granted by the subject or the owner
+
+- `internal/approval` TestConsumeBindsDigestAndCanSucceedOnce — binding and single consumption
+- `internal/approval` TestOwnerAndEnablingActorsCannotApprove — owners and enabling actors cannot approve
+- `internal/approval` TestSelfAndCrossTenantApprovalRejected — no self-approval, no cross-tenant approval
+- `internal/approval` TestOwnerGroupMembershipAtRequestOrVoteBlocksApproval — owner-group members cannot approve
+- `internal/approval` TestGrantCannotBeConsumedAfterRequestExpiryIsShortened — expiry is enforced at consumption
+- `internal/action` TestExpiredGrantExpiresTheAction — an expired grant expires the action
+
+## 16 [A] Approval and execution state survive a restart of any EACP process
+
+- `internal/worker` TestRestartedServicesFinishEveryPendingAction — fresh processes finish half-voted, approved and interrupted actions
+- `internal/worker` TestLoopsSurviveRepeatedDatabaseConnectionLoss — dropped database connections lose nothing
+- `internal/action` TestSweeperRecoversActionsLeftByAnOutage — work left by a stopped process is resumed
+- `internal/approval` TestVoteServiceReturnsDurableState — votes are durable when acknowledged
+- `test/demo` TestSliceADemo — restarts the API, worker and PostgreSQL with an approval pending (compose)
+
+## 17 [A] Every state transition and privileged operator action is journaled, hash-chained, with actor and reason
+
+- `internal/action` TestActionTransitionsAreJournaledWithActorKinds — transitions with actor kinds
+- `internal/registry` TestRawSQLChangesAreAuditedByTheDatabase — the database journals even raw SQL changes
+- `internal/audit` TestVerifyDetectsTampering — edits, deletions and reordering break the chain
+- `internal/audit` TestConcurrentAppendsStayGapless — the chain has no gaps under concurrency
+- `internal/worker` TestHumanResolutionIsSeparatedJournaledAndTwoPersonForRetry — operator resolutions are journaled
+- `internal/worker` TestEvidenceReconstructsTheWholeActionFromItsID — tampering is reported by the evidence chain
+
+## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
+
+- `internal/action` TestGovernanceOutageKeepsActionReceivedUntilResubmission — an outage leaves the action RECEIVED
+- `internal/governance` TestEvaluateCheckedFailsClosedOnProviderErrorAndIncompleteEvidence — incomplete decisions fail closed
+- `internal/api` TestGovernanceOutageIs503WithTheAction — the API answers 503 with the action
+- `internal/action` TestCancelBeforeDispatchNeverConsultsGovernance — cancellation never calls the PDP
+- `internal/action` TestReceivedActionCanBeCancelledByTheRequesterOrAnOperator — T5a in raw SQL
+- `internal/action` TestCancelWinsOverAnInFlightDecision — a cancel during a PDP call wins
+- `internal/worker` TestGovernanceOutageFailsClosedWithoutBlockingSafety — cancellation, reconciliation and containment during an outage
+
+## 19 [A] Every executed action is attributable to an authenticated agent and an ACTIVE version whose allowlist includes the tool
+
+- `internal/identity` TestAuthenticateAgent — agent keys bind one agent version
+- `internal/action` TestActionInsertRequiresMatchingAgentAndDerivesIdentity — the database derives the identity
+- `internal/action` TestCapabilityAndSubjectDenialsLeaveAnAuditableAction — capability denials before governance
+- `internal/registry` TestCheckCapabilityDeniesSuspendedRevokedAndDrifted — inactive versions and removed tools are denied
+- `internal/worker` TestDispatchIntentRefusesDriftAndRevocation — rechecked at the dispatch intent
+- `internal/api` TestAgentKeysCannotUseOperatorRoutesAndViceVersa — agent and operator keys are separate

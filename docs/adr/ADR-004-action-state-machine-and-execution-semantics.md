@@ -1,6 +1,6 @@
 # ADR-004: Action State Machine and Execution Semantics
 
-- **Status:** Accepted — Rev 2.5 (Phase 7 reconciliation and human resolution, 2026-09-23; Rev 2.4 Phase 6 HTTP connector and Fake ERP protocol; Rev 2.3 Phase 5 worker, lease and fencing; Rev 2.2 Phase 4 pre-dispatch; Rev 2.1 amended after Codex adversarial review)
+- **Status:** Accepted — Rev 2.6 (Phase 8 hardening: T5a, 2026-09-23; Rev 2.5 Phase 7 reconciliation and human resolution; Rev 2.4 Phase 6 HTTP connector and Fake ERP protocol; Rev 2.3 Phase 5 worker, lease and fencing; Rev 2.2 Phase 4 pre-dispatch; Rev 2.1 amended after Codex adversarial review)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes (hard gate)
 - **Related:** MASTER_PLAN §18, §19, §20, §22, §23, §29, §31, §103; ADR-001, ADR-005; detail ADRs 007–010 and 013 must conform to this ADR
@@ -61,6 +61,7 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 | T3 | `RECEIVED` | `AUTHORIZED` | Verdict `allow`, `warn` or `transform` | Decision evidence persisted (complete). Enforced payload persisted. | GOV |
 | T4 | `RECEIVED` | `PENDING_APPROVAL` | Verdict `escalate` | Approval request created, bound to tenant + action + `enforced_digest` + `policy_version` | GOV |
 | T5 | `RECEIVED` | `EXPIRED` | `not_after` passed before evaluation | — | SWP |
+| T5a | `RECEIVED` | `CANCELLED` | Cancel request, for example while governance is unavailable (Rev 2.6) | Reason required. No decision, grant or dispatch exists yet. A decision that arrives later finds the action no longer `RECEIVED` and records nothing. | REQ / OPR |
 | T6 | `PENDING_APPROVAL` | `AUTHORIZED` | Quorum of eligible approve votes | Grant created (ADR-005). Separation of duties satisfied. Request not expired. | APR |
 | T7 | `PENDING_APPROVAL` | `DENIED` | Any eligible deny vote (short-circuit) | — | APR |
 | T8 | `PENDING_APPROVAL` | `EXPIRED` | Approval request `expires_at` or `not_after` passed | — | SWP |
@@ -348,6 +349,29 @@ The queue (`GET /v1/actions?state=`) and the evidence (`GET /v1/actions/{id}/evi
 - no credential in checks or the journal.
 
 Nothing here claims exactly-once execution: the claim is at most one effect per operation key where the target deduplicates, and otherwise an explicit human decision.
+
+## Phase 8 hardening (Rev 2.6)
+
+**T5a: cancelling a `RECEIVED` action.** An action stays `RECEIVED` while governance is unavailable (T2a). Up to Rev 2.5 no edge left `RECEIVED` except evaluation and expiry. During an outage the requester therefore could not withdraw an action; it could only wait for `not_after`. That contradicts MASTER_PLAN §103 invariant 18: governance failure must never block cancellation.
+
+T5a lets the same actors as T9 cancel it: the submitting agent, the subject, or an operator, with a reason, and never the system. It is the most conservative choice available:
+- a `RECEIVED` action has no decision, grant or dispatch intent, so cancelling it can only prevent execution;
+- evaluation re-reads the action under its row lock after the PDP call, so a decision that arrives after the cancel changes nothing and records no evidence.
+
+Migration 00008 adds the edge to `eacp.actions_guard`. Tests: `TestReceivedActionCanBeCancelledByTheRequesterOrAnOperator` (raw SQL), `TestCancelWinsOverAnInFlightDecision` (a cancel during a PDP call) and `TestGovernanceOutageFailsClosedWithoutBlockingSafety`.
+
+**Evidence reconstruction (invariants 10 and 17).** `GET /v1/actions/{id}/evidence` (operators and auditors) and `eacpctl action evidence` return everything recorded about one action, read in one snapshot:
+- the action;
+- every governance decision: verdict, policy version, reasons, input and enforced digests;
+- approval requests with their votes and the one-time grant, including what consumed it;
+- attempts, including late results;
+- reconciliation checks;
+- operator resolutions;
+- every journal entry about these records.
+
+The tenant's journal chain is verified in the same snapshot. A broken chain is reported in the evidence (`chain.verified = false`), not as an error, so the evidence stays readable when it matters most. The verification reads the whole tenant journal; that cost is accepted for Slice A.
+
+**Supervision.** Services fail closed at startup: for example, they exit when the database is unreachable or unsafe. They rely on their supervisor to start them again. Compose runs `controlplane-api`, `execution-worker` and `fakeerp` with `restart: on-failure`; production deployments need the equivalent. The demo found this: restarting the worker together with PostgreSQL made the worker exit, and nothing restarted it.
 
 ## Consequences
 

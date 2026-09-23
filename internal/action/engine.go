@@ -762,7 +762,7 @@ func (e *Engine) queue(ctx context.Context, tx pgx.Tx, a Actor, r row, evidence 
 		WHERE id = $1 AND state = 'AUTHORIZED'`, r.ID, reason(d), evidence, s.contractID)
 }
 
-// Cancel cancels an action (ADR-004 T9, T13, T15, T18). Before any
+// Cancel cancels an action (ADR-004 T5a, T9, T13, T15, T18). Before any
 // dispatch intent the action becomes CANCELLED; once a dispatch intent
 // exists (EXECUTING, RETRY_WAIT) only a cancel request is recorded: the
 // worker cancels the in-flight call and the sweeper fails a waiting retry
@@ -782,7 +782,8 @@ func (e *Engine) Cancel(ctx context.Context, a Actor, id uuid.UUID, why string) 
 			return pgx.ErrNoRows
 		}
 		switch r.State {
-		case "PENDING_APPROVAL", "AUTHORIZED", "QUEUED", "LEASED":
+		case "RECEIVED", "PENDING_APPROVAL", "AUTHORIZED", "QUEUED", "LEASED":
+			// T5a, T9, T13, T15, T18: nothing has been dispatched.
 			return move(ctx, tx, `UPDATE eacp.actions SET state = 'CANCELLED', state_reason = $3
 				WHERE id = $1 AND state = $2`, r.ID, r.State, why)
 		case "EXECUTING", "RETRY_WAIT":

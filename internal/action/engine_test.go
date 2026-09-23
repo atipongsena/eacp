@@ -660,3 +660,54 @@ func TestSubmissionValidation(t *testing.T) {
 		t.Fatalf("invalid submissions created %d actions", n)
 	}
 }
+
+// blockingPDP answers only when released, so a test can act while a
+// decision is in flight.
+type blockingPDP struct {
+	provider
+	entered, release chan struct{}
+}
+
+func (p *blockingPDP) Evaluate(ctx context.Context, req governance.GovernanceRequest) (governance.GovernanceDecision, error) {
+	p.entered <- struct{}{}
+	<-p.release
+	return p.provider.Evaluate(ctx, req)
+}
+
+// Invariant 18: governance never blocks cancellation. An action waiting on
+// the PDP (or stuck RECEIVED during an outage) is cancelled at once (T5a),
+// and the decision that arrives afterwards changes nothing: no evidence is
+// recorded and the action stays CANCELLED.
+func TestCancelWinsOverAnInFlightDecision(t *testing.T) {
+	v := newEnv(t, allowAll)
+	pdp := &blockingPDP{entered: make(chan struct{}), release: make(chan struct{})}
+	e := action.New(v.f.App, action.Options{Provider: pdp})
+	type result struct {
+		view action.View
+		err  error
+	}
+	done := make(chan result)
+	go func() {
+		got, err := e.Submit(context.Background(), v.actor(), v.submission("k1"))
+		done <- result{got, err}
+	}()
+	<-pdp.entered
+	var id uuid.UUID
+	if err := storage.InTenantTx(context.Background(), v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT id FROM eacp.actions WHERE idempotency_key = 'k1'`).Scan(&id)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.Cancel(context.Background(), v.actor(), id, "no longer needed")
+	if err != nil || got.State != "CANCELLED" {
+		t.Fatalf("cancel while RECEIVED = %+v, %v", got, err)
+	}
+	close(pdp.release)
+	r := <-done
+	if r.err != nil || r.view.State != "CANCELLED" {
+		t.Fatalf("submission = %+v, %v", r.view, r.err)
+	}
+	if n := v.count(`SELECT count(*) FROM eacp.decision_evidence WHERE action_id = $1`, id); n != 0 {
+		t.Fatalf("a late decision recorded %d evidence rows", n)
+	}
+}

@@ -3437,6 +3437,15 @@ worker ถูก kill ระหว่าง EXECUTING → UNKNOWN_OUTCOME (ไ�
 
 # 82. Phase 8 — Slice A Hardening & Demo
 
+**Implementation status (2026-09-23): delivered; Slice A is complete.** Every §103 invariant tagged [A] maps to passing automated tests in `docs/INVARIANTS.md`, and `test/invariants` checks that map against this section and the test suite. The hardening work added:
+- a catalog test of the RLS convention and of every reviewed cross-tenant path;
+- a tenant sweep over every table after a full flow, and cross-tenant tests of the action API;
+- chaos tests: repeated database connection loss under live loops, restarted services, a killed worker, and duplicate submissions;
+- evidence reconstruction from an `action_id` over the API, with journal chain verification;
+- the §111 demo (`scripts/demo.sh`, `docs/DEMO.md`), which runs against an isolated compose project and restarts the API, the worker and PostgreSQL.
+
+Two findings changed behaviour. Cancelling a `RECEIVED` action (T5a, ADR-004 Rev 2.6, migration 00008) keeps a governance outage from blocking cancellation (invariant 18). Compose now restarts services that fail closed at startup. The review is in `docs/reviews/2026-09-23-phase8-code-review.md`.
+
 Build:
 
 ```text

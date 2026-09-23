@@ -170,7 +170,9 @@ func TestActionsAreTenantIsolatedAndUndeletable(t *testing.T) {
 func TestIllegalAndTerminalTransitionsAreRejected(t *testing.T) {
 	s := newSchemaSetup(t)
 	id := s.f.ReceivedAction(t, s.agent.Version, "carol", "erp.purchase")
-	for _, to := range []string{"QUEUED", "CANCELLED", "EXECUTING", "SUCCEEDED"} {
+	// (RECEIVED -> CANCELLED is T5a since ADR-004 Rev 2.6; see
+	// TestReceivedActionCanBeCancelledByTheRequesterOrAnOperator.)
+	for _, to := range []string{"QUEUED", "LEASED", "EXECUTING", "RETRY_WAIT", "NEEDS_HUMAN_RESOLUTION", "SUCCEEDED"} {
 		wantCode(t, s.f.ExecAgent(s.agent.Version, `UPDATE eacp.actions SET state = $2, state_reason = 'x'
 			WHERE id = $1`, id, to), "55000")
 	}
@@ -526,5 +528,35 @@ func TestCrossTenantScansExposeOnlyCountsAndTenantIDs(t *testing.T) {
 	tenants, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 	if err != nil || len(tenants) != 1 || tenants[0] != s.f.Tenant {
 		t.Fatalf("tenants = %v, err = %v", tenants, err)
+	}
+}
+
+// T5a (ADR-004 Rev 2.6): an action still RECEIVED, for example because
+// governance is unavailable, can be cancelled by the same actors as T9
+// (MASTER_PLAN §103 invariant 18), with a reason, and never by the system.
+func TestReceivedActionCanBeCancelledByTheRequesterOrAnOperator(t *testing.T) {
+	s := newSchemaSetup(t)
+	other := s.f.ActiveAgent(t, "other", s.tool.Tool)
+	cancel := `UPDATE eacp.actions SET state = 'CANCELLED', state_reason = $2 WHERE id = $1`
+	for who, exec := range map[string]func(uuid.UUID) error{
+		"agent":    func(a uuid.UUID) error { return s.f.ExecAgent(s.agent.Version, cancel, a, "withdrawn") },
+		"subject":  func(a uuid.UUID) error { return s.f.Exec("carol", cancel, a, "withdrawn") },
+		"operator": func(a uuid.UUID) error { return s.f.Exec("otto", cancel, a, "outage") },
+	} {
+		a := s.f.ReceivedAction(t, s.agent.Version, "carol", "erp.purchase")
+		if err := exec(a); err != nil {
+			t.Fatalf("%s: %v", who, err)
+		}
+		if got := s.state(t, a); got != "CANCELLED" {
+			t.Fatalf("%s: state %s", who, got)
+		}
+	}
+	a := s.f.ReceivedAction(t, s.agent.Version, "carol", "erp.purchase")
+	wantCode(t, s.f.ExecAgent(other.Version, cancel, a, "x"), "42501")
+	wantCode(t, s.f.Exec("erin", cancel, a, "x"), "42501")
+	wantCode(t, s.f.ExecSystem("sweeper", cancel, a, "x"), "42501")
+	wantCode(t, s.f.Exec("otto", cancel, a, " "), "23514")
+	if got := s.state(t, a); got != "RECEIVED" {
+		t.Fatalf("state = %s", got)
 	}
 }

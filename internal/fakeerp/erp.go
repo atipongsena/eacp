@@ -239,7 +239,7 @@ func (e *ERP) execute(w http.ResponseWriter, r *http.Request) {
 		VisibilityDelayMS int    `json:"visibility_delay_ms"`
 	}
 	if json.Unmarshal(request["payload"], &payload) != nil || payload.DelayMS < 0 || payload.DelayMS > 5000 ||
-		payload.VisibilityDelayMS < 0 || payload.VisibilityDelayMS > 5000 {
+		payload.VisibilityDelayMS < 0 || payload.VisibilityDelayMS > 600000 {
 		e.reject(w, r, key, 422, "validation")
 		return
 	}

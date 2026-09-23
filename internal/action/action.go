@@ -101,6 +101,7 @@ type View struct {
 	InputDigest              string          `json:"input_digest"`
 	EnforcedDigest           string          `json:"enforced_digest,omitempty"`
 	EnforcedPayload          json.RawMessage `json:"enforced_payload,omitempty"`
+	DecisionEvidenceID       *uuid.UUID      `json:"decision_evidence_id,omitempty"`
 	PolicyVersion            *int            `json:"policy_version,omitempty"`
 	ApprovalRequestID        *uuid.UUID      `json:"approval_request_id,omitempty"`
 	ConnectorContractVersion *int            `json:"connector_contract_version,omitempty"`
@@ -196,7 +197,7 @@ func (r row) view() View {
 		AgentVersionID: r.AgentVersionID, IdempotencyKey: r.IdempotencyKey, OperationKey: r.OperationKey,
 		Subject: r.Subject, Operation: r.Operation, Target: r.Target, Tool: r.Tool,
 		ToolSchemaVersion: r.ToolSchemaVersion, Resource: r.Resource,
-		InputDigest: hex.EncodeToString(r.InputDigest), PolicyVersion: r.PolicyVersion,
+		InputDigest: hex.EncodeToString(r.InputDigest), DecisionEvidenceID: r.DecisionEvidenceID, PolicyVersion: r.PolicyVersion,
 		ApprovalRequestID: r.ApprovalRequestID, ConnectorContractVersion: r.ConnectorContractVersion,
 		NotAfter: r.NotAfter, CreatedAt: r.CreatedAt, StateChangedAt: r.StateChangedAt, ReleasedAt: r.ReleasedAt,
 		LeaseGeneration: r.LeaseGeneration, AttemptCount: r.AttemptCount, NextAttemptAt: r.NextAttemptAt,

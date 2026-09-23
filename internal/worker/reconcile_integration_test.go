@@ -58,6 +58,12 @@ type erpEnv struct {
 
 func newERPEnv(t *testing.T) *erpEnv {
 	t.Helper()
+	return newERPEnvWith(t, registrytest.AllowPolicy)
+}
+
+// newERPEnvWith is newERPEnv under the given active policy.
+func newERPEnvWith(t *testing.T, policy string) *erpEnv {
+	t.Helper()
 	v := &erpEnv{t: t, secret: canary + "-erp"}
 	h, err := fakeerp.New(v.secret, filepath.Join(t.TempDir(), "erp.log"))
 	if err != nil {
@@ -80,7 +86,7 @@ func newERPEnv(t *testing.T) *erpEnv {
 		tools = append(tools, tool)
 	}
 	v.agent = v.f.ActiveAgent(t, "buyer", tools...)
-	v.f.ActivatePolicy(t, registrytest.AllowPolicy)
+	v.f.ActivatePolicy(t, policy)
 	v.secrets, err = worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":%q,"value":%q}]}`,
 		pgtest.TenantA, u.Host, v.secret)))
 	if err != nil {
@@ -111,12 +117,18 @@ func (v *erpEnv) reconciler(maxAttempts int, backoff time.Duration) *worker.Reco
 // whose enforced payload asks Fake ERP for scenario.
 func (v *erpEnv) submit(tool string, payload map[string]any) action.View {
 	v.t.Helper()
+	return v.submitTo("QUEUED", tool, payload)
+}
+
+// submitTo submits like submit and expects the action to land in state.
+func (v *erpEnv) submitTo(state, tool string, payload map[string]any) action.View {
+	v.t.Helper()
 	payload["amount"], payload["currency"] = 42, "THB"
 	b, _ := json.Marshal(payload)
 	got, err := v.e.Submit(context.Background(), action.Agent(v.f.Tenant, v.agent.Agent, v.agent.Version),
 		action.Submission{IdempotencyKey: uuid.NewString(), Subject: "carol@tenant-a.test", Operation: "post",
 			Target: "erp", Tool: "erp." + tool, ToolSchemaVersion: "1", Resource: "po", Payload: b})
-	if err != nil || got.State != "QUEUED" {
+	if err != nil || got.State != state {
 		v.t.Fatalf("submit = %+v, err = %v", got, err)
 	}
 	return got

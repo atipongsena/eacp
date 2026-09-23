@@ -1,0 +1,596 @@
+// Package demo runs the Slice A demo script (MASTER_PLAN §111) against a
+// running demo stack: see docs/DEMO.md and scripts/demo.sh.
+package demo
+
+import (
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"eacp/internal/identity"
+)
+
+// tenant is the demo tenant: the local connector-secrets manifest binds the
+// Fake ERP credential to it (deployments/docker/secrets).
+const tenant = "00000000-0000-4000-8000-0000000000d1"
+
+type demo struct {
+	t       *testing.T
+	root    string
+	project string
+	api     string
+	token   string // the Fake ERP credential: only the worker and the ERP hold it
+
+	mu        sync.Mutex
+	responses []string // every API response body, for the secret scan
+	keys      map[string]string
+	ids       map[string]string
+}
+
+func TestSliceADemo(t *testing.T) {
+	if os.Getenv("EACP_DEMO") != "1" {
+		t.Skip("set EACP_DEMO=1 and run scripts/demo.sh (docs/DEMO.md)")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(filepath.Join(root, "deployments", "docker", "secrets", "fakeerp-token.dev"))
+	if err != nil {
+		t.Fatalf("run deployments/docker/secrets/prepare_fakeerp_token.py first: %v", err)
+	}
+	d := &demo{t: t, root: root, project: env("EACP_DEMO_PROJECT", "eacp-demo"),
+		api: env("EACP_DEMO_API", "http://127.0.0.1:18080"), token: strings.TrimSpace(string(token)),
+		keys: map[string]string{}, ids: map[string]string{}}
+	d.ready()
+
+	d.step("0. Bootstrap tenant Acme with two admins (eacpctl, break-glass owner path)")
+	d.bootstrap()
+
+	d.step("1. Register the procurement agent: owner, version, tool allowlist")
+	d.register()
+
+	d.step("2. The agent tries to call Fake ERP directly")
+	d.bypass()
+
+	d.step("3. The agent requests a tool outside its allowlist")
+	denied := d.submit("outside-allowlist", "purchase", "erp.cancel_po", map[string]any{"po": "PO-1"})
+	d.until(denied, "DENIED")
+	d.logf("DENIED before governance: %s", d.action(denied)["state_reason"])
+
+	d.step("4. A routine purchase is governed (allow) and executed through the Go fabric")
+	routine := d.submit("routine-1", "purchase", "erp.create_po", map[string]any{"amount": 1200})
+	d.until(routine, "SUCCEEDED")
+	d.onePO(routine)
+
+	d.step("5. A high-value purchase needs two approvers; self-approval is rejected")
+	high := d.submit("high-value-1", "purchase_high_value", "erp.create_po", map[string]any{"amount": 2400000})
+	d.until(high, "PENDING_APPROVAL")
+	request := d.action(high)["approval_request_id"].(string)
+	code, body := d.call("carol", "POST", "/v1/approvals/"+request+"/votes", map[string]any{
+		"decision": "APPROVE", "reason": "my own purchase"})
+	if code/100 != 4 {
+		d.t.Fatalf("carol (subject and agent owner) approved her own purchase: %d %v", code, body)
+	}
+	d.logf("carol (subject and owner) cannot approve: HTTP %d %v", code, body["error"])
+	d.vote("amy", request, "PENDING")
+
+	d.step("6. Restart the API, the worker and PostgreSQL while the approval is pending")
+	d.compose("restart", "controlplane-api", "execution-worker", "postgres")
+	d.ready()
+	code, body = d.call("ben", "GET", "/v1/approvals/"+request, nil)
+	if code != 200 || body["state"] != "PENDING" {
+		d.t.Fatalf("approval after restart = %d %v", code, body)
+	}
+	d.logf("approval %s is still PENDING", request)
+	d.vote("ben", request, "GRANTED") // amy's vote survived: ben's completes the quorum
+	d.until(high, "SUCCEEDED")
+	d.onePO(high)
+
+	d.step("7. Kill the worker mid-dispatch: UNKNOWN_OUTCOME, reconcile, exactly one PO")
+	killed := d.submit("killed-1", "purchase", "erp.create_po", map[string]any{"amount": 900,
+		"scenario": "slow_response", "delay_ms": 5000})
+	d.until(killed, "EXECUTING")
+	d.compose("kill", "execution-worker")
+	d.logf("execution-worker killed while its call was in flight")
+	d.compose("start", "execution-worker") // a new worker process
+	d.until(killed, "SUCCEEDED")
+	// The journal shows the path: the lease lapsed during the call (T23),
+	// the outcome was reconciled (T28, T30), and nothing was re-dispatched.
+	moves := d.moves(killed)
+	if !slices.Equal(moves, []string{"RECEIVED", "AUTHORIZED", "QUEUED", "LEASED", "EXECUTING",
+		"UNKNOWN_OUTCOME: lease expired during the call", "RECONCILING", "SUCCEEDED"}) {
+		d.t.Fatalf("journaled path = %v", moves)
+	}
+	d.logf("journaled path: %s", strings.Join(moves, " → "))
+	d.onePO(killed)
+	d.checks(killed, "found")
+
+	d.step("8. Duplicate submissions produce one action and one PO")
+	var wg sync.WaitGroup
+	dup := make([]string, 5)
+	for i := range dup {
+		wg.Go(func() {
+			dup[i] = d.submit("duplicate-1", "purchase", "erp.create_po", map[string]any{"amount": 450})
+		})
+	}
+	wg.Wait()
+	for _, id := range dup {
+		if id != dup[0] {
+			d.t.Fatalf("one idempotency key produced actions %v", dup)
+		}
+	}
+	d.until(dup[0], "SUCCEEDED")
+	d.logf("5 concurrent submissions → action %s", dup[0])
+	d.onePO(dup[0])
+
+	d.step("9. Execute, then time out: the outcome is reconciled, not guessed")
+	timeout := d.submit("timeout-1", "purchase", "erp.create_po", map[string]any{"amount": 700,
+		"scenario": "execute_then_timeout", "delay_ms": 5000})
+	d.until(timeout, "UNKNOWN_OUTCOME", "RECONCILING", "SUCCEEDED")
+	d.until(timeout, "SUCCEEDED")
+	d.onePO(timeout)
+	d.checks(timeout, "found")
+
+	d.step("10. Delayed visibility: no retry; a human resolves with evidence")
+	hidden := d.submit("hidden-1", "purchase", "erp.create_po_eventual", map[string]any{"amount": 300,
+		"scenario": "execute_then_timeout", "delay_ms": 5000, "visibility_delay_ms": 600000})
+	d.until(hidden, "NEEDS_HUMAN_RESOLUTION")
+	d.logf("after BEST_EFFORT lookups: %s", d.action(hidden)["state_reason"])
+	d.checks(hidden, "absent", "absent", "absent")
+	if a := d.action(hidden); a["attempt_count"] != float64(1) {
+		d.t.Fatalf("the unknown write was retried: %v", a)
+	}
+	code, body = d.call("otto", "POST", "/v1/actions/"+hidden+"/resolutions", map[string]any{
+		"outcome": "succeeded", "reason": "ERP back office shows the purchase order",
+		"evidence": "ERP search by operation key, 2026-09-23", "external_reference": "PO-" + hidden})
+	if code != 200 {
+		d.t.Fatalf("resolution = %d %v", code, body)
+	}
+	d.until(hidden, "SUCCEEDED")
+	d.logf("otto (operator) resolved it: SUCCEEDED, %s", d.action(hidden)["external_reference"])
+	d.onePO(hidden)
+
+	d.step("11. Reconstruct the high-value purchase from its action_id")
+	d.evidence(high)
+
+	d.step("12. Search for the ERP credential in API responses, logs and the database")
+	d.secretScan()
+
+	d.step("Slice A demo complete")
+}
+
+func env(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+func (d *demo) step(s string) { d.t.Logf("\n=== %s", s) }
+func (d *demo) logf(f string, a ...any) {
+	d.t.Helper()
+	d.t.Logf("    "+f, a...)
+}
+
+// compose runs docker compose against the demo project.
+func (d *demo) compose(args ...string) string {
+	d.t.Helper()
+	out, err := d.composeErr(args...)
+	if err != nil {
+		d.t.Fatalf("docker compose %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
+func (d *demo) composeErr(args ...string) (string, error) {
+	base := []string{"compose", "-p", d.project, "-f", filepath.Join(d.root, "docker-compose.yml"),
+		"-f", filepath.Join(d.root, "deployments", "demo", "compose.demo.yml")}
+	cmd := exec.Command("docker", append(base, args...)...)
+	cmd.Dir = d.root
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (d *demo) ready() {
+	d.t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		resp, err := http.Get(d.api + "/readyz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			d.t.Fatalf("the demo API at %s is not ready: %v", d.api, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// call sends one API request as a named key holder and records the body.
+func (d *demo) call(who, method, path string, body any, headers ...string) (int, map[string]any) {
+	d.t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, d.api+path, rd)
+	if err != nil {
+		d.t.Fatal(err)
+	}
+	d.mu.Lock()
+	key := d.keys[who]
+	d.mu.Unlock()
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	var resp *http.Response
+	for try := 0; ; try++ { // ride out a restart in progress
+		resp, err = http.DefaultClient.Do(req)
+		if err == nil || try == 20 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+		if rd != nil {
+			b, _ := json.Marshal(body)
+			req.Body = io.NopCloser(bytes.NewReader(b))
+		}
+	}
+	if err != nil {
+		d.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	d.mu.Lock()
+	d.responses = append(d.responses, string(raw))
+	d.mu.Unlock()
+	out := map[string]any{}
+	_ = json.Unmarshal(raw, &out)
+	return resp.StatusCode, out
+}
+
+func (d *demo) must(want int, who, method, path string, body any) map[string]any {
+	d.t.Helper()
+	code, out := d.call(who, method, path, body)
+	if code != want {
+		d.t.Fatalf("%s %s as %s = %d %v, want %d", method, path, who, code, out, want)
+	}
+	return out
+}
+
+// newKey generates a key that its holder keeps; only its hash is registered.
+func (d *demo) newKey(who string, kind identity.Kind) (credential uuid.UUID, hash string) {
+	d.t.Helper()
+	credential = uuid.New()
+	key, h, err := identity.NewKey(kind, uuid.MustParse(tenant), credential)
+	if err != nil {
+		d.t.Fatal(err)
+	}
+	d.mu.Lock()
+	d.keys[who] = key
+	d.mu.Unlock()
+	return credential, hex.EncodeToString(h)
+}
+
+func (d *demo) bootstrap() {
+	var admins []string
+	for _, name := range []string{"alice", "bob"} {
+		cred, hash := d.newKey(name, identity.KindPrincipal)
+		admins = append(admins, "--admin",
+			fmt.Sprintf("name=%s,subject=%s@acme.test,credential=%s,hash=%s", name, name, cred, hash))
+	}
+	out, err := d.composeErr(append([]string{"run", "--rm", "migrate", "/eacpctl", "tenant", "create",
+		"--id", tenant, "--slug", "acme", "--name", "Acme"}, admins...)...)
+	if err != nil {
+		d.t.Fatalf("eacpctl tenant create: %v\n%s\nThe demo needs a fresh stack: run scripts/demo.sh.", err, out)
+	}
+	me := d.must(200, "alice", "GET", "/v1/me", nil)
+	d.logf("tenant %s: alice and bob are admins %v", tenant, me["roles"])
+
+	// Each person generates their own key; one admin proposes, the other approves.
+	cast := []struct{ name, role string }{
+		{"erin", "registry_editor"}, {"rita", "registry_approver"}, {"ravi", "registry_approver"},
+		{"otto", "operator"}, {"amy", "approver"}, {"ben", "approver"}, {"carol", "approver"}, {"audra", "auditor"},
+	}
+	for _, c := range cast {
+		p := d.must(201, "alice", "POST", "/v1/principals", map[string]any{"kind": "human", "name": c.name,
+			"subject": c.name + "@acme.test", "display_name": strings.ToUpper(c.name[:1]) + c.name[1:]})
+		id := p["id"].(string)
+		d.ids[c.name] = id
+		g := d.must(201, "alice", "POST", "/v1/role-grants", map[string]any{"principal_id": id, "role": c.role})
+		d.must(204, "bob", "POST", "/v1/role-grants/"+g["id"].(string)+"/approve", nil)
+		cred, hash := d.newKey(c.name, identity.KindPrincipal)
+		d.must(201, "alice", "POST", "/v1/credentials", map[string]any{"id": cred, "kind": identity.KindPrincipal,
+			"principal_id": id, "hash": hash, "expires_in_days": 1})
+		d.must(204, "bob", "POST", "/v1/credentials/"+cred.String()+"/approve", nil)
+	}
+	d.logf("people: erin (registry editor), rita and ravi (registry approvers), otto (operator), " +
+		"amy, ben and carol (approvers), audra (auditor); every grant and key approved by a second admin")
+
+	policy := d.must(201, "alice", "POST", "/v1/policies", map[string]any{"content": json.RawMessage(`{
+		"format_version": 1, "rules": [
+		{"id": "high-value", "match": {"operation": "purchase_high_value"}, "verdict": "escalate",
+		 "reason": "high-value purchase needs two approvers",
+		 "approval": {"quorum": 2, "eligible_roles": ["approver"], "ttl_seconds": 3600}},
+		{"id": "routine", "match": {"target": "erp"}, "verdict": "allow", "reason": "routine purchase"}]}`)})
+	d.must(204, "bob", "POST", "/v1/policies/"+policy["id"].(string)+"/activate", map[string]any{"reason": "reviewed"})
+	d.logf("policy v%v active: high-value purchases escalate to two approvers", policy["version"])
+}
+
+func (d *demo) register() {
+	conn := d.must(201, "erin", "POST", "/v1/connectors", map[string]any{"name": "erp", "protocol": "http",
+		"endpoint": "http://fakeerp:8090", "secret_ref": "fakeerp"})
+	contracts := map[string]map[string]any{
+		"create_po": {"side_effects": []string{"IRREVERSIBLE_WRITE", "FINANCIAL"}, "idempotency_mode": "native",
+			"idempotency_key_field": "Idempotency-Key", "reconciliation_lookup": "by_operation_key",
+			"reconciliation_consistency": "strong", "proof_standard": "authoritative",
+			"no_effect_errors": []string{"validation"}, "max_attempts": 2, "timeout_ms": 3000},
+		"create_po_eventual": {"side_effects": []string{"IRREVERSIBLE_WRITE", "FINANCIAL"},
+			"idempotency_mode": "correlation_only", "correlation_field": "external_reference",
+			"reconciliation_lookup": "by_operation_key", "reconciliation_consistency": "eventual",
+			"proof_standard": "best_effort", "no_effect_errors": []string{"validation"}, "max_attempts": 1,
+			"timeout_ms": 2000},
+		"cancel_po": {"side_effects": []string{"IRREVERSIBLE_WRITE"}, "idempotency_mode": "native",
+			"idempotency_key_field": "Idempotency-Key", "reconciliation_lookup": "by_operation_key",
+			"reconciliation_consistency": "strong", "proof_standard": "authoritative", "max_attempts": 1},
+	}
+	for _, name := range []string{"create_po", "create_po_eventual", "cancel_po"} {
+		tool := d.must(201, "erin", "POST", "/v1/connectors/"+conn["id"].(string)+"/tools", map[string]any{"name": name})
+		c := d.must(201, "erin", "POST", "/v1/tools/"+tool["id"].(string)+"/contracts", contracts[name])
+		d.must(204, "rita", "POST", "/v1/tools/"+tool["id"].(string)+"/contract", map[string]any{"contract_id": c["id"]})
+	}
+	d.logf("connector erp (http://fakeerp:8090; its credential lives only in the worker), tools create_po " +
+		"(AUTHORITATIVE lookup), create_po_eventual (BEST_EFFORT) and cancel_po; contracts approved by rita")
+
+	agent := d.must(201, "erin", "POST", "/v1/agents", map[string]any{"name": "procurement-bot",
+		"display_name": "Procurement bot", "environment": "production", "risk_class": "high",
+		"owner_principal_id": d.ids["carol"]})
+	version := d.must(201, "erin", "POST", "/v1/agents/"+agent["id"].(string)+"/versions",
+		map[string]any{"runtime": "python", "code_ref": "git:demo"})
+	vid := version["id"].(string)
+	al := d.must(201, "erin", "POST", "/v1/agent-versions/"+vid+"/allowlists",
+		map[string]any{"tools": []string{"erp.create_po", "erp.create_po_eventual"}})
+	d.must(204, "rita", "POST", "/v1/agent-versions/"+vid+"/allowlist", map[string]any{"allowlist_id": al["id"]})
+	d.must(204, "ravi", "POST", "/v1/agent-versions/"+vid+"/transitions", map[string]any{"to": "ACTIVE", "reason": "go live"})
+	cred, hash := d.newKey("agent", identity.KindAgent)
+	d.must(201, "erin", "POST", "/v1/credentials", map[string]any{"id": cred, "kind": identity.KindAgent,
+		"agent_version_id": vid, "hash": hash, "expires_in_days": 1})
+	d.must(204, "rita", "POST", "/v1/credentials/"+cred.String()+"/approve", nil)
+	self := d.must(200, "agent", "GET", "/v1/agent/self", nil)
+	d.logf("agent procurement-bot (owner carol) version %s is %s with allowlist [erp.create_po, erp.create_po_eventual]",
+		vid, self["state"])
+}
+
+// bypass shows that the agent runtime has no route to the ERP and no
+// credential, while it can reach the control plane.
+func (d *demo) bypass() {
+	if out, err := d.composeErr("exec", "-T", "agent", "wget", "-q", "-T", "3", "-O-",
+		"http://fakeerp:8090/v1/operations/x"); err == nil {
+		d.t.Fatalf("the agent reached Fake ERP directly:\n%s", out)
+	} else {
+		d.logf("agent → fakeerp:8090 fails: %s", strings.TrimSpace(firstLine(out)))
+	}
+	if out, err := d.composeErr("exec", "-T", "agent", "ls", "/run/secrets"); err == nil {
+		d.t.Fatalf("the agent has secrets mounted:\n%s", out)
+	}
+	d.logf("the agent has no /run/secrets and no ERP credential")
+	d.compose("exec", "-T", "agent", "wget", "-q", "-T", "3", "-O-", "http://controlplane-api:8080/readyz")
+	d.logf("agent → controlplane-api:8080 works: the control plane is its only path")
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// submit submits an action as the agent and returns its id.
+func (d *demo) submit(idem, operation, tool string, payload map[string]any) string {
+	d.t.Helper()
+	payload["currency"] = "THB"
+	code, body := d.call("agent", "POST", "/v1/actions?wait=2s", map[string]any{"subject": "carol@acme.test",
+		"operation": operation, "target": "erp", "tool": tool, "tool_schema_version": "1", "resource": "po",
+		"payload": payload}, "Idempotency-Key", idem)
+	if code != 200 && code != 202 {
+		d.t.Fatalf("submit %s = %d %v", idem, code, body)
+	}
+	id, _ := body["id"].(string)
+	if id == "" {
+		d.t.Fatalf("submit %s: no action id in %v", idem, body)
+	}
+	return id
+}
+
+func (d *demo) action(id string) map[string]any {
+	d.t.Helper()
+	code, body := d.call("agent", "GET", "/v1/actions/"+id, nil)
+	if code != 200 && code != 202 {
+		d.t.Fatalf("GET action %s = %d %v", id, code, body)
+	}
+	return body
+}
+
+// until waits for action id to reach one of states.
+func (d *demo) until(id string, states ...string) {
+	d.t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	last := ""
+	for {
+		a := d.action(id)
+		state, _ := a["state"].(string)
+		if state != last {
+			d.logf("%s → %s", id[:8], state)
+			last = state
+		}
+		if slices.Contains(states, state) {
+			return
+		}
+		if time.Now().After(deadline) {
+			d.t.Fatalf("action %s is %s (%v), want %v", id, state, a["state_reason"], states)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func (d *demo) vote(who, request, want string) {
+	d.t.Helper()
+	body := d.must(200, who, "POST", "/v1/approvals/"+request+"/votes", map[string]any{
+		"decision": "APPROVE", "reason": "within budget and supplier approved"})
+	if body["request_state"] != want {
+		d.t.Fatalf("after %s's vote the request is %v, want %s", who, body["request_state"], want)
+	}
+	d.logf("%s approves: request %s", who, want)
+}
+
+// onePO counts the purchase orders Fake ERP committed for the action.
+func (d *demo) onePO(id string) {
+	d.t.Helper()
+	key := d.action(id)["operation_key"].(string)
+	cmd := exec.Command("docker", "run", "--rm", "--network", d.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
+		"--header", "Authorization: Bearer "+d.token, "http://fakeerp:8090/v1/audit")
+	out, err := cmd.Output()
+	if err != nil {
+		d.t.Fatalf("reading the ERP audit: %v", err)
+	}
+	var entries []struct {
+		OperationKey string `json:"operation_key"`
+		Outcome      string `json:"outcome"`
+	}
+	if err := json.Unmarshal(out, &entries); err != nil {
+		d.t.Fatalf("ERP audit: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.OperationKey == key && e.Outcome == "effect_committed" {
+			n++
+		}
+	}
+	if n != 1 {
+		d.t.Fatalf("ERP holds %d purchase orders for %s, want exactly 1", n, key)
+	}
+	d.logf("ERP audit: exactly one purchase order for %s", key)
+}
+
+func (d *demo) checks(id string, want ...string) {
+	d.t.Helper()
+	ev := d.must(200, "audra", "GET", "/v1/actions/"+id+"/evidence", nil)
+	var got []string
+	checks, _ := ev["reconciliation_checks"].([]any)
+	for _, c := range checks {
+		got = append(got, c.(map[string]any)["result"].(string))
+	}
+	if !slices.Equal(got, want) {
+		d.t.Fatalf("reconciliation checks of %s = %v, want %v", id, got, want)
+	}
+	d.logf("reconciliation checks: %v", got)
+}
+
+func (d *demo) evidence(id string) {
+	d.t.Helper()
+	ev := d.must(200, "audra", "GET", "/v1/actions/"+id+"/evidence", nil)
+	for _, x := range ev["decisions"].([]any) {
+		dec := x.(map[string]any)
+		d.logf("governance: %s under policy v%v (%v), enforced digest %.16s…", dec["verdict"], dec["policy_version"],
+			dec["reasons"], dec["enforced_digest"])
+	}
+	for _, x := range ev["approvals"].([]any) {
+		a := x.(map[string]any)
+		d.logf("approval %s: %s, quorum %v", a["id"], a["state"], a["required_quorum"])
+		for _, v := range a["votes"].([]any) {
+			vote := v.(map[string]any)
+			d.logf("  vote %s by %s: %q", vote["decision"], d.name(vote["approver_principal_id"].(string)), vote["reason"])
+		}
+		if g, ok := a["grant"].(map[string]any); !ok || g["consumed_by_action_id"] != id {
+			d.t.Fatalf("grant = %v", a["grant"])
+		}
+		d.logf("  one-time grant consumed by this action at release")
+	}
+	for _, x := range ev["attempts"].([]any) {
+		at := x.(map[string]any)
+		d.logf("attempt %v by %s: %s %s (operation key %s)", at["attempt"], at["worker_id"], at["outcome"],
+			at["external_reference"], at["operation_key"])
+	}
+	var moves []string
+	for _, x := range ev["journal"].([]any) {
+		j := x.(map[string]any)
+		if data, ok := j["data"].(map[string]any); ok && strings.HasPrefix(j["event"].(string), "action.") && data["to"] != nil {
+			moves = append(moves, data["to"].(string))
+		}
+	}
+	d.logf("journal: %s", strings.Join(moves, " → "))
+	chain := ev["chain"].(map[string]any)
+	if chain["verified"] != true {
+		d.t.Fatalf("the journal chain does not verify: %v", chain)
+	}
+	d.logf("journal: %d entries about this action; the tenant's chain of %v entries verifies (head %.16s…)",
+		len(ev["journal"].([]any)), chain["count"], chain["head"])
+}
+
+// moves returns the journaled states of action id, with the reason for
+// UNKNOWN_OUTCOME.
+func (d *demo) moves(id string) []string {
+	d.t.Helper()
+	ev := d.must(200, "audra", "GET", "/v1/actions/"+id+"/evidence", nil)
+	var out []string
+	for _, x := range ev["journal"].([]any) {
+		j := x.(map[string]any)
+		data, _ := j["data"].(map[string]any)
+		to, _ := data["to"].(string)
+		if to == "" || (j["event"] != "action.received" && j["event"] != "action.transition") {
+			continue
+		}
+		if to == "UNKNOWN_OUTCOME" {
+			to += ": " + j["reason"].(string)
+		}
+		out = append(out, to)
+	}
+	return out
+}
+
+func (d *demo) name(id string) string {
+	for n, v := range d.ids {
+		if v == id {
+			return n
+		}
+	}
+	return id
+}
+
+func (d *demo) secretScan() {
+	d.t.Helper()
+	d.mu.Lock()
+	responses := strings.Join(d.responses, "\n")
+	d.mu.Unlock()
+	if strings.Contains(responses, d.token) {
+		d.t.Fatal("the ERP credential appears in an API response")
+	}
+	d.logf("%d API responses: no credential", len(d.responses))
+	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "migrate", "postgres")
+	if strings.Contains(logs, d.token) {
+		d.t.Fatal("the ERP credential appears in a service log")
+	}
+	d.logf("%d lines of service logs: no credential", strings.Count(logs, "\n"))
+	dump := d.compose("exec", "-T", "postgres", "pg_dump", "-U", "postgres", "--data-only", "eacp")
+	if strings.Contains(dump, d.token) {
+		d.t.Fatal("the ERP credential appears in the database")
+	}
+	d.logf("database dump of %d bytes: no credential", len(dump))
+}

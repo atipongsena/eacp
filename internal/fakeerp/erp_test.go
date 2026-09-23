@@ -473,3 +473,21 @@ func TestEventualFakeERPLostResponseCanPrecedeLookupVisibility(t *testing.T) {
 		t.Fatalf("visible lookup status = %d", got)
 	}
 }
+
+// A record can stay invisible to lookup for up to ten minutes, long enough
+// for a reconciler to give up and a human to resolve it (the Slice A demo).
+func TestFakeERPVisibilityDelayIsBoundedAtTenMinutes(t *testing.T) {
+	e := newEnvironment(t)
+	for delay, want := range map[int]int{600000: http.StatusOK, 600001: http.StatusUnprocessableEntity} {
+		b, _ := json.Marshal(map[string]any{"tool": "erp.create_po_eventual", "external_reference": e.key(),
+			"payload": map[string]any{"amount": 42, "scenario": "delayed_visibility", "visibility_delay_ms": delay}})
+		r, err := e.request(http.MethodPost, "/v1/execute", "", string(b), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body(t, r)
+		if r.StatusCode != want {
+			t.Errorf("visibility_delay_ms %d: status %d, want %d", delay, r.StatusCode, want)
+		}
+	}
+}

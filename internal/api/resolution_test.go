@@ -73,7 +73,10 @@ func TestOperatorsResolveActionsOverTheAPI(t *testing.T) {
 		}
 		code, body = h.as(who, "GET", path+"/evidence", nil)
 		h.want(200, code, body)
-		if attempts, _ := body["attempts"].([]any); len(attempts) != 1 {
+		attempts, _ := body["attempts"].([]any)
+		journal, _ := body["journal"].([]any)
+		chain, _ := body["chain"].(map[string]any)
+		if len(attempts) != 1 || len(journal) == 0 || chain["verified"] != true {
 			t.Fatalf("evidence = %v", body)
 		}
 	}

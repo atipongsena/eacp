@@ -1,0 +1,22 @@
+# Slice A demo (docs/DEMO.md): the stack of docker-compose.yml, run as its
+# own compose project (eacp-demo) with its own volumes and host ports, so it
+# never touches a development stack. Use it only through scripts/demo.sh:
+#
+#   docker compose -p eacp-demo -f docker-compose.yml -f deployments/demo/compose.demo.yml ...
+#
+# Shorter timings let a killed worker's lease lapse, and a reconciliation
+# run out of lookups, within the demo.
+
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:55433:5432"
+
+  controlplane-api:
+    ports: !override
+      - "127.0.0.1:18080:8080"
+
+  execution-worker:
+    environment:
+      EACP_WORKER_LEASE: 10s
+      EACP_RECONCILE_MAX_ATTEMPTS: "3"

@@ -6,7 +6,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A · Phases 1–7 are complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution. Slice A hardening and the demo are Phase 8.
+> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B starts with Phase 9.
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -15,7 +15,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 
 This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-001-product-boundary-and-enforcement-point.md).
 
-## What exists today (Phases 1–7)
+## What exists today (Slice A, Phases 1–8)
 
 | Capability | Evidence |
 |---|---|
@@ -48,6 +48,11 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Fenced reconciler: lookup under the pinned proof standard; only authoritative, settled absence permits a retry with the same key or `FAILED`; conflicts and exhaustion go to a human | `migrations/00007_reconciliation.sql`, `internal/worker/reconciler.go`, `internal/worker/reconcile_schema_test.go` |
 | Fake ERP flagship tests: lost response → one record; delayed visibility → no retry; killed worker → no blind re-dispatch | `internal/worker/reconcile_integration_test.go` |
 | Operator resolution with separation of duties and a two-person retry; queue and evidence for operators and auditors | `internal/action/resolution.go`; `GET /v1/actions?state=`, `GET /v1/actions/{id}/evidence`, `POST /v1/actions/{id}/resolutions`; `eacpctl action` |
+| Evidence reconstruction from an `action_id`: decisions, approvals with votes and grant, attempts, checks, resolutions and journal, with chain verification | `internal/action/evidence.go`, `internal/worker/evidence_integration_test.go` |
+| Tenant isolation: RLS catalog test with reviewed cross-tenant paths; every table swept after a full flow | `internal/storage/rls_catalog_test.go`, `internal/worker/isolation_integration_test.go` |
+| Chaos: connection storms under live loops, restarted services, killed worker, duplicate submissions; governance outages block no cancellation | `internal/worker/chaos_integration_test.go` |
+| Slice A invariant map, checked against MASTER_PLAN §103 | `docs/INVARIANTS.md`, `test/invariants` |
+| Slice A demo on an isolated stack (§111) | `scripts/demo.sh`, [docs/DEMO.md](docs/DEMO.md) |
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
@@ -78,6 +83,12 @@ docker compose up -d postgres
 export EACP_TEST_ADMIN_DSN="postgres://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable"
 go test -race ./...
 EACP_COMPOSE_TEST=1 go test -count=1 ./test/security/
+```
+
+Demo (an isolated stack on ports 18080 and 55433, removed afterwards):
+
+```bash
+scripts/demo.sh
 ```
 
 Compose credentials are local-development defaults only.
