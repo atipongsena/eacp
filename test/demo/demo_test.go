@@ -39,6 +39,7 @@ type demo struct {
 	responses []string // every API response body, for the secret scan
 	keys      map[string]string
 	ids       map[string]string
+	contracts map[string]map[string]any
 }
 
 func TestSliceADemo(t *testing.T) {
@@ -55,7 +56,7 @@ func TestSliceADemo(t *testing.T) {
 	}
 	d := &demo{t: t, root: root, project: env("EACP_DEMO_PROJECT", "eacp-demo"),
 		api: env("EACP_DEMO_API", "http://127.0.0.1:18080"), token: strings.TrimSpace(string(token)),
-		keys: map[string]string{}, ids: map[string]string{}}
+		keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
 	d.ready()
 
 	d.step("0. Bootstrap tenant Acme with two admins (eacpctl, break-glass owner path)")
@@ -182,10 +183,13 @@ func TestSliceADemo(t *testing.T) {
 	d.step("12. NATS goes down: purchases still execute by polling, and the outbox drains afterwards")
 	d.natsOutage()
 
-	d.step("13. Reconstruct the high-value purchase from its action_id")
+	d.step("13. A hard budget: 100 concurrent purchases race for a budget that fits 37")
+	d.budgetRace()
+
+	d.step("14. Reconstruct the high-value purchase from its action_id")
 	d.evidence(high)
 
-	d.step("14. Search for the ERP credential in API responses, logs and the database")
+	d.step("15. Search for the ERP credential in API responses, logs and the database")
 	d.secretScan()
 
 	d.step("Slice A demo complete")
@@ -375,6 +379,8 @@ func (d *demo) register() {
 		tool := d.must(201, "erin", "POST", "/v1/connectors/"+conn["id"].(string)+"/tools", map[string]any{"name": name})
 		c := d.must(201, "erin", "POST", "/v1/tools/"+tool["id"].(string)+"/contracts", contracts[name])
 		d.must(204, "rita", "POST", "/v1/tools/"+tool["id"].(string)+"/contract", map[string]any{"contract_id": c["id"]})
+		d.contracts[name] = contracts[name]
+		d.ids["tool "+name] = tool["id"].(string)
 	}
 	d.logf("connector erp (http://fakeerp:8090; its credential lives only in the worker), tools create_po " +
 		"(AUTHORITATIVE lookup), create_po_eventual (BEST_EFFORT) and cancel_po; contracts approved by rita")
@@ -385,6 +391,7 @@ func (d *demo) register() {
 	version := d.must(201, "erin", "POST", "/v1/agents/"+agent["id"].(string)+"/versions",
 		map[string]any{"runtime": "python", "code_ref": "git:demo"})
 	vid := version["id"].(string)
+	d.ids["agent procurement-bot"] = agent["id"].(string)
 	al := d.must(201, "erin", "POST", "/v1/agent-versions/"+vid+"/allowlists",
 		map[string]any{"tools": []string{"erp.create_po", "erp.create_po_eventual"}})
 	d.must(204, "rita", "POST", "/v1/agent-versions/"+vid+"/allowlist", map[string]any{"allowlist_id": al["id"]})
@@ -449,6 +456,71 @@ func (d *demo) natsOutage() {
 	d.compose("start", "nats")
 	d.waitSQL(pending, "0")
 	d.logf("NATS restarted: the relay published every waiting row")
+}
+
+// budgetRace shows ADR-012 and §103 invariant 3: create_po gets a costed
+// contract version (the payload's amount in THB, two-person), the agent a
+// THB budget of 3 700 (a two-person raise), and 100 purchases of 100 THB
+// are submitted at once. Exactly 37 execute, one PO each; 63 are denied
+// for budget; the account ends exactly at its limit.
+func (d *demo) budgetRace() {
+	d.t.Helper()
+	costed := map[string]any{"cost_unit": "THB", "cost_amount_field": "amount", "cost_unit_field": "currency"}
+	for k, v := range d.contracts["create_po"] {
+		costed[k] = v
+	}
+	tool := d.ids["tool create_po"]
+	c := d.must(201, "erin", "POST", "/v1/tools/"+tool+"/contracts", costed)
+	d.must(204, "rita", "POST", "/v1/tools/"+tool+"/contract", map[string]any{"contract_id": c["id"]})
+	d.logf("erin proposes create_po contract v2 (a call costs the payload's amount in THB); rita activates it")
+	acct := d.must(201, "alice", "POST", "/v1/budgets", map[string]any{"name": "procurement-bot-thb", "unit": "THB",
+		"agent_id": d.ids["agent procurement-bot"]})
+	path := "/v1/budgets/" + acct["id"].(string)
+	raise := d.must(201, "alice", "POST", path+"/limit", map[string]any{"limit": "3700", "reason": "demo budget"})
+	if code, body := d.call("alice", "POST", "/v1/budget-limit-changes/"+raise["id"].(string)+"/approve",
+		map[string]any{"reason": "my own raise"}); code != 403 {
+		d.t.Fatalf("alice approved her own raise: %d %v", code, body)
+	}
+	d.must(200, "bob", "POST", "/v1/budget-limit-changes/"+raise["id"].(string)+"/approve", map[string]any{"reason": "agreed"})
+	d.logf("alice proposes a 3 700 THB limit for procurement-bot; she cannot approve it herself; bob does")
+
+	const n, fits = 100, 37
+	began := time.Now()
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			code, body := d.post(fmt.Sprintf("budget-%03d", i), "purchase", "erp.create_po", map[string]any{"amount": 100})
+			if code != 200 && code != 202 && code != 503 {
+				d.t.Errorf("budget purchase %d = %d %v", i, code, body)
+			}
+		})
+	}
+	wg.Wait()
+	d.logf("%d concurrent purchases of 100 THB submitted in %v", n, time.Since(began).Round(time.Millisecond))
+	const race = `FROM eacp.actions WHERE idempotency_key LIKE 'budget-%'`
+	d.waitSQL(`SELECT count(*) `+race+` AND state IN ('SUCCEEDED', 'DENIED')`, fmt.Sprint(n))
+	succeeded := d.sql(`SELECT count(*) ` + race + ` AND state = 'SUCCEEDED'`)
+	denied := d.sql(`SELECT count(*) ` + race + ` AND state = 'DENIED' AND state_reason = 'budget_exceeded'`)
+	if succeeded != fmt.Sprint(fits) || denied != fmt.Sprint(n-fits) {
+		d.t.Fatalf("budget race: %s succeeded and %s were denied for budget, want %d and %d", succeeded, denied, fits, n-fits)
+	}
+	pos := d.committedPOs()
+	for _, k := range strings.Fields(d.sql(`SELECT string_agg(operation_key, ' ') ` + race + ` AND state = 'SUCCEEDED'`)) {
+		if pos[k] != 1 {
+			d.t.Fatalf("ERP holds %d purchase orders for %s, want 1", pos[k], k)
+		}
+	}
+	for _, k := range strings.Fields(d.sql(`SELECT string_agg(operation_key, ' ') ` + race + ` AND state = 'DENIED'`)) {
+		if pos[k] != 0 {
+			d.t.Fatalf("a denied purchase reached the ERP: %s", k)
+		}
+	}
+	d.logf("%s SUCCEEDED with exactly one PO each; %s DENIED budget_exceeded, none reached the ERP", succeeded, denied)
+	a := d.must(200, "audra", "GET", path, nil)
+	if a["committed"] != float64(3700) || a["reserved"] != float64(0) || a["available"] != float64(0) {
+		d.t.Fatalf("budget account = %v", a)
+	}
+	d.logf("account procurement-bot-thb: limit %v, committed %v, available %v", a["hard_limit"], a["committed"], a["available"])
 }
 
 // waitSQL waits until query returns want.
@@ -539,10 +611,11 @@ func (d *demo) vote(who, request, want string) {
 	d.logf("%s approves: request %s", who, want)
 }
 
-// onePO counts the purchase orders Fake ERP committed for the action.
-func (d *demo) onePO(id string) {
+// committedPOs counts the purchase orders Fake ERP committed per
+// operation key, from its audit (read with the ERP credential, as an
+// auditor of the ERP would).
+func (d *demo) committedPOs() map[string]int {
 	d.t.Helper()
-	key := d.action(id)["operation_key"].(string)
 	cmd := exec.Command("docker", "run", "--rm", "--network", d.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
 		"--header", "Authorization: Bearer "+d.token, "http://fakeerp:8090/v1/audit")
 	out, err := cmd.Output()
@@ -556,13 +629,21 @@ func (d *demo) onePO(id string) {
 	if err := json.Unmarshal(out, &entries); err != nil {
 		d.t.Fatalf("ERP audit: %v", err)
 	}
-	n := 0
+	pos := map[string]int{}
 	for _, e := range entries {
-		if e.OperationKey == key && e.Outcome == "effect_committed" {
-			n++
+		if e.Outcome == "effect_committed" {
+			pos[e.OperationKey]++
 		}
 	}
-	if n != 1 {
+	return pos
+}
+
+// onePO checks that Fake ERP committed exactly one purchase order for the
+// action.
+func (d *demo) onePO(id string) {
+	d.t.Helper()
+	key := d.action(id)["operation_key"].(string)
+	if n := d.committedPOs()[key]; n != 1 {
 		d.t.Fatalf("ERP holds %d purchase orders for %s, want exactly 1", n, key)
 	}
 	d.logf("ERP audit: exactly one purchase order for %s", key)

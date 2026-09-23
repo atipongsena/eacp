@@ -20,8 +20,8 @@ import (
 )
 
 // Invariant 8: after a complete flow in tenant A (registry, policy,
-// governance, approval, execution, reconciliation, operator resolution,
-// journal, outbox and inbox), neither tenant B nor a session without a tenant sees
+// governance, approval, budget, execution, reconciliation, operator
+// resolution, journal, outbox and inbox), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -35,6 +35,23 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 			}
 		}
 	}
+	// A budget on create_po (ADR-012): a costed contract version and a
+	// funded account (a two-person limit change); the flow reserves and
+	// commits through the worker and the reconciler.
+	costed := v.f.ID(t, "erin", `INSERT INTO eacp.tool_contracts (tenant_id, tool_id, side_effects, idempotency_mode,
+			idempotency_key_field, correlation_field, reconciliation_lookup, reconciliation_consistency, proof_standard,
+			no_effect_errors, max_attempts, timeout_ms, cost_unit, cost_fixed)
+		SELECT c.tenant_id, c.tool_id, c.side_effects, c.idempotency_mode, c.idempotency_key_field, c.correlation_field,
+			c.reconciliation_lookup, c.reconciliation_consistency, c.proof_standard, c.no_effect_errors, c.max_attempts,
+			c.timeout_ms, 'TOOL_CALLS', 1
+		FROM eacp.tools t JOIN eacp.tool_contracts c ON c.id = t.active_contract_id WHERE t.name = 'create_po'
+		RETURNING id`)
+	if err := v.f.Exec("ravi", `UPDATE eacp.tools t SET active_contract_id = c.id FROM eacp.tool_contracts c
+		WHERE c.id = $1 AND t.id = c.tool_id`, costed); err != nil {
+		t.Fatal(err)
+	}
+	v.f.FundAgent(t, v.agent.Agent, "TOOL_CALLS", "10")
+
 	found := v.submitTo("PENDING_APPROVAL", "create_po", map[string]any{"scenario": "execute_then_timeout", "delay_ms": 300})
 	hidden := v.submitTo("PENDING_APPROVAL", "create_po_eventual", map[string]any{"scenario": "execute_then_timeout",
 		"delay_ms": 300, "visibility_delay_ms": 5000})
@@ -44,6 +61,12 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v.runWorker(2)
 	if got, _ := v.reconcile(v.reconciler(1, 100*time.Millisecond), found.ID); got.State != "SUCCEEDED" {
 		t.Fatalf("found = %s", got.State)
+	}
+	var settled string
+	if err := storage.InTenantTx(ctx, v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT state FROM eacp.budget_reservations WHERE action_id = $1`, found.ID).Scan(&settled)
+	}); err != nil || settled != "COMMITTED" {
+		t.Fatalf("found's reservation = %q %v", settled, err)
 	}
 	if got, _ := v.reconcile(v.reconciler(1, 100*time.Millisecond), hidden.ID); got.State != "NEEDS_HUMAN_RESOLUTION" {
 		t.Fatalf("hidden = %s", got.State)

@@ -95,6 +95,22 @@ type CheckView struct {
 	ContractVersion   int       `json:"connector_contract_version"`
 }
 
+// ReservationView is a budget reservation of the action (ADR-012): made
+// at release, then committed on success or released without effect.
+type ReservationView struct {
+	ID              uuid.UUID   `json:"id"`
+	AccountID       uuid.UUID   `json:"account_id"`
+	ContractID      uuid.UUID   `json:"contract_id"`
+	Unit            string      `json:"unit"`
+	Amount          json.Number `json:"amount"`
+	State           string      `json:"state"`
+	CommittedAmount json.Number `json:"committed_amount,omitempty"`
+	CreatedAt       time.Time   `json:"created_at"`
+	ExpiresAt       time.Time   `json:"expires_at"`
+	SettledAt       *time.Time  `json:"settled_at,omitempty"`
+	SettleReason    string      `json:"settle_reason,omitempty"`
+}
+
 // JournalActor is who made a journaled change.
 type JournalActor struct {
 	Kind   string    `json:"kind"`
@@ -134,18 +150,19 @@ type ChainView struct {
 // Evidence is everything recorded about one action (MASTER_PLAN §103
 // invariants 10 and 17): governance decisions, approvals with their votes
 // and grant, every attempt (including late results), every reconciliation
-// check, every operator resolution, and the journal entries about all of
-// them, verified as one hash chain.
+// check, every operator resolution, its budget reservations, and the
+// journal entries about all of them, verified as one hash chain.
 type Evidence struct {
-	ActionID    uuid.UUID        `json:"action_id"`
-	Action      View             `json:"action"`
-	Decisions   []DecisionView   `json:"decisions"`
-	Approvals   []ApprovalView   `json:"approvals"`
-	Attempts    []AttemptView    `json:"attempts"`
-	Checks      []CheckView      `json:"reconciliation_checks"`
-	Resolutions []ResolutionView `json:"resolutions"`
-	Journal     []JournalEntry   `json:"journal"`
-	Chain       ChainView        `json:"chain"`
+	ActionID    uuid.UUID         `json:"action_id"`
+	Action      View              `json:"action"`
+	Decisions   []DecisionView    `json:"decisions"`
+	Approvals   []ApprovalView    `json:"approvals"`
+	Attempts    []AttemptView     `json:"attempts"`
+	Checks      []CheckView       `json:"reconciliation_checks"`
+	Resolutions []ResolutionView  `json:"resolutions"`
+	Budget      []ReservationView `json:"budget_reservations"`
+	Journal     []JournalEntry    `json:"journal"`
+	Chain       ChainView         `json:"chain"`
 }
 
 // Evidence reconstructs action id from the database in one read-only
@@ -154,7 +171,7 @@ type Evidence struct {
 // readable when it matters most.
 func (e *Engine) Evidence(ctx context.Context, tenant, id uuid.UUID) (Evidence, error) {
 	ev := Evidence{ActionID: id, Decisions: []DecisionView{}, Approvals: []ApprovalView{}, Attempts: []AttemptView{},
-		Checks: []CheckView{}, Resolutions: []ResolutionView{}, Journal: []JournalEntry{}}
+		Checks: []CheckView{}, Resolutions: []ResolutionView{}, Budget: []ReservationView{}, Journal: []JournalEntry{}}
 	err := storage.InTenantReadTx(ctx, e.pool, tenant.String(), func(tx pgx.Tx) error {
 		r, err := load(ctx, tx, id, false)
 		if err != nil {
@@ -198,6 +215,12 @@ func (e *Engine) Evidence(ctx context.Context, tenant, id uuid.UUID) (Evidence, 
 		}
 		for _, res := range ev.Resolutions {
 			subjects = append(subjects, res.ID)
+		}
+		if ev.Budget, err = reservations(ctx, tx, id); err != nil {
+			return err
+		}
+		for _, b := range ev.Budget {
+			subjects = append(subjects, b.ID)
 		}
 		if ev.Journal, err = journal(ctx, tx, subjects); err != nil {
 			return err
@@ -316,6 +339,23 @@ func checks(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]CheckView, error) {
 		var x CheckView
 		err := r.Scan(&x.LeaseGeneration, &x.ReconcilerID, &x.CheckedAt, &x.Result, &x.ExternalReference,
 			&x.ProofStandard, &x.ContractVersion)
+		return x, err
+	})
+}
+
+func reservations(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]ReservationView, error) {
+	rows, err := tx.Query(ctx, `SELECT id, account_id, contract_id, unit, trim_scale(amount)::text, state,
+		COALESCE(trim_scale(committed_amount)::text, ''), created_at, expires_at, settled_at, COALESCE(settle_reason, '')
+		FROM eacp.budget_reservations WHERE action_id = $1 ORDER BY created_at, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ReservationView, error) {
+		var x ReservationView
+		var amount, committed string
+		err := r.Scan(&x.ID, &x.AccountID, &x.ContractID, &x.Unit, &amount, &x.State, &committed, &x.CreatedAt,
+			&x.ExpiresAt, &x.SettledAt, &x.SettleReason)
+		x.Amount, x.CommittedAmount = json.Number(amount), json.Number(committed)
 		return x, err
 	})
 }

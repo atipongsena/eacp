@@ -140,7 +140,8 @@ Step R1 (ONE transaction, READ COMMITTED, row locks):
                AND consumed_at IS NULL
                AND expires_at > now()
             → must affect exactly 1 row, else ROLLBACK (no release)
-        reserve budget                (Slice A: no-op hook; Slice B: hard budget)
+        reserve budget                (Slice B, ADR-012: eacp.budget_reserve, which runs
+                                       before any audited write and before the grant is consumed)
         UPDATE action SET state='QUEUED', released_at=now(),
                release_decision_id = decision'.decision_id,
                policy_version = decision'.policy_version,          -- pinned
@@ -203,7 +204,7 @@ The release follows §5a with these implementation choices:
   The release decision is the action's new `decision_evidence_id`. It is inserted before the `UPDATE`, because the guard reads it.
 - **`escalate` with no usable grant → T11.** This covers a new policy version, and also a contract change that turns an allowed action into an escalated one. A grant that expired before release instead expires the request, and with it the action (T13, the default in the table below).
 - **Allow after a policy change** voids the outstanding request and grants in the release transaction, then queues.
-- **Budget.** The Slice A budget hook (`action.Budget`, a no-op) runs inside R1 before T10. An error aborts the release, and the grant stays unconsumed.
+- **Budget.** Since Phase 11, R1 reserves the action's cost on its agent's budget leaf ([ADR-012](ADR-012-budget-reservation.md) §4). The reservation runs after the action, approval rows and registry are locked, and before any audited write or grant consumption. A budget that can't take the cost denies the action (T12, `budget_exceeded`); the grant stays unconsumed and is voided with the action. The Slice A no-op hook (`action.Budget`) is gone.
 - **Retries.** Serialization failures and deadlocks roll the whole transaction back and are retried.
 
 Cross-tenant work never loosens tenant RLS for `eacp_app`. Two narrow `SECURITY DEFINER` functions do it instead, and only they read across tenants:

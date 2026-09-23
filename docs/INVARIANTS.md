@@ -1,14 +1,16 @@
-# Slice A invariants and their tests
+# Invariants and their tests
 
 Phase 9 (Slice B) adds the AGT sidecar PDP. Its tests join invariants 10, 14 and 18. The sidecar's own suites, including the conformance reference set run through ACS and OPA, run in `docker build -f sidecars/agt-pdp/Dockerfile --target test .`.
 
 Phase 10 (Slice B) adds NATS JetStream for work hints and dashboard events (ADR-014). Its tests join invariants 4 and 8. They run against a JetStream server embedded in the test process, so they never skip for want of NATS.
 
+Phase 11 (Slice B) adds hard budget reservation (ADR-012). It maps the first [B] invariant, 3, and its tests join invariants 8 and 17.
+
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
 
-`test/invariants` checks the map mechanically. It reads the [A] invariants from MASTER_PLAN §103, requires a section here for each, and requires that every test named in a section exists in the named package. `go test -race ./...` with `EACP_TEST_ADMIN_DSN` runs them all. The `test/security` tests also need `EACP_COMPOSE_TEST=1` and the compose stack, and `test/demo` needs `EACP_DEMO=1` (see [DEMO.md](DEMO.md)).
+`test/invariants` checks the map mechanically. It reads the invariants and their tags from MASTER_PLAN §103, requires a section here for each [A] invariant, allows one for a [B] invariant once its phase has landed, requires each section's tag to match §103, and requires that every test named in a section exists in the named package. `go test -race ./...` with `EACP_TEST_ADMIN_DSN` runs them all. The `test/security` tests also need `EACP_COMPOSE_TEST=1` and the compose stack, and `test/demo` needs `EACP_DEMO=1` (see [DEMO.md](DEMO.md)).
 
-Format: one `## <n> [A]` section per invariant, and one list item per test (`` `package` TestName — what it shows ``).
+Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per test (`` `package` TestName — what it shows ``).
 
 ## 1 [A] A stale worker cannot commit, nor cause a second dispatch
 
@@ -25,6 +27,21 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/approval` TestConcurrentConsumeSucceedsOnce — concurrent consumption succeeds once
 - `internal/approval` TestConsumeBindsDigestAndCanSucceedOnce — a grant binds its digest and is consumed once
 - `internal/approval` TestGrantCannotBeConsumedTwiceOrAfterPolicyChange — no second consumption, and none after a policy change
+
+## 3 [B] Hard budgets cannot oversubscribe
+
+- `internal/action` TestConcurrentReleasesNeverOversubscribeAHardBudget — 100 concurrent releases on one leaf that fits 37: exactly 37 reserved, 63 denied `budget_exceeded`; p50/p99 release latency upper bounds logged
+- `internal/budget` TestReserveReportsWhyItCannotReserve — the account CHECK refuses even a correctly priced reservation made by hand
+- `internal/budget` TestReservationsAreMadeOnlyByTheReleaseForTheActionsCost — T10 requires the reservation; only the release actor reserves, and only the exact cost
+- `internal/budget` TestEscrowBoundsChildrenByTheirParent — a child's limit is escrowed from its parent, so the tree never exceeds its root
+- `internal/budget` TestRaisingALimitIsTwoPersonAndLoweringIsNot — a raise needs a second admin and is refused once the limit moved
+- `internal/budget` TestReleasesSettlementsAndLimitChangesDoNotDeadlock — releases, settlements and limit changes under load: no deadlock, counters match the rows
+- `internal/budget` TestSettlementNeverWaitsForTheAccount — settling touches only the reservation, never the account row
+- `internal/budget` TestALeafReservationDoesNotWaitForItsParent — a reservation locks only its leaf
+- `internal/action` TestSettlementFollowsTheOutcome — success commits, no effect releases, an unknown outcome holds until a human resolves it
+- `internal/action` TestAnExpiredReleaseGivesItsBudgetBack — the reservation TTL: expiry at `not_after` releases it
+- `internal/action` TestABudgetDenialNeverSpendsTheApproval — the budget is checked before the grant is consumed
+- `internal/action` TestBudgetFailuresDenyClosed — no account or an invalid cost denies
 
 ## 4 [A] Duplicate messages, submissions or reclaims do not duplicate external effects
 
@@ -74,6 +91,7 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/action` TestCrossTenantScansExposeOnlyCountsAndTenantIDs — the SECURITY DEFINER hints expose ids and counts only
 - `internal/messaging` TestInboxIsGuardedAndTenantIsolated — inbox records are tenant rows under RLS, written only by the inbox actor
 - `internal/messaging` TestDashboardEventsArrivePerTenant — dashboard events carry the tenant in the subject; another tenant's filter sees none
+- `internal/budget` TestBudgetRowsAreTenantIsolated — budget accounts, reservations and limit changes are tenant rows under RLS
 
 ## 10 [A] Audit and evidence references remain reconstructible end-to-end
 
@@ -142,6 +160,8 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/audit` TestConcurrentAppendsStayGapless — the chain has no gaps under concurrency
 - `internal/worker` TestHumanResolutionIsSeparatedJournaledAndTwoPersonForRetry — operator resolutions are journaled
 - `internal/worker` TestEvidenceReconstructsTheWholeActionFromItsID — tampering is reported by the evidence chain
+- `internal/budget` TestRaisingALimitIsTwoPersonAndLoweringIsNot — every limit proposal, application and rejection is journaled
+- `internal/action` TestSettlementFollowsTheOutcome — a reservation and its settlement are journaled with their actors
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 

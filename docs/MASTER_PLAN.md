@@ -3498,6 +3498,8 @@ Correctness ต้องไม่ขึ้นกับ NATS (§60)
 
 # 85. Phase 11 — Budget Reservation (Slice B)
 
+> **Status (2026-09-24): complete.** Normative detail: [ADR-012](adr/ADR-012-budget-reservation.md) Rev 1.0. The release transaction reserves on the agent's leaf only, and the action's own state change commits or releases the reservation without locking the account. Child limits are escrowed from their parent, and raising a limit is two-person.
+
 Atomic:
 
 ```text

@@ -34,29 +34,17 @@ type Limits struct {
 // is never unbounded.
 var DefaultLimits = Limits{MaxQueuedPerTenant: 1000, MaxQueuedGlobal: 10000}
 
-// Reservation identifies what a budget reservation is for.
-type Reservation struct {
-	TenantID, ActionID, AgentID uuid.UUID
-	Tool                        string
-}
-
-// Budget reserves budget inside the release transaction (MASTER_PLAN §47).
-// An error aborts the release; the action stays AUTHORIZED and no grant is
-// consumed. Hard budgets arrive in Slice B (Phase 11).
-type Budget interface {
-	Reserve(ctx context.Context, tx pgx.Tx, r Reservation) error
-}
-
-// NoBudget is the Slice A budget hook: it reserves nothing.
-type NoBudget struct{}
-
-func (NoBudget) Reserve(context.Context, pgx.Tx, Reservation) error { return nil }
+// Budget denial reasons (ADR-012 §4). A budget denial is terminal (T12).
+const (
+	BudgetExceeded       = "budget_exceeded"
+	BudgetAccountMissing = "budget_account_missing"
+	BudgetCostInvalid    = "budget_cost_invalid"
+)
 
 // Options configure an Engine.
 type Options struct {
 	// Provider is the governance PDP. Nil means unavailable (fail closed).
 	Provider governance.GovernanceProvider
-	Budget   Budget
 	Limits   Limits
 	Log      *slog.Logger
 	// EvaluationTimeout bounds one PDP call (default 5s). A timeout is an
@@ -78,9 +66,6 @@ type Engine struct {
 
 // New returns an Engine over pool (connected as the application role).
 func New(pool *pgxpool.Pool, o Options) *Engine {
-	if o.Budget == nil {
-		o.Budget = NoBudget{}
-	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -680,6 +665,19 @@ func (e *Engine) releaseLocked(ctx context.Context, tx pgx.Tx, a Actor, r row,
 		return err
 	}
 	record := func() (uuid.UUID, error) { return governance.RecordDecision(ctx, tx, r.ID, d) }
+	// budget reserves the action's cost, or denies the action (T12) with
+	// the release decision as its evidence.
+	budget := func() (bool, error) {
+		why, err := reserve(ctx, tx, r, s)
+		if err != nil || why == "" {
+			return false, err
+		}
+		evidence, err := record()
+		if err != nil {
+			return true, err
+		}
+		return true, deny(ctx, tx, r, why, &evidence)
+	}
 
 	if d.Verdict == governance.VerdictDeny || d.DigestMismatch || !bytes.Equal(d.EnforcedDigest[:], r.EnforcedDigest) {
 		why := reason(d)
@@ -721,6 +719,11 @@ func (e *Engine) releaseLocked(ctx context.Context, tx pgx.Tx, a Actor, r row,
 				decision_evidence_id = $3, approval_request_id = $4
 				WHERE id = $1 AND state = 'AUTHORIZED'`, r.ID, reason(d), evidence, request)
 		}
+		// The budget is checked before the grant is consumed, so a budget
+		// denial never burns an approval.
+		if denied, err := budget(); denied || err != nil {
+			return err
+		}
 		evidence, err := record()
 		if err != nil {
 			return err
@@ -728,11 +731,15 @@ func (e *Engine) releaseLocked(ctx context.Context, tx pgx.Tx, a Actor, r row,
 		if _, err := approval.Consume(ctx, tx, r.ID, d.EnforcedDigest, d.PolicyVersion); err != nil {
 			return err
 		}
-		return e.queue(ctx, tx, a, r, evidence, d, s)
+		return e.queue(ctx, tx, r, evidence, d, s)
 	}
 
-	// allow, warn, transform: any approval state left from an earlier
-	// policy version is void (ADR-005 §5a).
+	// allow, warn, transform.
+	if denied, err := budget(); denied || err != nil {
+		return err
+	}
+	// Any approval state left from an earlier policy version is void
+	// (ADR-005 §5a).
 	if err := voidApproval(ctx, tx, q); err != nil {
 		return err
 	}
@@ -740,18 +747,35 @@ func (e *Engine) releaseLocked(ctx context.Context, tx pgx.Tx, a Actor, r row,
 	if err != nil {
 		return err
 	}
-	return e.queue(ctx, tx, a, r, evidence, d, s)
+	return e.queue(ctx, tx, r, evidence, d, s)
 }
 
-// queue reserves budget and makes the action executable (T10), pinning the
-// policy version and connector contract.
-func (e *Engine) queue(ctx context.Context, tx pgx.Tx, a Actor, r row, evidence uuid.UUID,
-	d governance.GovernanceDecision, s snapshot) error {
-	if err := e.o.Budget.Reserve(ctx, tx, Reservation{
-		TenantID: a.TenantID, ActionID: r.ID, AgentID: r.AgentID, Tool: r.Tool,
-	}); err != nil {
-		return err
+// reserve is the budget step of R1 (ADR-012 §4): it runs after the action,
+// its approval rows and the registry are locked and before any audited
+// write, and locks only the agent's budget leaf. It returns the denial
+// reason when the action cannot be released.
+func reserve(ctx context.Context, tx pgx.Tx, r row, s snapshot) (string, error) {
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT eacp.budget_reserve($1, $2)`, r.ID, s.contractID).Scan(&status); err != nil {
+		return "", err
 	}
+	switch status {
+	case "reserved", "unbudgeted":
+		return "", nil
+	case "exceeded":
+		return BudgetExceeded, nil
+	case "no_account":
+		return BudgetAccountMissing, nil
+	case "invalid_cost":
+		return BudgetCostInvalid, nil
+	}
+	return "", fmt.Errorf("action: unexpected budget status %q", status)
+}
+
+// queue makes the action executable (T10), pinning the policy version and
+// connector contract. The database requires the budget reservation.
+func (e *Engine) queue(ctx context.Context, tx pgx.Tx, r row, evidence uuid.UUID,
+	d governance.GovernanceDecision, s snapshot) error {
 	if e.o.InRelease != nil {
 		if err := e.o.InRelease(ctx, tx); err != nil {
 			return err

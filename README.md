@@ -9,6 +9,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 > **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B has started:
 - Phase 9 adds the Microsoft AGT/ACS sidecar PDP ([ADR-002](docs/adr/ADR-002-agt-integration-sidecar-pdp.md) Rev 2.4).
 - Phase 10 adds NATS JetStream work hints and dashboard events ([ADR-014](docs/adr/ADR-014-postgresql-authority-nats-signals.md)).
+- Phase 11 adds hard budget reservation ([ADR-012](docs/adr/ADR-012-budget-reservation.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -75,6 +76,17 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Inbox dedup (§63). A tenant table under RLS, written only by the `inbox` messaging actor. A duplicate is ACKed and not processed again. | `migrations/00010_messaging.sql`, `TestHintWakesOnceAndADuplicateIsAckedWithoutWaking` |
 | Dashboard event stream (`eacp.events.<tenant>.action.transition`). Each event carries only ids, states and a time, never a reason or a payload. | `TestTransitionsWriteDashboardEvents`, `TestDashboardEventsArrivePerTenant` |
 | Compose runs NATS on an internal `bus` network with one user per role. The worker's user cannot publish, and the agent has no route. | `deployments/docker/nats/nats.conf`, `test/security/nats_test.go` |
+
+## Slice B (Phase 11): hard budget reservation
+
+| Capability | Evidence |
+|---|---|
+| A connector contract declares what a call costs: a unit, a fixed cost and a payload amount field. PostgreSQL computes the cost from the enforced payload, which the decision's digest binds. | `migrations/00011_budget.sql` (`eacp.action_cost`), `TestContractsDeclareACostOrNone` |
+| The release transaction reserves the cost on the agent's budget leaf before any journal write and before a grant is consumed. A budget that can't take it denies the action (`budget_exceeded`); no account or an invalid cost also denies. T10 of a budgeted action requires the reservation. | `eacp.budget_reserve`, `TestReservationsAreMadeOnlyByTheReleaseForTheActionsCost`, `TestABudgetDenialNeverSpendsTheApproval`, `TestBudgetFailuresDenyClosed` |
+| No oversubscription (§103 invariant 3): 100 concurrent releases on a leaf that fits 37 reserve exactly 37. `CHECK (allocated + reserved + committed <= hard_limit)` is the backstop. | `TestConcurrentReleasesNeverOversubscribeAHardBudget` (logs p50/p99) |
+| The action's own state change settles its reservation: success commits, no effect releases, an unknown outcome holds it until reconciled or resolved, and expiry at `not_after` (the TTL) releases it. Settling never locks the account. | `TestSettlementFollowsTheOutcome`, `TestAnExpiredReleaseGivesItsBudgetBack`, `TestSettlementNeverWaitsForTheAccount` |
+| Account trees with escrow: a child's limit is carved from its parent, so a reservation locks only its leaf. Lowering a limit takes one admin; raising it takes two. | `TestEscrowBoundsChildrenByTheirParent`, `TestRaisingALimitIsTwoPersonAndLoweringIsNot`, `TestReleasesSettlementsAndLimitChangesDoNotDeadlock` |
+| Budget API: `POST /v1/budgets`, `GET /v1/budgets[/{id}]`, `POST /v1/budgets/{id}/limit`, `POST /v1/budget-limit-changes/{id}/approve\|reject`. Action evidence shows the reservation. | `internal/api/budget.go`, `TestBudgetsThroughTheAPI` |
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

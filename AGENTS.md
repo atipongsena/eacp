@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4) and 10 (NATS JetStream signals, ADR-014) complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Phase 11 (Budget Reservation) has not started.
+Current status: **Slice A complete, Phases 1–8; Slice B Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014) and 11 (Budget Reservation, ADR-012) complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Phase 12 (Fair Scheduler) has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -31,7 +31,8 @@ Current status: **Slice A complete, Phases 1–8; Slice B Phases 9 (AGT sidecar 
 - Every [A] invariant of MASTER_PLAN §103 keeps at least one passing test listed in `docs/INVARIANTS.md` (`test/invariants` enforces the map). A new table, policy or SECURITY DEFINER function must be reviewed and added to `internal/storage/rls_catalog_test.go`.
 - The AGT sidecar (`sidecars/agt-pdp`) and its Go client pin AGT policies 5.0.0, ACS 0.3.1b1 and OPA 1.20.2 (`microsoftagt.Pinned`, `sidecars/agt-pdp/requirements.txt`, its Dockerfile). A bump needs the spike notes in `research/REFERENCES.md` and a green conformance run. The sidecar never resolves an approval, and every sidecar failure is transient (the action stays `RECEIVED`). Change `test/conformance/governance_reference.json` only with `-update`, then rebuild the sidecar's test stage.
 - NATS carries signals, never authority (ADR-014). A work hint only wakes the worker's claim loop, and polling stays on. Nothing may be claimed, executed or decided from a message. Outbox rows come only from the action triggers, and a message carries ids and states, never a reason, payload or secret. `outbox` and `inbox` are messaging actors: `storage.SetSystem` binds them, and `eacp.actor_context()` rejects them. A consumer with effects records `Nats-Msg-Id` in `eacp.inbox_messages` in the same transaction.
-- Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
+- Hard budgets (ADR-012) are enforced in PostgreSQL. The release reserves with `eacp.budget_reserve` after the action, approval rows and registry are locked, and before any audited write or grant consumption; T10 of a budgeted action requires the reservation. Only the agent's leaf account is locked (child limits are escrowed from their parent). Settlement follows the action's state and never locks an account; the next reservation or limit change folds it. Account counters change only from the budget triggers. Raising a limit is two-person.
+- Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → budget leaf → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
 
 ## Commands
 
@@ -76,6 +77,7 @@ internal/worker      claim, heartbeat, fenced dispatch intent and results, host-
                      reconciler (lookup under the pinned proof standard)
 internal/messaging   outbox relay and pruner, inbox, the worker's work-hint consumer (NATS JetStream)
 internal/messaging/natstest  embedded JetStream server for tests (never skips)
+internal/budget      budget accounts and limit changes (two-person raises, escrow)
 internal/connector   HTTP connector (execute, lookup)
 internal/fakeerp     credential-protected Fake ERP with a durable operation log
 internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions

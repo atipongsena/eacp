@@ -10,6 +10,8 @@ Since Phase 9 the stack takes its governance decisions from the **Microsoft AGT/
 
 Since Phase 10 the API relays the transactional outbox to **NATS JetStream** (ADR-014). Work hints wake the worker, and action events feed the dashboard stream. PostgreSQL remains the only authority.
 
+Since Phase 11 a connector contract can declare a cost, and the release reserves it on the agent's **hard budget** (ADR-012). Step 13 races 100 purchases against one budget.
+
 ## Run it
 
 Requirements: Docker with Compose v2.24 or later, Go and Python 3.
@@ -47,8 +49,9 @@ Everything goes through the public API with keys that each person generated for 
 | 10 | Delayed visibility under `BEST_EFFORT`: three "not found" lookups, no retry. Operator otto resolves with evidence | "Not found" is not proof (inv. 6, 13); human resolution |
 | 11 | Stop the AGT sidecar. Two purchases answer 503 `governance_unavailable` and stay `RECEIVED`. One is cancelled without the PDP. Restart the sidecar; the sweeper evaluates the other, which executes | PDP outage fails closed, and never blocks cancellation (inv. 18, ADR-002 §6) |
 | 12 | NATS stays up while the relay publishes every outbox row as work hints and dashboard events. Then stop NATS: a purchase still executes, exactly once, because the worker polls PostgreSQL, and its outbox rows wait. Restart NATS; the relay publishes them | NATS carries hints only; correctness does not depend on it (ADR-014, §60) |
-| 13 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain. Each decision names `microsoft-agt`, the pinned AGT/ACS/OPA versions and the matched rule | Evidence reconstruction (inv. 10, 17) |
-| 14 | Search every API response, every service log (including the sidecar's and NATS's) and a database dump for the ERP credential | Not found anywhere (inv. 11) |
+| 13 | `create_po` gets a costed contract version (the payload's amount in THB; erin proposes, rita activates). Alice gives procurement-bot a 3 700 THB budget; she cannot approve her own raise, so bob does. The agent submits 100 purchases of 100 THB at once | Exactly 37 execute, one PO each; 63 are `DENIED budget_exceeded` and never reach the ERP; the account ends at its limit (inv. 3, ADR-012) |
+| 14 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain. Each decision names `microsoft-agt`, the pinned AGT/ACS/OPA versions and the matched rule | Evidence reconstruction (inv. 10, 17) |
+| 15 | Search every API response, every service log (including the sidecar's and NATS's) and a database dump for the ERP credential | Not found anywhere (inv. 11) |
 
 ## Output
 

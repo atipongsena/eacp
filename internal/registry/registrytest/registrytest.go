@@ -443,3 +443,38 @@ func (f *Fixture) ActiveAgent(t testing.TB, name string, tools ...uuid.UUID) Age
 	}
 	return a
 }
+
+// CostedContractSQL inserts a budgeted, irreversible financial write
+// contract for tool $1 (ADR-012): a call costs the payload's "amount" in
+// THB and the payload's "currency" must be THB. One attempt, no lookup,
+// "refused" certified no-effect, 200 ms timeout.
+const CostedContractSQL = `INSERT INTO eacp.tool_contracts
+	(tenant_id, tool_id, side_effects, idempotency_mode, reconciliation_lookup,
+	 reconciliation_consistency, proof_standard, no_effect_errors, max_attempts, timeout_ms,
+	 cost_unit, cost_amount_field, cost_unit_field)
+	VALUES (eacp.current_tenant_id(), $1, '{IRREVERSIBLE_WRITE,FINANCIAL}', 'none', 'none', 'none', 'none',
+	 '{refused}', 1, 200, 'THB', 'amount', 'currency')
+	RETURNING id`
+
+// FundAgent creates agent's budget leaf in unit (by alice) and raises its
+// limit to limit (proposed by alice, approved by bob). It returns the
+// account id.
+func (f *Fixture) FundAgent(t testing.TB, agent uuid.UUID, unit, limit string) uuid.UUID {
+	t.Helper()
+	account := f.ID(t, "alice", `INSERT INTO eacp.budget_accounts (tenant_id, name, unit, agent_id)
+		VALUES (eacp.current_tenant_id(), 'agent-' || $1::uuid::text || '-' || lower($2::text), $2, $1::uuid) RETURNING id`, agent, unit)
+	f.SetLimit(t, account, limit)
+	return account
+}
+
+// SetLimit changes account's limit to limit: alice proposes and, for an
+// increase, bob approves.
+func (f *Fixture) SetLimit(t testing.TB, account uuid.UUID, limit string) {
+	t.Helper()
+	change := f.ID(t, "alice", `INSERT INTO eacp.budget_limit_changes (tenant_id, account_id, new_limit, reason)
+		VALUES (eacp.current_tenant_id(), $1, $2::numeric, 'test budget') RETURNING id`, account, limit)
+	if err := f.Exec("bob", `UPDATE eacp.budget_limit_changes SET state = 'APPLIED', decision_reason = 'agreed'
+		WHERE id = $1 AND state = 'PROPOSED'`, change); err != nil {
+		t.Fatalf("registrytest: approve limit: %v", err)
+	}
+}

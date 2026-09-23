@@ -71,8 +71,14 @@ type env struct {
 
 func newEnv(t *testing.T, policy string, opts ...func(*action.Options)) env {
 	t.Helper()
+	return newEnvWith(t, policy, registrytest.SafeContractSQL, opts...)
+}
+
+// newEnvWith is newEnv with contractSQL as erp.purchase's active contract.
+func newEnvWith(t *testing.T, policy, contractSQL string, opts ...func(*action.Options)) env {
+	t.Helper()
 	f := registrytest.New(t)
-	tool := f.ActiveTool(t, "erp", "purchase")
+	tool := f.ActiveToolWith(t, "erp", "purchase", contractSQL)
 	agent := f.ActiveAgent(t, "buyer", tool.Tool)
 	v := env{t: t, f: f, tool: tool, agent: agent, pdp: &provider{}, logs: &bytes.Buffer{}, mu: &sync.Mutex{}}
 	v.activate(policy)

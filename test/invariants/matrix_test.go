@@ -1,5 +1,6 @@
 // Package invariants checks docs/INVARIANTS.md against MASTER_PLAN §103 and
-// the test suite: the Slice A exit criterion (§82) as a test.
+// the test suite: the Slice A exit criterion (§82) as a test, and the Slice
+// B invariants mapped so far.
 package invariants
 
 import (
@@ -26,8 +27,8 @@ func read(t *testing.T, path string) string {
 	return strings.ReplaceAll(string(b), "\r\n", "\n")
 }
 
-// sliceA returns the numbers of the invariants tagged [A] in §103.
-func sliceA(t *testing.T) []string {
+// tags returns the slice tag ([A], [B] or [C]) of every invariant in §103.
+func tags(t *testing.T) map[string]string {
 	t.Helper()
 	plan := read(t, "docs/MASTER_PLAN.md")
 	start := strings.Index(plan, "\n# 103. Critical Invariants")
@@ -35,14 +36,20 @@ func sliceA(t *testing.T) []string {
 	if start < 0 || end < start {
 		t.Fatal("MASTER_PLAN §103 not found")
 	}
-	var out []string
+	out := map[string]string{}
 	for _, line := range strings.Split(plan[start:end], "\n") {
-		if m := planInvariant.FindStringSubmatch(line); m != nil && m[2] == "A" {
-			out = append(out, m[1])
+		if m := planInvariant.FindStringSubmatch(line); m != nil {
+			out[m[1]] = m[2]
 		}
 	}
-	if len(out) < 10 {
-		t.Fatalf("found only %d [A] invariants in §103: %v", len(out), out)
+	a := 0
+	for _, tag := range out {
+		if tag == "A" {
+			a++
+		}
+	}
+	if a < 10 {
+		t.Fatalf("found only %d [A] invariants in §103: %v", a, out)
 	}
 	return out
 }
@@ -67,14 +74,23 @@ func hasTest(t *testing.T, dir, name string) bool {
 	return false
 }
 
+// Every [A] invariant has a section with tests. A [B] invariant may have one
+// once its phase lands. A section carries its invariant's §103 tag, and
+// every test it names exists.
 func TestEverySliceAInvariantHasExistingTests(t *testing.T) {
+	plan := tags(t)
 	tests := map[string][]string{} // invariant -> "pkg TestName"
 	var current string
 	for _, line := range strings.Split(read(t, "docs/INVARIANTS.md"), "\n") {
 		if m := docSection.FindStringSubmatch(line); m != nil {
 			current = m[1]
-			if m[2] != "A" {
-				t.Errorf("section %s is tagged [%s]; this map covers Slice A", m[1], m[2])
+			switch tag, ok := plan[current]; {
+			case !ok:
+				t.Errorf("section %s is not an invariant of §103", current)
+			case m[2] != tag:
+				t.Errorf("section %s is tagged [%s]; §103 tags it [%s]", current, m[2], tag)
+			case tag == "C":
+				t.Errorf("section %s is a Slice C invariant", current)
 			}
 			if _, dup := tests[current]; dup {
 				t.Errorf("invariant %s has two sections", current)
@@ -90,11 +106,19 @@ func TestEverySliceAInvariantHasExistingTests(t *testing.T) {
 		}
 	}
 
-	want := sliceA(t)
-	for _, n := range want {
-		refs, ok := tests[n]
-		if !ok || len(refs) == 0 {
-			t.Errorf("invariant %s [A] has no tests in docs/INVARIANTS.md", n)
+	var missing []string
+	for n, tag := range plan {
+		if _, ok := tests[n]; tag == "A" && !ok {
+			missing = append(missing, n)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) != 0 {
+		t.Errorf("[A] invariants without a section in docs/INVARIANTS.md: %v", missing)
+	}
+	for n, refs := range tests {
+		if len(refs) == 0 {
+			t.Errorf("invariant %s has no tests in docs/INVARIANTS.md", n)
 		}
 		for _, ref := range refs {
 			dir, name, _ := strings.Cut(ref, " ")
@@ -103,23 +127,4 @@ func TestEverySliceAInvariantHasExistingTests(t *testing.T) {
 			}
 		}
 	}
-	var extra []string
-	for n := range tests {
-		if !contains(want, n) {
-			extra = append(extra, n)
-		}
-	}
-	sort.Strings(extra)
-	if len(extra) != 0 {
-		t.Errorf("sections for invariants that are not [A] in §103: %v", extra)
-	}
-}
-
-func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
 }

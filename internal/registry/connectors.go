@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -44,6 +45,14 @@ type Contract struct {
 	ConcurrencyGroup          string   `json:"concurrency_group,omitempty"`
 	MaxInflight               int      `json:"max_inflight,omitempty"`
 	DataSensitivity           string   `json:"data_sensitivity,omitempty"`
+
+	// Cost (ADR-012 §1). Without CostUnit the tool is not budgeted. A call
+	// costs CostFixed plus the enforced payload's CostAmountField, and
+	// CostUnitField (if set) must name CostUnit.
+	CostUnit        string      `json:"cost_unit,omitempty"`
+	CostFixed       json.Number `json:"cost_fixed,omitempty"`
+	CostAmountField string      `json:"cost_amount_field,omitempty"`
+	CostUnitField   string      `json:"cost_unit_field,omitempty"`
 }
 
 // RegisterConnector registers an immutable connector (registry_editor).
@@ -110,13 +119,16 @@ func (s *Service) ProposeContract(ctx context.Context, a Actor, toolID uuid.UUID
 			INSERT INTO eacp.tool_contracts
 			    (tenant_id, tool_id, side_effects, idempotency_mode, idempotency_key_field, correlation_field,
 			     reconciliation_lookup, reconciliation_consistency, proof_standard, no_effect_errors,
-			     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity,
+			     cost_unit, cost_fixed, cost_amount_field, cost_unit_field)
+			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+			        $15, COALESCE($16::numeric, 0), $17, $18)
 			RETURNING id`,
 			toolID, c.SideEffects, c.IdempotencyMode, nullStr(c.IdempotencyKeyField), nullStr(c.CorrelationField),
 			c.ReconciliationLookup, c.ReconciliationConsistency, c.ProofStandard, noEffect,
 			c.MaxAttempts, nullInt(c.TimeoutMS), nullStr(c.ConcurrencyGroup), nullInt(c.MaxInflight),
-			nullStr(c.DataSensitivity)).Scan(&id)
+			nullStr(c.DataSensitivity), nullStr(c.CostUnit), nullStr(string(c.CostFixed)),
+			nullStr(c.CostAmountField), nullStr(c.CostUnitField)).Scan(&id)
 		return err
 	})
 	return id, err
