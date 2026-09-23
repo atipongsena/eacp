@@ -1,6 +1,6 @@
 # ADR-002: AGT/ACS Integration via Sidecar PDP
 
-- **Status:** Accepted — Rev 2.2 (Phase 3 local-provider contract, 2026-09-23)
+- **Status:** Accepted — Rev 2.3 (Phase 4 action integration, 2026-09-23; Rev 2.2 Phase 3 local-provider contract)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §4, §5, §5.1, §12, §13, §83 (Phase 9); ADR-001, ADR-005
@@ -48,11 +48,21 @@ type GovernanceProvider interface {
 
 The Phase 3 bundle format is JSON with `format_version: 1` and a nonempty ordered `rules` array. Each rule has a unique `id`, a nonblank `reason`, a `verdict`, and optional exact-match fields (`subject`, `operation`, `target`, `tool`, `risk_class`, `side_effect_class`). The first matching rule wins; no match returns `deny` with `no_matching_rule`. `transform` requires a nonempty top-level JSON object `set`; `escalate` may apply the same replacements before approval and requires `approval` with quorum 1–5, `eligible_roles: ["approver"]`, and TTL 1–86400 seconds. Numeric replacements are limited to magnitude 2^53 because PostgreSQL `jsonb` can expand exponent notation when a bundle is reloaded; larger amounts must be strings. Unknown fields and malformed input are rejected. Policy insertion validates the format in Go and PostgreSQL so raw application-role SQL cannot activate a bundle the local provider cannot parse.
 
+The governance input is built by EACP, never by the agent. Phase 4 builds it as follows:
+- `tenant`, `agent_id` and `agent_version_id` come from the authenticated key.
+- `subject` is the value the agent asserts. It must name an enabled human principal of the tenant, or the action is `DENIED(subject_invalid)`. The assertion is not proof of the user's consent; on-behalf-of proof is a later ADR.
+- `risk_class` is the agent's risk class.
+- `side_effect_class` is the active contract's side effects, sorted and joined by `,` (for example `FINANCIAL,IRREVERSIBLE_WRITE`), matched exactly.
+
 ### 4. EACP computes digests itself
 
 EACP computes `input_digest` and `enforced_digest` in Go (JCS + SHA-256) from the snapshot it sent and the enforced payload it received. If the provider also reports digests and they differ, the decision is treated as **Deny** (reason `digest_mismatch`) and a security alert is raised. This is deterministic and terminal. EACP never trusts a digest it didn't compute.
 
-Phase 3 implements the digest check and deny verdict in `EvaluateChecked`. Alert emission belongs to the Phase 4 action and telemetry integration. The JCS parser rejects duplicate keys, invalid Unicode and integer tokens outside the interoperable I-JSON range; callers must use JSON strings for larger identifiers or amounts.
+Phase 3 implements the digest check and deny verdict in `EvaluateChecked`. Phase 4 (`internal/action`) raises the alerts. They are structured `security alert` log records with `alert` set to one of two values:
+- `governance.digest_mismatch`: the action is `DENIED(digest_mismatch)`.
+- `governance.malformed_decision`: the action stays `RECEIVED`, per §5.
+
+Metrics and alert routing arrive with the telemetry work (MASTER_PLAN §105). The JCS parser rejects duplicate keys, invalid Unicode and integer tokens outside the interoperable I-JSON range; callers must use JSON strings for larger identifiers or amounts.
 
 ### 5. Decision evidence is mandatory
 
@@ -93,7 +103,7 @@ This follows Codex's refinement of C1.
 |---|---|
 | The exact AGT Python API for ACS `Evaluate` (module and function names, snapshot schema) | **Not assumed.** The Phase 9 spike must verify against the pinned AGT release and record the result in `research/REFERENCES.md` before implementation (§107: no invented APIs). |
 | Whether AGT's `enforced_identity` digest byte-for-byte matches EACP's JCS implementation | EACP's own digest is authoritative. On any mismatch → Deny (§4 above). |
-| Timeout budget for `Evaluate` | Configurable. A timeout is treated as unavailable (table in §6). No SLO until measured. |
+| Timeout budget for `Evaluate` | Configurable (`EACP_PDP_TIMEOUT`, default 5s, at most 1 minute). A timeout is treated as unavailable (table in §6). No SLO until measured. |
 | Whether `warn` needs human visibility | `warn` is allowed but recorded as evidence and surfaced in the operator UI later. It never downgrades to allow silently without evidence. |
 
 ## Verification

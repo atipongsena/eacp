@@ -1,5 +1,6 @@
-// Package api is the control plane's HTTP API for Phase 2: registry,
-// identity and capability (ADR-003). Every request is authenticated with an
+// Package api is the control plane's HTTP API: registry, identity and
+// capability (ADR-003), policies and approvals (ADR-002/005) and the Action
+// API (ADR-004). Every request is authenticated with an
 // API key; the handler checks the caller's role for a fast, friendly 403,
 // and the database enforces every rule again underneath.
 package api
@@ -19,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"eacp/internal/action"
 	"eacp/internal/approval"
 	"eacp/internal/audit"
 	"eacp/internal/governance"
@@ -36,12 +38,15 @@ type Server struct {
 	gov  *governance.Store
 	appr *approval.Service
 	log  *slog.Logger
+
+	actions *action.Engine
 }
 
 // New returns a Server using pool (connected as the application role).
 func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
-		appr: approval.New(pool), log: log}
+		appr: approval.New(pool), log: log,
+		actions: action.New(pool, action.Options{Provider: governance.LocalProvider{InstanceID: "controlplane-api"}, Log: log})}
 }
 
 // Role sets used by routes.
@@ -55,6 +60,7 @@ var (
 	auditor          = []string{"auditor"}
 	policyAdmin      = []string{"admin"}
 	actionApprover   = []string{"approver"}
+	actionReader     = []string{"operator", "auditor"}
 )
 
 // Register mounts every route on mux.
@@ -97,6 +103,10 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("GET /v1/approvals/{id}", p(actionApprover, s.getApproval))
 	mux.Handle("GET /v1/approvals", p(actionApprover, s.listApprovals))
 	mux.Handle("POST /v1/approvals/{id}/votes", p(actionApprover, s.voteApproval))
+
+	mux.Handle("POST /v1/actions", s.agent(s.submitAction))
+	mux.Handle("GET /v1/actions/{id}", s.either(actionReader, s.getAction))
+	mux.Handle("POST /v1/actions/{id}/cancel", s.either(anyPrincipal, s.cancelAction))
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

@@ -50,7 +50,17 @@ type GovernanceDecision struct {
 	Reasons            []string
 	Approval           *ApprovalRequirement
 	EvaluatedAt        time.Time
+	// DigestMismatch is set by EvaluateChecked when the provider's digests
+	// differ from EACP's: a security signal that also denies the action.
+	DigestMismatch bool
 }
+
+// EvaluateChecked failures. Both are transient for the caller: nothing
+// becomes executable (ADR-002 §6). A malformed decision also raises an alert.
+var (
+	ErrProviderUnavailable = errors.New("governance: provider unavailable")
+	ErrMalformedDecision   = errors.New("governance: malformed provider decision")
+)
 
 // GovernanceProvider makes a pure decision. The caller owns evidence and
 // approval storage; provider implementations never mutate either.
@@ -64,37 +74,38 @@ type GovernanceProvider interface {
 func EvaluateChecked(ctx context.Context, provider GovernanceProvider, req GovernanceRequest) (GovernanceDecision, error) {
 	d, err := provider.Evaluate(ctx, req)
 	if err != nil {
-		return GovernanceDecision{}, fmt.Errorf("governance: provider unavailable: %w", err)
+		return GovernanceDecision{}, fmt.Errorf("%w: %w", ErrProviderUnavailable, err)
 	}
 	if d.PolicyBundleID != req.PolicyBundleID || d.PolicyVersion != req.PolicyVersion ||
 		d.PolicyBundleID == uuid.Nil || d.PolicyVersion < 1 || d.Provider == "" ||
 		d.ProviderInstanceID == "" || d.DecisionID == uuid.Nil || d.EvaluatedAt.IsZero() ||
 		len(d.Reasons) == 0 || len(d.EnforcedPayload) == 0 {
-		return GovernanceDecision{}, errors.New("governance: incomplete provider decision")
+		return GovernanceDecision{}, fmt.Errorf("%w: incomplete provider decision", ErrMalformedDecision)
 	}
 	switch d.Verdict {
 	case VerdictAllow, VerdictWarn, VerdictDeny, VerdictTransform:
 		if d.Approval != nil {
-			return GovernanceDecision{}, errors.New("governance: unexpected approval requirement")
+			return GovernanceDecision{}, fmt.Errorf("%w: unexpected approval requirement", ErrMalformedDecision)
 		}
 	case VerdictEscalate:
 		if d.Approval == nil || d.Approval.Quorum < 1 || d.Approval.Quorum > 5 ||
 			d.Approval.TTLSeconds < 1 || d.Approval.TTLSeconds > 86400 ||
 			len(d.Approval.EligibleRoles) != 1 || d.Approval.EligibleRoles[0] != "approver" {
-			return GovernanceDecision{}, errors.New("governance: incomplete approval requirement")
+			return GovernanceDecision{}, fmt.Errorf("%w: incomplete approval requirement", ErrMalformedDecision)
 		}
 	default:
-		return GovernanceDecision{}, errors.New("governance: unknown verdict")
+		return GovernanceDecision{}, fmt.Errorf("%w: unknown verdict", ErrMalformedDecision)
 	}
 	input, enforced, err := Digests(req.Binding, d.EnforcedPayload)
 	if err != nil {
-		return GovernanceDecision{}, fmt.Errorf("governance: invalid provider payload: %w", err)
+		return GovernanceDecision{}, fmt.Errorf("%w: invalid provider payload: %w", ErrMalformedDecision, err)
 	}
 	if d.InputDigest != input || d.EnforcedDigest != enforced {
 		d.Verdict = VerdictDeny
 		d.Reasons = []string{"digest_mismatch"}
 		d.Approval = nil
 		d.InputDigest, d.EnforcedDigest = input, enforced
+		d.DigestMismatch = true
 	}
 	return d, nil
 }

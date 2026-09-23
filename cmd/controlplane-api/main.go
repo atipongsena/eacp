@@ -1,20 +1,34 @@
 // Command controlplane-api serves the EACP control-plane API.
 //
-// Phase 2 serves the registry, identity and capability API (ADR-003) plus
-// health probes. The Action API arrives in Phase 4 (MASTER_PLAN §78).
+// It serves the registry, identity and capability API (ADR-003), policies
+// and approvals (ADR-002/005) and the Action API up to the release boundary
+// (ADR-004), and runs the action sweeper. Dispatch arrives in Phase 5.
 package main
 
 import (
+	"context"
 	"net/http"
+	"os"
 
+	"eacp/internal/action"
 	"eacp/internal/api"
 	"eacp/internal/config"
+	"eacp/internal/governance"
 	"eacp/internal/service"
 )
 
 func main() {
 	service.Main("controlplane-api", config.Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"},
 		func(d *service.Deps, mux *http.ServeMux) {
-			api.New(d.DB, d.Log).Register(mux)
+			instance, _ := os.Hostname()
+			engine := action.New(d.DB, action.Options{
+				Provider: governance.LocalProvider{InstanceID: "controlplane-api/" + instance},
+				Limits:   action.Limits{MaxQueuedPerTenant: d.Config.MaxQueuedPerTenant, MaxQueuedGlobal: d.Config.MaxQueuedGlobal},
+				Log:      d.Log, EvaluationTimeout: d.Config.PDPTimeout,
+			})
+			api.New(d.DB, d.Log).WithActions(engine).Register(mux)
+			d.Background(func(ctx context.Context) {
+				action.NewSweeper(engine).Run(ctx, d.Config.SweepInterval)
+			})
 		})
 }

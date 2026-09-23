@@ -72,6 +72,17 @@ func digestBinding(b Binding, payload json.RawMessage) ([32]byte, error) {
 	return sha256.Sum256(canonicalBinding), nil
 }
 
+// Canonicalize returns the RFC 8785 form of an I-JSON value. It rejects
+// duplicate keys, invalid Unicode and numbers outside the interoperable
+// range, so the bytes it returns are exactly what a digest covers.
+func Canonicalize(raw []byte) ([]byte, error) {
+	out, err := canonicalize(raw)
+	if err != nil {
+		return nil, fmt.Errorf("governance: %w", err)
+	}
+	return out, nil
+}
+
 // canonicalize implements RFC 8785 for the I-JSON subset. Object keys are
 // ordered by UTF-16 code units, strings use ECMAScript JSON escaping, and
 // numbers use the shortest IEEE 754 representation at ECMAScript thresholds.

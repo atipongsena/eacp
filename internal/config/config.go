@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,6 +29,14 @@ type Config struct {
 	OTelExporter    string
 	OTelEndpoint    string
 	ShutdownTimeout time.Duration
+
+	// Action API (controlplane-api): static admission limits on QUEUED
+	// actions (MASTER_PLAN §26), the sweeper interval and the bound on one
+	// governance (PDP) call.
+	MaxQueuedPerTenant int64
+	MaxQueuedGlobal    int64
+	SweepInterval      time.Duration
+	PDPTimeout         time.Duration
 }
 
 var (
@@ -91,6 +100,28 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	}
 	cfg.ShutdownTimeout = timeout
 
+	limit := func(key, def string) int64 {
+		n, err := strconv.ParseInt(get(key, def), 10, 64)
+		if err != nil || n <= 0 {
+			errs = append(errs, fmt.Errorf("%s: must be a positive integer", key))
+		}
+		return n
+	}
+	cfg.MaxQueuedPerTenant = limit("EACP_ACTION_MAX_QUEUED_PER_TENANT", "1000")
+	cfg.MaxQueuedGlobal = limit("EACP_ACTION_MAX_QUEUED_GLOBAL", "10000")
+	if cfg.MaxQueuedPerTenant > cfg.MaxQueuedGlobal && cfg.MaxQueuedGlobal > 0 {
+		errs = append(errs, errors.New("EACP_ACTION_MAX_QUEUED_PER_TENANT: must not exceed EACP_ACTION_MAX_QUEUED_GLOBAL"))
+	}
+	duration := func(key, def string, max time.Duration) time.Duration {
+		d, err := time.ParseDuration(get(key, def))
+		if err != nil || d <= 0 || d > max {
+			errs = append(errs, fmt.Errorf("%s: must be a duration in (0, %v]", key, max))
+		}
+		return d
+	}
+	cfg.SweepInterval = duration("EACP_ACTION_SWEEP_INTERVAL", "1s", time.Hour)
+	cfg.PDPTimeout = duration("EACP_PDP_TIMEOUT", "5s", time.Minute)
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
@@ -109,6 +140,10 @@ func (c Config) LogValue() slog.Value {
 		slog.String("otel_exporter", c.OTelExporter),
 		slog.String("otel_endpoint", c.OTelEndpoint),
 		slog.Duration("shutdown_timeout", c.ShutdownTimeout),
+		slog.Int64("action_max_queued_per_tenant", c.MaxQueuedPerTenant),
+		slog.Int64("action_max_queued_global", c.MaxQueuedGlobal),
+		slog.Duration("action_sweep_interval", c.SweepInterval),
+		slog.Duration("pdp_timeout", c.PDPTimeout),
 	)
 }
 

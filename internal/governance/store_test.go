@@ -53,7 +53,9 @@ func TestRecordDecisionPersistsEnforcedPayloadAndBothDigests(t *testing.T) {
 	if err := s.ActivatePolicy(context.Background(), bob, p.ID, "reviewed"); err != nil {
 		t.Fatal(err)
 	}
-	b := governance.Binding{TenantID: f.Tenant, AgentID: uuid.New(), AgentVersionID: uuid.New(),
+	tool := f.ActiveTool(t, "erp", "purchase")
+	agent := f.ActiveAgent(t, "buyer", tool.Tool)
+	b := governance.Binding{TenantID: f.Tenant, AgentID: agent.Agent, AgentVersionID: agent.Version,
 		Subject: "carol@tenant-a.test", Operation: "purchase", Target: "erp", Tool: "erp.purchase",
 		ToolSchemaVersion: "1", Resource: "orders", Payload: json.RawMessage(`{"amount":2400000}`)}
 	d, err := governance.EvaluateChecked(context.Background(), governance.LocalProvider{InstanceID: "local-test"},
@@ -62,10 +64,15 @@ func TestRecordDecisionPersistsEnforcedPayloadAndBothDigests(t *testing.T) {
 	if err != nil || d.Verdict != governance.VerdictEscalate {
 		t.Fatalf("decision = %+v, err = %v", d, err)
 	}
-	actionID := uuid.New()
+	actionID := f.AgentID(t, agent.Version, `INSERT INTO eacp.actions
+		(tenant_id, agent_version_id, idempotency_key, subject, operation, target, tool,
+		 tool_schema_version, resource, input_payload, input_digest, not_after)
+		VALUES (eacp.current_tenant_id(), $1, 'k1', 'carol@tenant-a.test', 'purchase', 'erp',
+		 'erp.purchase', '1', 'orders', '{"amount":2400000}', $2, now() + interval '1 hour')
+		RETURNING id`, agent.Version, d.InputDigest[:])
 	var evidenceID uuid.UUID
 	err = storage.InTenantTx(context.Background(), f.App, pgtest.TenantA, func(tx pgx.Tx) error {
-		if err := storage.SetActor(context.Background(), tx, f.P["carol"]); err != nil {
+		if err := storage.SetAgent(context.Background(), tx, agent.Version); err != nil {
 			return err
 		}
 		var err error

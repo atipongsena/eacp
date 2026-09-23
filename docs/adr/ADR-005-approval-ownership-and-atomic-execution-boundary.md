@@ -1,6 +1,6 @@
 # ADR-005: Approval Ownership and the Atomic Execution Boundary
 
-- **Status:** Accepted — Rev 2.2 (Phase 3 approval-store contract, 2026-09-23)
+- **Status:** Accepted — Rev 2.3 (Phase 4 release boundary, 2026-09-23; Rev 2.2 Phase 3 approval-store contract)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §13, §14, §14.1, §14.2, §15, §16, §57, §103 (inv. 2, 7, 10, 14–18); ADR-002, ADR-004
@@ -180,6 +180,37 @@ Migration `00004_governance_approvals.sql` owns policy versions, the per-tenant 
 Only the EACP-managed `approver` role is eligible in Slice A. A request captures the owner-group membership at creation and the enabling policy, allowlist and contract actors. A vote checks both that snapshot and current membership, role, principal state, policy version and policy revocation. The current policy and unexpired request are checked again at grant consumption. A `DENY` vote immediately ends the request; a distinct-person quorum creates one grant. Phase 4 maps those states to action transitions.
 
 The approval TTL is explicit in the policy, capped at 24 hours, and request expiry cannot exceed the action's `not_after` or the evaluation time plus TTL. Expiry can only be shortened. Direct SQL under `eacp_app` is subject to the same triggers, tenant RLS and audit as the Go service. The database guards protect application mistakes; a party holding a usable `eacp_app` credential can set tenant and actor transaction context, so database credentials remain a trusted service boundary under ADR-003. Phase 4 must treat the release transaction as the final enforcement point.
+
+### 9. Phase 4 release boundary (Rev 2.3)
+
+Migration `00005_actions.sql` adds `eacp.actions` and the tenant-scoped action foreign keys from decision evidence, requests and grants. It also replaces four Phase 3 functions so that governance writes accept the action actor context: an agent version or the `sweeper` system component, besides principals. The rules:
+
+- **Evidence.** Evidence is recorded only for an action in `RECEIVED` or `AUTHORIZED`, by that action's own agent or the system, never by a principal. Its `input_digest` must equal the action's.
+- **Requests.** A request derives its agent version, tool, requesting subject and `not_after` from the action. Only one live request exists per action. Principals can't create requests. A request can be `VOIDED` only when its action is terminal, or when the policy, allowlist or contract it was bound to is no longer current.
+- **Grant consumption.** Only the agent or the system can consume a grant, and only while the request's allowlist and contract are still current. A deferred constraint trigger checks at commit that every consumed grant's action is `QUEUED` with `released_at = consumed_at`. So invariant 2 holds in PostgreSQL even for raw SQL, not only through `internal/action`.
+
+The release follows §5a with these implementation choices:
+
+- **R0.** R0 evaluates with no transaction open. The snapshot records the policy bundle and version, the active contract, and the active allowlist. R1 locks the action `FOR UPDATE`, then the pointer and registry rows `FOR SHARE`, and compares them with the snapshot.
+  - If anything differs, R1 does nothing and R0 is repeated.
+  - After three repeats the release counts as unavailable, and the action stays `AUTHORIZED`.
+- **T10.** The trigger requires:
+  - Evidence recorded in the same transaction (`recorded_at = now()`).
+  - An enforced digest and payload that are unchanged.
+  - For `escalate`, a grant for this digest and policy version consumed in this transaction. Otherwise, no live request.
+  - An enabled human subject, a passing capability check, and the pinned contract equal to the active one.
+
+  The release decision is the action's new `decision_evidence_id`. It is inserted before the `UPDATE`, because the guard reads it.
+- **`escalate` with no usable grant → T11.** This covers a new policy version, and also a contract change that turns an allowed action into an escalated one. A grant that expired before release instead expires the request, and with it the action (T13, the default in the table below).
+- **Allow after a policy change** voids the outstanding request and grants in the release transaction, then queues.
+- **Budget.** The Slice A budget hook (`action.Budget`, a no-op) runs inside R1 before T10. An error aborts the release, and the grant stays unconsumed.
+- **Retries.** Serialization failures and deadlocks roll the whole transaction back and are retried.
+
+Cross-tenant work never loosens tenant RLS for `eacp_app`. Two narrow `SECURITY DEFINER` functions do it instead, and only they read across tenants:
+- `global_queued_count()` returns a count, for global admission.
+- `tenants_with_open_actions()` returns tenant ids, for the sweeper.
+
+They read through a `SELECT` policy that applies only to the schema owner.
 
 ## Consequences
 

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"eacp/internal/config"
 	"eacp/internal/service"
@@ -117,5 +118,28 @@ func TestServiceWithoutDatabaseIsReady(t *testing.T) {
 	deps.Handler(http.NewServeMux()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/readyz = %d, want 200", rec.Code)
+	}
+}
+
+func TestStopEndsBackgroundTasksBeforeReleasingResources(t *testing.T) {
+	var out bytes.Buffer
+	deps, stop, err := service.Start(context.Background(), "test", envFrom(nil),
+		config.Options{RequireDatabase: false}, &out)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	started, finished := make(chan struct{}), make(chan struct{})
+	deps.Background(func(ctx context.Context) {
+		close(started)
+		<-ctx.Done()
+		time.Sleep(50 * time.Millisecond) // still using its resources
+		close(finished)
+	})
+	<-started
+	stop()
+	select {
+	case <-finished:
+	default:
+		t.Fatal("stop returned before the background task finished")
 	}
 }

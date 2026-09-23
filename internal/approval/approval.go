@@ -53,14 +53,13 @@ type QueueItem struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 }
 
+// NewRequest opens approval for an escalated action. The database derives
+// the agent version, tool, subject, lifetime bound, policy and digest from
+// the action and its decision evidence.
 type NewRequest struct {
-	ActionID            uuid.UUID
-	AgentVersionID      uuid.UUID
-	ToolID              uuid.UUID
-	RequestingSubjectID uuid.UUID
-	DecisionEvidenceID  uuid.UUID
-	NotAfter            time.Time
-	ExpiresAt           time.Time
+	ActionID           uuid.UUID
+	DecisionEvidenceID uuid.UUID
+	ExpiresAt          time.Time
 }
 
 type Service struct{ pool *pgxpool.Pool }
@@ -154,18 +153,16 @@ func (s *Service) GetEligible(ctx context.Context, a registry.Actor, id uuid.UUI
 	return out, mapErr(err)
 }
 
-// CreateRequest is called inside the action's tenant transaction. Phase 4
-// will create the action and request together. The database derives all
-// approval binding and eligibility fields from decision evidence and the
-// current registry; callers cannot supply them.
+// CreateRequest runs inside the action's transition transaction (ADR-004
+// T4/T11). The database derives all approval binding and eligibility fields
+// from the action, its decision evidence and the current registry; callers
+// cannot supply them.
 func CreateRequest(ctx context.Context, tx pgx.Tx, r NewRequest) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `INSERT INTO eacp.approval_requests
-		(tenant_id, action_id, agent_version_id, tool_id, requesting_subject_id,
-		 decision_evidence_id, not_after, expires_at)
-		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7)
-		RETURNING id`, r.ActionID, r.AgentVersionID, r.ToolID,
-		r.RequestingSubjectID, r.DecisionEvidenceID, r.NotAfter, r.ExpiresAt).Scan(&id)
+		(tenant_id, action_id, decision_evidence_id, expires_at)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3)
+		RETURNING id`, r.ActionID, r.DecisionEvidenceID, r.ExpiresAt).Scan(&id)
 	return id, mapErr(err)
 }
 
@@ -197,8 +194,9 @@ func (s *Service) Vote(ctx context.Context, a registry.Actor, requestID uuid.UUI
 }
 
 // Consume must run in the SAME transaction that queues the action and writes
-// its release evidence (Phase 4). The predicates bind the action, enforced
-// digest and policy version; a successful UPDATE can occur only once.
+// its release evidence (ADR-005 §5a R1); a deferred database check rejects
+// the commit otherwise. The predicates bind the action, enforced digest and
+// policy version; a successful UPDATE can occur only once.
 func Consume(ctx context.Context, tx pgx.Tx, actionID uuid.UUID,
 	enforcedDigest [32]byte, policyVersion int) (uuid.UUID, error) {
 	var id uuid.UUID

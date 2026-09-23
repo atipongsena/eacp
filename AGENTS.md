@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A, Phases 1–3 complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005). Phase 4 has not started.
+Current status: **Slice A, Phases 1–4 complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005). Phase 5 has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -24,6 +24,8 @@ Current status: **Slice A, Phases 1–3 complete** (Platform Foundation; Registr
 - Agents never receive enterprise credentials (ADR-001). Connector secrets live only in the execution worker.
 - Registry rules live in PostgreSQL triggers (ADR-003 §8). Every privileged write runs in a transaction with `storage.SetActor`; the triggers take the actor from there and fill every `*_by`/`*_at` column. Test each rule with raw SQL as `eacp_app` (see `internal/registry/schema_test.go`), not only through Go.
 - Append the audit event in the **same** transaction as the change, as its last statement (`registry.Service.change` does this).
+- Action transactions bind exactly one actor: `storage.SetActor` (principal), `storage.SetAgent` (an authenticated agent version) or `storage.SetSystem` (a named component such as `sweeper`). `eacp.actor()` stays principal-only; action guards use `eacp.actor_context()` (migration 00005).
+- Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
 
 ## Commands
 
@@ -59,7 +61,8 @@ internal/registry    principals, roles, groups, credentials, agents, versions,
 internal/registry/registrytest  bootstrapped fixture for tests
 internal/governance  local PDP, JCS digests, policy versions and decision evidence
 internal/approval    approval request, vote and one-time grant transactions
-internal/api         HTTP API (/v1/...) for registry, policies and approvals
+internal/action      Action API engine: submission, evaluation, release boundary, cancel, sweeper
+internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions
 migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests
 deployments/docker   Dockerfile, postgres bootstrap

@@ -45,23 +45,37 @@ func finishApprovalSetup(t *testing.T, f *registrytest.Fixture, tool registrytes
 		WHERE tenant_id = eacp.current_tenant_id()`, policy); err != nil {
 		t.Fatal(err)
 	}
-	action := uuid.New()
-	evidence := f.ID(t, subject, `INSERT INTO eacp.decision_evidence
-		(tenant_id, action_id, policy_bundle_id, policy_version, provider, provider_instance_id,
-		 decision_id, verdict, reasons, input_digest, enforced_digest, evaluated_at,
-		 required_quorum, eligible_roles, approval_ttl_seconds, enforced_payload)
-		VALUES (eacp.current_tenant_id(), $1, $2, 1, 'local', 'local-test', $3,
-		 'escalate', ARRAY['high risk'], decode(repeat('11', 32), 'hex'),
-		 decode(repeat('22', 32), 'hex'), now(), 2, ARRAY['approver'], 600,
-		 '{"amount":1000000,"currency":"THB"}'::jsonb)
-		RETURNING id`, action, policy, uuid.New())
-	request := f.ID(t, subject, `INSERT INTO eacp.approval_requests
-		(tenant_id, action_id, agent_version_id, tool_id, requesting_subject_id,
-		 decision_evidence_id, not_after, expires_at)
-		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5,
-		 now() + interval '1 hour', now() + interval '9 minutes') RETURNING id`,
-		action, agent.Version, tool.Tool, f.P[subject], evidence)
+	e := f.EscalatedAction(t, agent.Version, policy, subject, "erp.purchase")
+	action, request := e.Action, e.Request
 	return approvalSetup{f: f, action: action, request: request, policy: policy, tool: tool, agent: agent}
+}
+
+// consumeAndRelease runs the release boundary for the approved action as
+// its agent: lock the action, consume the grant with sql ($1 is the action
+// id), record revalidation evidence and queue the action (T10).
+func consumeAndRelease(s approvalSetup, sql string) error {
+	ctx := context.Background()
+	return storage.InTenantTx(ctx, s.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		if err := storage.SetAgent(ctx, tx, s.agent.Version); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM eacp.actions WHERE id = $1 FOR UPDATE`, s.action); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, sql, s.action)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("no grant consumed")
+		}
+		var ev uuid.UUID
+		if err := tx.QueryRow(ctx, registrytest.ReleaseEvidenceSQL, s.action, "escalate").Scan(&ev); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, registrytest.QueueSQL, s.action, ev)
+		return err
+	})
 }
 
 func ownerGrantApprover(t *testing.T, f *registrytest.Fixture, principal string) {
@@ -208,14 +222,16 @@ func TestGrantCannotBeConsumedTwiceOrAfterPolicyChange(t *testing.T) {
 		}
 	}
 	consume := `UPDATE eacp.approval_grants
-		SET consumed_at = now(), consumed_by_action_id = $2
-		WHERE request_id = $1 AND enforced_digest = decode(repeat('22', 32), 'hex')
+		SET consumed_at = now(), consumed_by_action_id = $1
+		WHERE action_id = $1 AND enforced_digest = decode(repeat('22', 32), 'hex')
 		AND policy_version = 1 AND consumed_at IS NULL AND expires_at > now()`
-	if err := s.f.Exec("carol", consume, s.request, s.action); err != nil {
+	// Principals never consume grants; the release boundary does.
+	wantState(t, s.f.Exec("carol", consume, s.action), "42501")
+	if err := consumeAndRelease(s, consume); err != nil {
 		t.Fatal(err)
 	}
 	// A direct UPDATE without the conditional WHERE is rejected by the trigger.
-	wantState(t, s.f.Exec("carol", `UPDATE eacp.approval_grants
+	wantState(t, s.f.ExecAgent(s.agent.Version, `UPDATE eacp.approval_grants
 		SET consumed_at = now(), consumed_by_action_id = $2 WHERE request_id = $1`, s.request, s.action), "55000")
 
 	s2 := setupApproval(t, "carol")
@@ -231,7 +247,7 @@ func TestGrantCannotBeConsumedTwiceOrAfterPolicyChange(t *testing.T) {
 		WHERE tenant_id = eacp.current_tenant_id()`, v2); err != nil {
 		t.Fatal(err)
 	}
-	wantState(t, s2.f.Exec("carol", consume, s2.request, s2.action), "55000")
+	wantState(t, s2.f.ExecAgent(s2.agent.Version, consume, s2.action), "55000")
 }
 
 func TestGrantCannotBeConsumedAfterRequestExpiryIsShortened(t *testing.T) {
@@ -247,10 +263,10 @@ func TestGrantCannotBeConsumedAfterRequestExpiryIsShortened(t *testing.T) {
 		SET expires_at = now() - interval '1 second' WHERE id = $1`, s.request); err != nil {
 		t.Fatal(err)
 	}
-	wantState(t, s.f.Exec("carol", `UPDATE eacp.approval_grants
+	wantState(t, s.f.ExecAgent(s.agent.Version, `UPDATE eacp.approval_grants
 		SET consumed_at = now(), consumed_by_action_id = $2
 		WHERE request_id = $1`, s.request, s.action), "55000")
-	wantState(t, s.f.Exec("carol", `UPDATE eacp.approval_grants
+	wantState(t, s.f.ExecAgent(s.agent.Version, `UPDATE eacp.approval_grants
 		SET expires_at = now() - interval '1 second', consumed_at = now(),
 		consumed_by_action_id = $2 WHERE request_id = $1`, s.request, s.action), "55000")
 }
@@ -275,7 +291,7 @@ func TestRevokedActivePolicyInvalidatesVotesAndGrants(t *testing.T) {
 		SET revoked_at = now(), revoke_reason = 'unsafe' WHERE id = $1`, s2.policy); err != nil {
 		t.Fatal(err)
 	}
-	wantState(t, s2.f.Exec("carol", `UPDATE eacp.approval_grants
+	wantState(t, s2.f.ExecAgent(s2.agent.Version, `UPDATE eacp.approval_grants
 		SET consumed_at = now(), consumed_by_action_id = $2
 		WHERE request_id = $1`, s2.request, s2.action), "55000")
 }

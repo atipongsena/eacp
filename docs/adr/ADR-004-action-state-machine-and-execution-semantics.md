@@ -1,6 +1,6 @@
 # ADR-004: Action State Machine and Execution Semantics
 
-- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
+- **Status:** Accepted — Rev 2.2 (Phase 4 pre-dispatch implementation, 2026-09-23; Rev 2.1 amended after Codex adversarial review)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes (hard gate)
 - **Related:** MASTER_PLAN §18, §19, §20, §22, §23, §29, §31, §103; ADR-001, ADR-005; detail ADRs 007–010 and 013 must conform to this ADR
@@ -152,6 +152,58 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 | `RECONCILING` | Reconciler lease expires, then T33 → `UNKNOWN_OUTCOME`. |
 | Release boundary mid-transaction | Rolled back atomically. The grant isn't consumed and the action stays `AUTHORIZED`. |
 | Stale worker wakes after reclaim | Its commits fail on the generation check. It may only append late-result evidence. |
+
+## Phase 4 implementation (Rev 2.2)
+
+Slice A Phase 4 implements T1–T13 and T15 in `migrations/00005_actions.sql` and `internal/action`. Workers, leases and dispatch (T14, T16 onwards) are Phase 5. The rules below record where the implementation had to choose; each is the conservative reading of the table above.
+
+**Enforcement.** `eacp.actions` carries every Phase 4 column of this ADR, with `operation_key` generated as `eacp:{tenant_id}:{id}`. A `BEFORE` trigger re-checks every row of the table for every write, including raw SQL as `eacp_app`: it rejects any transition not listed, any change to a terminal action, and any change to a column the move doesn't own. It also records the actor, and stamps `state_changed_at` with the database clock. An `AFTER` trigger journals every insert and transition (hash-chained, same transaction, last statement) without digests or payloads.
+
+**Actors.** Every transaction binds exactly one actor:
+- An agent version (`app.agent_version_id`, set only after API-key authentication). This is API, GOV and REL when the agent's own request drives the action.
+- A principal (`app.actor_id`). APR drives T6/T7 through the vote cascade; REQ and OPR can cancel.
+- A named system component (`app.system_actor`, only `sweeper`). This is SWP, and GOV/REL when the sweeper drives the action.
+
+An agent can only act on its own agent's actions. Principals may perform only T6–T8 and cancellation, and the system never cancels.
+
+**T1.** An agent key is required. `Idempotency-Key` (1–255 visible ASCII characters) is unique per (tenant, agent). A replay with the same `input_digest` returns the existing action and is never rejected by admission; a different digest is 409. Admission counts `QUEUED` actions, per tenant and globally (defaults 1000 and 10000, configurable, never unbounded). An action over a limit is 429 with `Retry-After`, and no action is created. The counts are advisory under concurrency: concurrent submissions may overshoot by their number. That is acceptable because admission controls capacity, not safety. `not_after` is at most 24 hours ahead (default 1 hour), by the database clock.
+
+**T2.** Deterministic denials also cover an asserted subject that isn't an enabled human principal of the tenant (`subject_invalid`), so the attempt stays auditable.
+
+**T2a.** The action stays `RECEIVED` on any of these outcomes:
+- A PDP error or timeout (`EACP_PDP_TIMEOUT`, default 5s).
+- A malformed decision, which also raises the alert `governance.malformed_decision`.
+- No active policy for the tenant.
+- Inputs that changed during evaluation three times in a row.
+
+The API answers 503 with `Retry-After` and `action_id`.
+
+**T6–T8 cascade from the approval rows** in the same transaction. Issuing a grant authorizes the action (T6). A denied request denies it (T7). An expired request expires it: T8 from `PENDING_APPROVAL`, T13 from `AUTHORIZED`. Every transaction that touches an action locks the action row first, including a vote (lock order: action → approval rows → registry `FOR SHARE` → audit chain head).
+
+**T11 is generalised.** It applies whenever revalidation returns `escalate` and no usable grant exists for the current enforced digest and policy version. That covers a new policy version, and also a contract change that turns an allowed action into an escalated one. The old request is voided and a new one is bound to the fresh decision.
+
+**T13 includes approval expiry.** A grant that expired before release is never consumed. The request expires, and so does the action. This is the ADR-005 default.
+
+**Terminal states void approval state.** An action that becomes `DENIED`, `CANCELLED` or `EXPIRED` voids its live requests and expires its unconsumed grants in the same transaction.
+
+**Cancellation (T9, T13, T15) is limited to three states.** It is allowed only from `PENDING_APPROVAL`, `AUTHORIZED` and `QUEUED`. A `RECEIVED` action can't be cancelled; it can only be decided or expire. Cancellation requires a reason. The submitting agent, the subject principal or an `operator` may cancel, and cancellation never consults the PDP.
+
+**HTTP.**
+- `POST /v1/actions` (agent keys only) answers:
+  - 200 for a terminal action and 202 for one still in progress, with the action in the body.
+  - 409 for an idempotency conflict, 429 at admission, and 503 on T2a.
+- `GET /v1/actions/{id}` is open to the action's own agent, operators and auditors. Another agent's action is 404.
+- `POST /v1/actions/{id}/cancel` is open to agents and principals, and the database decides.
+- Both `POST /v1/actions` and `GET /v1/actions/{id}` accept `?wait=` (at most 60s). It polls until the action is terminal or the wait ends. An agent's own wait also drives the release of its approved action.
+
+**Outbox.** The release transaction inserts one `action.queued` outbox row. It carries only `action_id` and the request's W3C `traceparent`. Publishing it is Phase 5, and the row is a hint, never an authority (principle 2).
+
+**Sweeper.** The sweeper runs in `controlplane-api` every `EACP_ACTION_SWEEP_INTERVAL` (default 1s). In each pass it:
+- Expires overdue actions (T5, T13, T15) and lapsed approvals (T8, T13).
+- Re-evaluates `RECEIVED` actions (T2a).
+- Releases `AUTHORIZED` ones (T10–T12).
+
+Each step is an ordinary engine transition, so racing an API request on the same action is harmless.
 
 ## Consequences
 

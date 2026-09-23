@@ -179,3 +179,41 @@ func SetActor(ctx context.Context, tx pgx.Tx, actorID uuid.UUID) error {
 	}
 	return nil
 }
+
+// SetAgent records that an authenticated agent version performs the
+// transaction's action changes (migration 00005, eacp.actor_context). Call it
+// only after the agent's API key has been authenticated. It never grants
+// registry or policy rights: eacp.actor() still requires a principal.
+func SetAgent(ctx context.Context, tx pgx.Tx, agentVersionID uuid.UUID) error {
+	if agentVersionID == uuid.Nil {
+		return fmt.Errorf("storage: nil agent version id")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.agent_version_id', $1, true)`, agentVersionID.String()); err != nil {
+		return fmt.Errorf("storage: set agent: %w", err)
+	}
+	return nil
+}
+
+// SetSystem records that a named control-plane component (for example the
+// sweeper) performs the transaction's action changes.
+func SetSystem(ctx context.Context, tx pgx.Tx, component string) error {
+	if component == "" {
+		return fmt.Errorf("storage: empty system component")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.system_actor', $1, true)`, component); err != nil {
+		return fmt.Errorf("storage: set system actor: %w", err)
+	}
+	return nil
+}
+
+// SetTraceparent carries a W3C traceparent into the transaction so the
+// outbox trigger can attach it to events. An empty value is a no-op.
+func SetTraceparent(ctx context.Context, tx pgx.Tx, traceparent string) error {
+	if traceparent == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.traceparent', $1, true)`, traceparent); err != nil {
+		return fmt.Errorf("storage: set traceparent: %w", err)
+	}
+	return nil
+}

@@ -3330,6 +3330,16 @@ Hash-chained audit journal
 Outbox table
 ```
 
+**Status (2026-09-23): delivered.** Migration 00005 and `internal/action` implement T1–T13 and T15 of ADR-004:
+- Idempotent submission, with 409 when the digest differs.
+- Static admission, with 429 and no action created.
+- Governance evaluation with 503 on T2a.
+- Durable approval cascades.
+- The ADR-005 release boundary: fresh revalidation, one-time grant consumption checked at commit, pinned policy and contract, the budget hook, the journal and an outbox row.
+- Pre-dispatch cancel and expiry.
+
+PostgreSQL triggers enforce every guard for raw SQL as `eacp_app`. The API adds `POST /v1/actions`, `GET /v1/actions/{id}` and `POST /v1/actions/{id}/cancel`, and `controlplane-api` runs the sweeper. Implementation choices are recorded in ADR-004 Rev 2.2, ADR-005 §9 and ADR-002 Rev 2.3. Workers, leases, dispatch and outbox publishing are Phase 5. The review is in `docs/reviews/2026-09-23-phase4-code-review.md`.
+
 ---
 
 # 79. Phase 5 — Worker, Lease, Fencing & Dispatch Intent (Slice A)

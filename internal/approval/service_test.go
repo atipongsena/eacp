@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"eacp/internal/approval"
 	"eacp/internal/governance"
 	"eacp/internal/registry"
+	"eacp/internal/registry/registrytest"
 	"eacp/internal/storage"
 	"eacp/internal/storage/pgtest"
 )
@@ -31,11 +33,7 @@ func TestConsumeBindsDigestAndCanSucceedOnce(t *testing.T) {
 	copy(wrong[:], bytes.Repeat([]byte{0x33}, 32))
 	consume := func(digest [32]byte) error {
 		return storage.InTenantTx(context.Background(), s.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
-			if err := storage.SetActor(context.Background(), tx, s.f.P["carol"]); err != nil {
-				return err
-			}
-			_, err := approval.Consume(context.Background(), tx, s.action, digest, 1)
-			return err
+			return consumeViaService(context.Background(), tx, s, digest)
 		})
 	}
 	if err := consume(wrong); !errors.Is(err, approval.ErrGrantUnavailable) {
@@ -47,6 +45,27 @@ func TestConsumeBindsDigestAndCanSucceedOnce(t *testing.T) {
 	if err := consume(good); !errors.Is(err, approval.ErrGrantUnavailable) {
 		t.Fatalf("second consume = %v, want ErrGrantUnavailable", err)
 	}
+}
+
+// consumeViaService is the release boundary with approval.Consume: the
+// agent locks its action, consumes the grant, records revalidation evidence
+// and queues the action in the caller's transaction.
+func consumeViaService(ctx context.Context, tx pgx.Tx, s approvalSetup, digest [32]byte) error {
+	if err := storage.SetAgent(ctx, tx, s.agent.Version); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM eacp.actions WHERE id = $1 FOR UPDATE`, s.action); err != nil {
+		return err
+	}
+	if _, err := approval.Consume(ctx, tx, s.action, digest, 1); err != nil {
+		return err
+	}
+	var ev uuid.UUID
+	if err := tx.QueryRow(ctx, registrytest.ReleaseEvidenceSQL, s.action, "escalate").Scan(&ev); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, registrytest.QueueSQL, s.action, ev)
+	return err
 }
 
 func TestVoteServiceReturnsDurableState(t *testing.T) {
@@ -92,11 +111,7 @@ func TestConcurrentConsumeSucceedsOnce(t *testing.T) {
 			defer workers.Done()
 			<-start
 			results <- storage.InTenantTx(context.Background(), s.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
-				if err := storage.SetActor(context.Background(), tx, s.f.P["carol"]); err != nil {
-					return err
-				}
-				_, err := approval.Consume(context.Background(), tx, s.action, digest, 1)
-				return err
+				return consumeViaService(context.Background(), tx, s, digest)
 			})
 		}()
 	}
@@ -139,12 +154,9 @@ func TestPolicyActivationWaitsForGrantConsumption(t *testing.T) {
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, pgtest.TenantA); err != nil {
 		t.Fatal(err)
 	}
-	if err := storage.SetActor(ctx, tx, s.f.P["carol"]); err != nil {
-		t.Fatal(err)
-	}
 	var digest [32]byte
 	copy(digest[:], bytes.Repeat([]byte{0x22}, 32))
-	if _, err := approval.Consume(ctx, tx, s.action, digest, 1); err != nil {
+	if err := consumeViaService(ctx, tx, s, digest); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)

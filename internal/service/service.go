@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,18 @@ type Deps struct {
 	Log    *slog.Logger
 	// DB is nil for services started without RequireDatabase.
 	DB *pgxpool.Pool
+
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bg       sync.WaitGroup
+}
+
+// Background runs fn in its own goroutine until the service stops or the
+// context given to Start ends. The stop function returned by Start cancels
+// fn's context and waits for fn to return before it releases the database
+// pool and telemetry.
+func (d *Deps) Background(fn func(context.Context)) {
+	d.bg.Go(func() { fn(d.bgCtx) })
 }
 
 // Start initialises a service. It fails closed: invalid configuration, an
@@ -68,18 +81,22 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 	}
 
 	deps := &Deps{Name: name, Config: cfg, Log: log}
+	deps.bgCtx, deps.bgCancel = context.WithCancel(ctx)
 	if cfg.DatabaseURL != "" {
 		pool, err := storage.Open(ctx, cfg.DatabaseURL)
 		if err != nil {
+			deps.bgCancel()
 			stopTelemetry()
 			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 		if err := storage.CheckRoleSafety(ctx, pool); err != nil {
+			deps.bgCancel()
 			pool.Close()
 			stopTelemetry()
 			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 		if err := storage.CheckSchemaVersion(ctx, pool, migrations.Latest()); err != nil {
+			deps.bgCancel()
 			pool.Close()
 			stopTelemetry()
 			return nil, nil, fmt.Errorf("%s: %w", name, err)
@@ -89,6 +106,8 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 
 	log.Info("service started", "config", cfg)
 	stop := func() {
+		deps.bgCancel()
+		deps.bg.Wait()
 		if deps.DB != nil {
 			deps.DB.Close()
 		}
@@ -151,8 +170,9 @@ func dsnPassword(dsn string) string {
 }
 
 // Main runs a probe-serving service process until SIGINT/SIGTERM and exits
-// non-zero on startup or serving failure. It is the whole main() of the
-// Phase 1 binaries; later phases register their own routes on the mux.
+// non-zero on startup or serving failure. It is the whole main() of every
+// binary: register mounts the service's routes and may start background
+// tasks with Deps.Background, which stop before the pool is closed.
 func Main(name string, opts config.Options, register func(*Deps, *http.ServeMux)) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

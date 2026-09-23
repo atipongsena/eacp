@@ -30,13 +30,19 @@ type harness struct {
 	keys map[string]string
 }
 
-func newHarness(t *testing.T) *harness {
+// newHarness serves the API over a fresh fixture; opts adjust the server
+// before its routes are registered.
+func newHarness(t *testing.T, opts ...func(*registrytest.Fixture, *api.Server)) *harness {
 	t.Helper()
 	f := registrytest.New(t)
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
 	mux := http.NewServeMux()
-	api.New(f.App, log).Register(mux)
+	s := api.New(f.App, log)
+	for _, o := range opts {
+		o(f, s)
+	}
+	s.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	h := &harness{t: t, f: f, srv: srv, logs: logs, keys: map[string]string{}}
@@ -83,21 +89,8 @@ func TestApprovalAPIShowsEnforcedPayloadAndRecordsVotes(t *testing.T) {
 	policyID := uuid.MustParse(str(policy, "id"))
 	code, body := h.as("bob", "POST", "/v1/policies/"+policyID.String()+"/activate", map[string]any{"reason": "reviewed"})
 	h.want(204, code, body)
-	actionID := uuid.New()
-	evidence := h.f.ID(t, "carol", `INSERT INTO eacp.decision_evidence
-		(tenant_id, action_id, policy_bundle_id, policy_version, provider, provider_instance_id,
-		 decision_id, verdict, reasons, input_digest, enforced_digest, enforced_payload,
-		 required_quorum, eligible_roles, approval_ttl_seconds, evaluated_at)
-		VALUES (eacp.current_tenant_id(), $1, $2, 1, 'local', 'local-test', $3, 'escalate',
-		 ARRAY['high risk'], decode(repeat('11', 32), 'hex'), decode(repeat('22', 32), 'hex'),
-		 '{"amount":1000000,"currency":"THB"}'::jsonb, 2, ARRAY['approver'], 600, now())
-		RETURNING id`, actionID, policyID, uuid.New())
-	request := h.f.ID(t, "carol", `INSERT INTO eacp.approval_requests
-		(tenant_id, action_id, agent_version_id, tool_id, requesting_subject_id,
-		 decision_evidence_id, not_after, expires_at)
-		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5,
-		 now() + interval '1 hour', now() + interval '9 minutes') RETURNING id`,
-		actionID, agent.Version, tool.Tool, h.f.P["carol"], evidence)
+	e := h.f.EscalatedAction(t, agent.Version, policyID, "carol", "erp.purchase")
+	request := e.Request
 	path := "/v1/approvals/" + request.String()
 	code, queue := h.as("amy", "GET", "/v1/approvals", nil)
 	h.want(200, code, queue)
