@@ -1,5 +1,7 @@
 # Slice A invariants and their tests
 
+Phase 9 (Slice B) adds the AGT sidecar PDP. Its tests join invariants 10, 14 and 18. The sidecar's own suites, including the conformance reference set run through ACS and OPA, run in `docker build -f sidecars/agt-pdp/Dockerfile --target test .`.
+
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
 
 `test/invariants` checks the map mechanically. It reads the [A] invariants from MASTER_PLAN §103, requires a section here for each, and requires that every test named in a section exists in the named package. `go test -race ./...` with `EACP_TEST_ADMIN_DSN` runs them all. The `test/security` tests also need `EACP_COMPOSE_TEST=1` and the compose stack, and `test/demo` needs `EACP_DEMO=1` (see [DEMO.md](DEMO.md)).
@@ -68,6 +70,8 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 ## 10 [A] Audit and evidence references remain reconstructible end-to-end
 
 - `internal/worker` TestEvidenceReconstructsTheWholeActionFromItsID — governance → approval → execution → reconciliation → outcome, with the verified journal
+- `integrations/governance/microsoftagt` TestEngineWithTheAGTProvider — an AGT decision keeps its provider evidence in the evidence report and the journal
+- `internal/governance` TestRecordDecisionPersistsBoundedProviderEvidence — provider evidence is stored with the decision and bounded in raw SQL
 - `internal/action` TestEvidenceIsReconstructibleFromTheAction — decisions, votes and grants join by action_id
 - `internal/api` TestOperatorsResolveActionsOverTheAPI — evidence over the API, with a verified chain
 
@@ -102,6 +106,8 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/action` TestTransformThenApproveBindsTheEnforcedPayload — approvals bind the transformed payload
 - `internal/action` TestDigestMismatchDeniesAndAlerts — a digest mismatch denies and alerts
 - `internal/connector` TestHTTPExecutePreservesEnforcedPayloadAndNativeKey — the connector sends exactly the enforced payload
+- `internal/governance` TestConformanceReference — the ADR-002 reference set pins the verdicts, enforced payloads and digests; the AGT sidecar's image build must reproduce them through ACS
+- `integrations/governance/microsoftagt` TestReferenceSetRoundTripsTheWireProtocol — the AGT client carries every decision and digest of the reference set losslessly
 
 ## 15 [A] An approval grant is bound, expires, is consumed at most once, and is not granted by the subject or the owner
 
@@ -138,6 +144,10 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/action` TestReceivedActionCanBeCancelledByTheRequesterOrAnOperator — T5a in raw SQL
 - `internal/action` TestCancelWinsOverAnInFlightDecision — a cancel during a PDP call wins
 - `internal/worker` TestGovernanceOutageFailsClosedWithoutBlockingSafety — cancellation, reconciliation and containment during an outage
+- `integrations/governance/microsoftagt` TestFailuresAreTransientAndBadResponsesAreMalformed — every AGT sidecar failure, version mismatch or bad response is transient
+- `integrations/governance/microsoftagt` TestEngineWithTheAGTProvider — an AGT outage keeps the action RECEIVED, and cancel never calls the sidecar
+- `cmd/controlplane-api` TestGovernanceProviderSelection — an unreachable PDP does not stop the API from starting; a mismatched one does
+- `test/demo` TestSliceADemo — stopping the AGT sidecar: 503 and RECEIVED, cancel works, the sweeper resumes (compose)
 
 ## 19 [A] Every executed action is attributable to an authenticated agent and an ACTIVE version whose allowlist includes the tool
 

@@ -101,16 +101,20 @@ func RecordDecision(ctx context.Context, tx pgx.Tx, actionID uuid.UUID, d Govern
 	if d.Approval != nil {
 		quorum, ttl, roles = d.Approval.Quorum, d.Approval.TTLSeconds, d.Approval.EligibleRoles
 	}
+	var providerEvidence any
+	if len(d.ProviderEvidence) != 0 {
+		providerEvidence = string(d.ProviderEvidence)
+	}
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `INSERT INTO eacp.decision_evidence
 		(tenant_id, action_id, policy_bundle_id, policy_version, provider, provider_instance_id,
 		 decision_id, verdict, reasons, input_digest, enforced_digest, enforced_payload,
-		 required_quorum, eligible_roles, approval_ttl_seconds, evaluated_at)
+		 required_quorum, eligible_roles, approval_ttl_seconds, evaluated_at, provider_evidence)
 		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-		        $11::jsonb, $12, $13, $14, $15) RETURNING id`,
+		        $11::jsonb, $12, $13, $14, $15, $16::jsonb) RETURNING id`,
 		actionID, d.PolicyBundleID, d.PolicyVersion, d.Provider, d.ProviderInstanceID,
 		d.DecisionID, string(d.Verdict), d.Reasons, d.InputDigest[:], d.EnforcedDigest[:],
-		d.EnforcedPayload, quorum, roles, ttl, d.EvaluatedAt).Scan(&id)
+		d.EnforcedPayload, quorum, roles, ttl, d.EvaluatedAt, providerEvidence).Scan(&id)
 	return id, storeErr(err)
 }
 

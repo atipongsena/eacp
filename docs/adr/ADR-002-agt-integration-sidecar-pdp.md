@@ -1,6 +1,6 @@
 # ADR-002: AGT/ACS Integration via Sidecar PDP
 
-- **Status:** Accepted — Rev 2.3 (Phase 4 action integration, 2026-09-23; Rev 2.2 Phase 3 local-provider contract)
+- **Status:** Accepted — Rev 2.4 (Phase 9 sidecar contract, 2026-09-24; Rev 2.3 Phase 4 action integration; Rev 2.2 Phase 3 local-provider contract)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §4, §5, §5.1, §12, §13, §83 (Phase 9); ADR-001, ADR-005
@@ -84,6 +84,77 @@ This follows Codex's refinement of C1.
 - EACP **refuses to use** a sidecar whose AGT version doesn't match the pinned version (fail closed at startup, with a health alert at runtime).
 - **Conformance suite:** a reference policy set evaluated by both `local` and `microsoftagt` must produce identical verdicts and enforced payloads. It runs in CI on every AGT version bump.
 
+### 8. The Phase 9 sidecar contract (Rev 2.4)
+
+The spike verified the upstream API by running it; the results are in `research/REFERENCES.md`. The findings that shape this section:
+- The ACS-backed evaluator is `agt.policies.runtime.AgtRuntime` in **`agt-policies` 5.0.0**. It wraps **ACS 0.3.1b1**, a Rust core with an upstream abi3 Linux wheel.
+- ACS Rego policies run through the **OPA CLI**.
+- The meta package `agent-governance-toolkit` 4.1.0 does not contain ACS.
+
+**Pins.** The sidecar pins these three together. The Go client refuses any other set (§7):
+- `agt-policies==5.0.0`
+- `agent-control-specification==0.3.1b1`, the upstream Linux wheel, pinned by hash
+- OPA v1.20.2, a checksum-pinned static binary
+
+The sidecar reports all three on `GET /healthz` and on every decision. The Go client checks them:
+- **At startup**, a reachable sidecar with the wrong versions aborts `controlplane-api` (fail closed). An unreachable one only logs, so the API still starts: cancel, reconciliation reads and containment must work during a PDP outage (§6).
+- **On every decision**, a version or protocol mismatch is a malformed decision. The action stays `RECEIVED` and the `governance.malformed_decision` alert fires. For the same reason as startup, the PDP is **not** a `/readyz` check: an outage must not take the API out of service.
+
+**Policy mapping.** The sidecar is stateless. Each request carries the policy bundle EACP pinned: id, version and content. The sidecar caches one ACS runtime per `(bundle id, version, SHA-256 of the content)`, in a bounded LRU.
+
+A fixed Rego adapter module (`eacp.pdp`) evaluates the bundle's rules, supplied as OPA data, inside ACS at the `pre_tool_call` intervention point:
+- `policy_target` is `$snap.tool_call.args`, which holds the submitted payload.
+- `snapshot.eacp` holds the binding fields, `risk_class` and `side_effect_class`.
+- The first matching rule wins. An empty-string match field is a wildcard, as in `local`. No match gives `deny` / `no_matching_rule`.
+- A multi-key `set` becomes one ACS transform of `$policy_target`: the payload minus the replaced keys, united with `set`. That is a shallow replacement, as in `local`.
+- The matched rule id travels in `evidence.verification_pointers.eacp_rule_id`. For `escalate`, the sidecar takes quorum, roles and TTL from that rule. It first checks that the rule's verdict equals the ACS decision; if not, the decision is malformed.
+
+The sidecar never calls an approval resolver. It calls `AgentControl.evaluate_intervention_point` in `enforce` mode and never calls `enforce()` or `run()`, so an `escalate` comes back as a verdict and is never auto-resolved. Approval state stays in EACP (ADR-005).
+
+**Divergences from `local`, all failing closed:**
+
+| Case | `local` | `microsoft-agt` |
+|---|---|---|
+| `escalate` with `set` | payload rewritten, then approval | ACS can't carry a transform on `escalate`. The sidecar refuses the bundle (`422 policy_unsupported`), and the action stays `RECEIVED`. |
+| ACS `runtime_error:*` (OPA missing or slow, invalid policy output, limits) | — | Reported as `503 pdp_runtime_error`, a transient failure. It is **never** a terminal `DENIED`. |
+| `set` on a non-object payload | provider error | The adapter emits an invalid decision, which becomes `runtime_error:policy_output_invalid` and then 503. The action stays `RECEIVED` either way. |
+| A payload beyond ACS's resource limits (policy-input depth 64, 1 MiB snapshot, 256 KiB policy output) | evaluated | ACS reports `runtime_error:*`, which becomes 503. The action stays `RECEIVED` until `not_after`. |
+
+**Digests.**
+- The sidecar computes EACP's two JCS digests itself, with `rfc8785`. EACP compares them with its own (§4). This is a real cross-implementation check.
+- ACS's `action_identity` (sorted serde_json over the ACS policy input, not JCS) is kept only as provider evidence. In ACS 0.3.1b1 the Python binding reports only the enforced identity.
+
+**Provider evidence.** Migration 00009 adds `decision_evidence.provider_evidence`. It is a nullable JSON object of at most 4 KiB. For AGT it holds the ACS identity, the matched rule id, the adapter module's digest and the three versions. `local` leaves it null.
+
+**Wire protocol `eacp-agt-pdp/1`.**
+- `POST /v1/evaluate` takes the binding, `risk_class`, `side_effect_class` and the policy.
+- A 200 response returns every field of `GovernanceDecision`. Every other status is a transient failure: 400, 413, 422, 503 or 500.
+- The Go client rejects:
+  - unknown fields;
+  - a body over 2 MiB;
+  - redirects;
+  - an `evaluated_at` more than 5 s outside the call window.
+- The client ignores proxy environment variables.
+
+**Transport.**
+- `EACP_GOVERNANCE_PROVIDER=local|microsoft-agt`. The default is `local`.
+- `EACP_AGT_PDP_URL` is either:
+  - `http://` to a loopback host only, or
+  - `https://` with mutual TLS 1.3, which requires `EACP_AGT_PDP_CA_FILE`, `EACP_AGT_PDP_CERT_FILE` and `EACP_AGT_PDP_KEY_FILE`.
+- The sidecar either requires a client certificate or refuses to bind a non-loopback address.
+- Docker Compose runs it on an internal `pdp` network that only `controlplane-api` shares. It uses mTLS with a development PKI that `eacpctl pdp-dev-certs` writes into a named volume.
+
+**Health and latency.** `GET /healthz` reports the protocol, the three versions and the instance. It reports no policy version, because the sidecar holds no policy (§7's policy-version bullet is superseded by the per-request bundle).
+
+Measured in the image, one decision takes about 23 ms at p50 and p95. Most of that is the OPA process ACS spawns per call; a new bundle adds about 4 ms. This is a measurement, not an SLO (§105). An in-process Rego engine is the follow-up if Phase 12/13 capacity needs it.
+
+**Conformance.** `test/conformance/governance_reference.json` records each case's expected outcome and EACP's digests. Three suites run against it:
+- `internal/governance` checks `local` against it.
+- The sidecar image's test stage checks the AGT sidecar against it, through ACS and OPA.
+- The Compose security test checks the live path through the Go client.
+
+So a digest or verdict divergence fails the build.
+
 ## Consequences
 
 **Positive**
@@ -101,7 +172,9 @@ This follows Codex's refinement of C1.
 
 | Unresolved | Conservative default |
 |---|---|
-| The exact AGT Python API for ACS `Evaluate` (module and function names, snapshot schema) | **Not assumed.** The Phase 9 spike must verify against the pinned AGT release and record the result in `research/REFERENCES.md` before implementation (§107: no invented APIs). |
+| The exact AGT Python API for ACS `Evaluate` (module and function names, snapshot schema) | **Resolved in Rev 2.4** by the Phase 9 spike (`research/REFERENCES.md`), which ran the pinned release. |
+| Whether a later ACS reports a distinct `input_identity` from Python | EACP stores whatever ACS reports as evidence only, and never relies on it. |
+| An AGT/ACS release that changes the Rego adapter's semantics | The version pins, and the conformance suite in the image build, refuse it until the suite passes again. |
 | Whether AGT's `enforced_identity` digest byte-for-byte matches EACP's JCS implementation | EACP's own digest is authoritative. On any mismatch → Deny (§4 above). |
 | Timeout budget for `Evaluate` | Configurable (`EACP_PDP_TIMEOUT`, default 5s, at most 1 minute). A timeout is treated as unavailable (table in §6). No SLO until measured. |
 | Whether `warn` needs human visibility | `warn` is allowed but recorded as evidence and surfaced in the operator UI later. It never downgrades to allow silently without evidence. |

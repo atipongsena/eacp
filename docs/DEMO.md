@@ -6,6 +6,8 @@ The demo proves the Slice A goal statement (MASTER_PLAN §110) against a running
 
 It follows the §111 script and checks each claim, so it is also a test (`test/demo`, `TestSliceADemo`).
 
+Since Phase 9 the stack takes its governance decisions from the **Microsoft AGT/ACS sidecar PDP** (`agt-pdp`, ADR-002 §8), reached over mutual TLS. Every decision in the demo is evaluated by the pinned AGT 5.0.0 policy layer, the ACS 0.3.1b1 engine and OPA 1.20.2.
+
 ## Run it
 
 Requirements: Docker with Compose v2.24 or later, Go and Python 3.
@@ -20,7 +22,7 @@ The script:
 3. runs the demo;
 4. removes the demo stack and its volumes.
 
-A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The run takes about a minute after the images are built.
+A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The run takes about a minute after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
 
 `deployments/demo/compose.demo.yml` shortens two timings so the failure scenarios finish quickly: a 10-second worker lease, and three reconciliation lookups before a human is asked.
 
@@ -41,8 +43,9 @@ Everything goes through the public API with keys that each person generated for 
 | 8 | Five concurrent submissions with one idempotency key | One action, one PO (inv. 4) |
 | 9 | The ERP commits, then the call times out | Reconciled from evidence, not guessed (inv. 5) |
 | 10 | Delayed visibility under `BEST_EFFORT`: three "not found" lookups, no retry. Operator otto resolves with evidence | "Not found" is not proof (inv. 6, 13); human resolution |
-| 11 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain | Evidence reconstruction (inv. 10, 17) |
-| 12 | Search every API response, every service log and a database dump for the ERP credential | Not found anywhere (inv. 11) |
+| 11 | Stop the AGT sidecar. Two purchases answer 503 `governance_unavailable` and stay `RECEIVED`. One is cancelled without the PDP. Restart the sidecar; the sweeper evaluates the other, which executes | PDP outage fails closed, and never blocks cancellation (inv. 18, ADR-002 §6) |
+| 12 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain. Each decision names `microsoft-agt`, the pinned AGT/ACS/OPA versions and the matched rule | Evidence reconstruction (inv. 10, 17) |
+| 13 | Search every API response, every service log (including the sidecar's) and a database dump for the ERP credential | Not found anywhere (inv. 11) |
 
 ## Output
 

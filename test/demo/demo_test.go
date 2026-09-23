@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"eacp/integrations/governance/microsoftagt"
 	"eacp/internal/identity"
 )
 
@@ -164,10 +165,24 @@ func TestSliceADemo(t *testing.T) {
 	d.logf("otto (operator) resolved it: SUCCEEDED, %s", d.action(hidden)["external_reference"])
 	d.onePO(hidden)
 
-	d.step("11. Reconstruct the high-value purchase from its action_id")
+	d.step("11. The AGT PDP goes down: new actions wait, cancel still works, recovery resumes")
+	d.compose("stop", "agt-pdp")
+	waiting := d.unavailable("pdp-down-1", map[string]any{"amount": 150})
+	dropped := d.unavailable("pdp-down-2", map[string]any{"amount": 175})
+	cancelled := d.must(200, "agent", "POST", "/v1/actions/"+dropped+"/cancel", map[string]any{"reason": "no longer needed"})
+	if cancelled["state"] != "CANCELLED" {
+		d.t.Fatalf("cancel during the PDP outage = %v", cancelled)
+	}
+	d.logf("cancel needs no PDP: %s → CANCELLED", dropped[:8])
+	d.compose("start", "agt-pdp")
+	d.logf("agt-pdp restarted; the sweeper evaluates the waiting action")
+	d.until(waiting, "SUCCEEDED")
+	d.onePO(waiting)
+
+	d.step("12. Reconstruct the high-value purchase from its action_id")
 	d.evidence(high)
 
-	d.step("12. Search for the ERP credential in API responses, logs and the database")
+	d.step("13. Search for the ERP credential in API responses, logs and the database")
 	d.secretScan()
 
 	d.step("Slice A demo complete")
@@ -405,10 +420,7 @@ func firstLine(s string) string {
 // submit submits an action as the agent and returns its id.
 func (d *demo) submit(idem, operation, tool string, payload map[string]any) string {
 	d.t.Helper()
-	payload["currency"] = "THB"
-	code, body := d.call("agent", "POST", "/v1/actions?wait=2s", map[string]any{"subject": "carol@acme.test",
-		"operation": operation, "target": "erp", "tool": tool, "tool_schema_version": "1", "resource": "po",
-		"payload": payload}, "Idempotency-Key", idem)
+	code, body := d.post(idem, operation, tool, payload)
 	if code != 200 && code != 202 {
 		d.t.Fatalf("submit %s = %d %v", idem, code, body)
 	}
@@ -416,6 +428,27 @@ func (d *demo) submit(idem, operation, tool string, payload map[string]any) stri
 	if id == "" {
 		d.t.Fatalf("submit %s: no action id in %v", idem, body)
 	}
+	return id
+}
+
+func (d *demo) post(idem, operation, tool string, payload map[string]any) (int, map[string]any) {
+	d.t.Helper()
+	payload["currency"] = "THB"
+	return d.call("agent", "POST", "/v1/actions?wait=2s", map[string]any{"subject": "carol@acme.test",
+		"operation": operation, "target": "erp", "tool": tool, "tool_schema_version": "1", "resource": "po",
+		"payload": payload}, "Idempotency-Key", idem)
+}
+
+// unavailable submits a routine purchase while the PDP is down: ADR-002 §6
+// requires 503 with the action persisted RECEIVED, never DENIED.
+func (d *demo) unavailable(idem string, payload map[string]any) string {
+	d.t.Helper()
+	code, body := d.post(idem, "purchase", "erp.create_po", payload)
+	id, _ := body["action_id"].(string)
+	if code != 503 || body["error"] != "governance_unavailable" || body["state"] != "RECEIVED" || id == "" {
+		d.t.Fatalf("submit while the PDP is down = %d %v", code, body)
+	}
+	d.logf("PDP down: HTTP 503 governance_unavailable, action %s stays RECEIVED", id[:8])
 	return id
 }
 
@@ -510,6 +543,17 @@ func (d *demo) evidence(id string) {
 		dec := x.(map[string]any)
 		d.logf("governance: %s under policy v%v (%v), enforced digest %.16s…", dec["verdict"], dec["policy_version"],
 			dec["reasons"], dec["enforced_digest"])
+		// ADR-002 §8: the decision came from the AGT sidecar, and its
+		// evidence names the engine stack and rule that decided.
+		pe, _ := dec["provider_evidence"].(map[string]any)
+		versions, _ := pe["versions"].(map[string]any)
+		if dec["provider"] != microsoftagt.ProviderName || pe["rule_id"] != "high-value" ||
+			versions["agt"] != microsoftagt.Pinned.AGT || versions["acs"] != microsoftagt.Pinned.ACS ||
+			versions["opa"] != microsoftagt.Pinned.OPA {
+			d.t.Fatalf("decision provenance = %v %v", dec["provider"], dec["provider_evidence"])
+		}
+		d.logf("  decided by %s (%v): AGT %v, ACS %v, OPA %v, rule %v, ACS identity %.23s…", dec["provider"],
+			dec["provider_instance_id"], versions["agt"], versions["acs"], versions["opa"], pe["rule_id"], pe["acs_action_identity"])
 	}
 	for _, x := range ev["approvals"].([]any) {
 		a := x.(map[string]any)
@@ -583,7 +627,7 @@ func (d *demo) secretScan() {
 		d.t.Fatal("the ERP credential appears in an API response")
 	}
 	d.logf("%d API responses: no credential", len(d.responses))
-	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "migrate", "postgres")
+	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "migrate", "postgres", "agt-pdp")
 	if strings.Contains(logs, d.token) {
 		d.t.Fatal("the ERP credential appears in a service log")
 	}

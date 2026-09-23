@@ -188,3 +188,35 @@ func TestWorkerSettings(t *testing.T) {
 		}
 	}
 }
+
+// ADR-002 §8: the provider is local unless microsoft-agt is chosen, which
+// needs the sidecar URL. Transport safety (loopback or mutual TLS) is
+// checked by the client when controlplane-api starts.
+func TestGovernanceProvider(t *testing.T) {
+	cfg, err := Load(env(nil), Options{})
+	if err != nil || cfg.GovernanceProvider != "local" || cfg.AGTPDPURL != "" {
+		t.Fatalf("default provider = %q %q, %v", cfg.GovernanceProvider, cfg.AGTPDPURL, err)
+	}
+	cfg, err = Load(env(map[string]string{
+		"EACP_GOVERNANCE_PROVIDER": "microsoft-agt", "EACP_AGT_PDP_URL": "https://agt-pdp:8443",
+		"EACP_AGT_PDP_CA_FILE": "/pki/ca.pem", "EACP_AGT_PDP_CERT_FILE": "/pki/client.pem", "EACP_AGT_PDP_KEY_FILE": "/pki/client-key.pem",
+	}), Options{})
+	if err != nil || cfg.GovernanceProvider != "microsoft-agt" || cfg.AGTPDPURL != "https://agt-pdp:8443" ||
+		cfg.AGTPDPCAFile != "/pki/ca.pem" || cfg.AGTPDPCertFile != "/pki/client.pem" || cfg.AGTPDPKeyFile != "/pki/client-key.pem" {
+		t.Fatalf("agt config = %+v, %v", cfg, err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("x", "config", cfg)
+	if !strings.Contains(buf.String(), "governance_provider=microsoft-agt") || !strings.Contains(buf.String(), "agt_pdp_url=https://agt-pdp:8443") {
+		t.Fatalf("log value = %s", buf.String())
+	}
+	for name, vars := range map[string]map[string]string{
+		"unknown provider": {"EACP_GOVERNANCE_PROVIDER": "opa"},
+		"agt without url":  {"EACP_GOVERNANCE_PROVIDER": "microsoft-agt"},
+		"url without agt":  {"EACP_AGT_PDP_URL": "http://127.0.0.1:8181"},
+	} {
+		if _, err := Load(env(vars), Options{}); err == nil {
+			t.Errorf("%s: accepted %v", name, vars)
+		}
+	}
+}

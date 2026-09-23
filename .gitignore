@@ -29,3 +29,7 @@ Thumbs.db
 # Tooling
 .codegraph/
 graphify-out/
+
+# Python
+__pycache__/
+*.pyc

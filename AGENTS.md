@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Slice B (Phase 9) has not started.
+Current status: **Slice A complete, Phases 1–8; Slice B Phase 9 (AGT sidecar PDP, ADR-002 Rev 2.4) complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Phase 10 (NATS JetStream) has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -29,6 +29,7 @@ Current status: **Slice A complete, Phases 1–8** (Platform Foundation; Registr
 - Only `execution-worker` may be configured with connector secrets (`config.Options.AllowConnectorSecrets`). Never log, store or journal a secret value; the worker drops connector-returned fields that contain one.
 - A reconciler transaction binds `storage.SetReconciler` (a reconciler id and its lease generation). Negative evidence proves nothing unless the pinned contract is AUTHORITATIVE and every call has settled; a human sees an unknown outcome only once it has settled (ADR-004 Rev 2.5).
 - Every [A] invariant of MASTER_PLAN §103 keeps at least one passing test listed in `docs/INVARIANTS.md` (`test/invariants` enforces the map). A new table, policy or SECURITY DEFINER function must be reviewed and added to `internal/storage/rls_catalog_test.go`.
+- The AGT sidecar (`sidecars/agt-pdp`) and its Go client pin AGT policies 5.0.0, ACS 0.3.1b1 and OPA 1.20.2 (`microsoftagt.Pinned`, `sidecars/agt-pdp/requirements.txt`, its Dockerfile). A bump needs the spike notes in `research/REFERENCES.md` and a green conformance run. The sidecar never resolves an approval, and every sidecar failure is transient (the action stays `RECEIVED`). Change `test/conformance/governance_reference.json` only with `-update`, then rebuild the sidecar's test stage.
 - Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
 
 ## Commands
@@ -42,6 +43,7 @@ docker compose up -d --build                         # full stack
 curl localhost:8080/readyz
 EACP_COMPOSE_TEST=1 go test -count=1 ./test/security/   # network-isolation tests (stack must be running)
 scripts/demo.sh                                      # Slice A demo on an isolated stack (docs/DEMO.md)
+docker build -f sidecars/agt-pdp/Dockerfile --target test .   # AGT sidecar suites + conformance through ACS/OPA
 ```
 
 Without `EACP_TEST_ADMIN_DSN`, the PostgreSQL integration tests are **skipped, not passed**. Always run them before reporting a phase complete.
@@ -65,6 +67,7 @@ internal/registry    principals, roles, groups, credentials, agents, versions,
                      allowlists, connectors, tools, contracts; CheckCapability
 internal/registry/registrytest  bootstrapped fixture for tests
 internal/governance  local PDP, JCS digests, policy versions and decision evidence
+internal/governance/conformance  the ADR-002 reference set loader and checker
 internal/approval    approval request, vote and one-time grant transactions
 internal/action      Action API engine: submission, evaluation, release boundary, cancel, sweeper,
                      operator resolution, evidence
@@ -73,9 +76,13 @@ internal/worker      claim, heartbeat, fenced dispatch intent and results, host-
 internal/connector   HTTP connector (execute, lookup)
 internal/fakeerp     credential-protected Fake ERP with a durable operation log
 internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions
+integrations/governance/microsoftagt  Go client of the AGT sidecar PDP (mTLS, version pins), dev PKI
+sidecars/agt-pdp     Python sidecar: AGT policy layer + ACS engine + OPA, Rego adapter, conformance tests
+research/            verified upstream API notes (REFERENCES.md)
 migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests
 test/invariants      checks docs/INVARIANTS.md against MASTER_PLAN §103 and the tests
+test/conformance     governance reference set shared by Go and the sidecar
 test/demo            the Slice A demo (EACP_DEMO=1, scripts/demo.sh)
 deployments/docker   Dockerfile, postgres bootstrap
 deployments/demo     compose override for the isolated demo project

@@ -1,10 +1,16 @@
-# EACP local environment (Slice A).
+# EACP local environment (Slice A, and the Slice B AGT sidecar PDP).
 #
 # Network topology enforces the control-plane boundary (ADR-001 §3, §3a):
 #
 #   agents : agent runtimes + controlplane-api        (agents can reach only the API)
 #   core   : controlplane-api + execution-worker + postgres
 #   erp    : execution-worker + fakeerp               (only the worker reaches the ERP)
+#   pdp    : controlplane-api + agt-pdp               (only the API asks the PDP; mutual TLS)
+#
+# Governance decisions come from the Microsoft AGT/ACS sidecar PDP (ADR-002
+# §8). pdp-pki writes a DEVELOPMENT-ONLY mutual-TLS PKI into the pdp_pki
+# volume, shared read-only by the API (client certificate) and the sidecar
+# (server certificate); production issues these from its own CA.
 #
 # The "agent" service stands in for an agent runtime. It has no route to
 # fakeerp and holds no ERP credential. The connector-secret manifest is
@@ -57,11 +63,47 @@ services:
       <<: *eacp-env
       EACP_HTTP_ADDR: ":8080"
       EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
+      EACP_GOVERNANCE_PROVIDER: microsoft-agt
+      EACP_AGT_PDP_URL: https://agt-pdp:8443
+      EACP_AGT_PDP_CA_FILE: /pki/ca.pem
+      EACP_AGT_PDP_CERT_FILE: /pki/client.pem
+      EACP_AGT_PDP_KEY_FILE: /pki/client-key.pem
     ports:
       - "127.0.0.1:8080:8080"
+    volumes:
+      - pdp_pki:/pki:ro
     depends_on:
       migrate: { condition: service_completed_successfully }
-    networks: [agents, core]
+      pdp-pki: { condition: service_completed_successfully }
+    networks: [agents, core, pdp]
+
+  # Development-only mutual-TLS PKI for the PDP link (kept if present).
+  pdp-pki:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/eacpctl", "pdp-dev-certs", "--dir", "/pki", "--name", "agt-pdp"]
+    environment:
+      <<: *eacp-env
+    volumes:
+      - pdp_pki:/pki
+    network_mode: none
+
+  # Microsoft AGT policy layer + ACS engine + OPA, pinned (sidecars/agt-pdp).
+  # Stateless; reachable only from controlplane-api, only with a client
+  # certificate. Its outage keeps new actions RECEIVED (ADR-002 §6).
+  agt-pdp:
+    build: { context: ., dockerfile: sidecars/agt-pdp/Dockerfile }
+    restart: on-failure
+    environment:
+      AGT_PDP_LISTEN: "0.0.0.0:8443"
+      AGT_PDP_INSTANCE_ID: agt-pdp-1
+      AGT_PDP_TLS_CERT_FILE: /pki/server.pem
+      AGT_PDP_TLS_KEY_FILE: /pki/server-key.pem
+      AGT_PDP_TLS_CLIENT_CA_FILE: /pki/ca.pem
+    volumes:
+      - pdp_pki:/pki:ro
+    depends_on:
+      pdp-pki: { condition: service_completed_successfully }
+    networks: [pdp]
 
   execution-worker:
     build: { context: ., dockerfile: deployments/docker/Dockerfile }
@@ -103,10 +145,13 @@ networks:
   core: {}
   erp:
     internal: true # no egress to the outside world either
+  pdp:
+    internal: true # the PDP needs no egress; ACS remote bundles are not used
 
 volumes:
   pgdata: {}
   fakeerp_data: {}
+  pdp_pki: {}
 
 secrets:
   connector_secrets:

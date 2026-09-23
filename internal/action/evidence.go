@@ -28,6 +28,9 @@ type DecisionView struct {
 	EnforcedDigest     string    `json:"enforced_digest"`
 	EvaluatedAt        time.Time `json:"evaluated_at"`
 	RecordedAt         time.Time `json:"recorded_at"`
+	// ProviderEvidence is what the provider used to decide (ADR-002 §8):
+	// for AGT, the ACS identity, the matched rule and the engine versions.
+	ProviderEvidence json.RawMessage `json:"provider_evidence,omitempty"`
 }
 
 // VoteView is one approver's vote.
@@ -218,7 +221,7 @@ func (e *Engine) Evidence(ctx context.Context, tenant, id uuid.UUID) (Evidence, 
 
 func decisions(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]DecisionView, error) {
 	rows, err := tx.Query(ctx, `SELECT id, decision_id, policy_version, provider, provider_instance_id, verdict,
-		reasons, input_digest, enforced_digest, evaluated_at, recorded_at
+		reasons, input_digest, enforced_digest, evaluated_at, recorded_at, provider_evidence::text
 		FROM eacp.decision_evidence WHERE action_id = $1 ORDER BY recorded_at, id`, id)
 	if err != nil {
 		return nil, err
@@ -226,9 +229,13 @@ func decisions(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]DecisionView, er
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (DecisionView, error) {
 		var d DecisionView
 		var in, enforced []byte
+		var providerEvidence *string
 		err := r.Scan(&d.ID, &d.DecisionID, &d.PolicyVersion, &d.Provider, &d.ProviderInstanceID, &d.Verdict,
-			&d.Reasons, &in, &enforced, &d.EvaluatedAt, &d.RecordedAt)
+			&d.Reasons, &in, &enforced, &d.EvaluatedAt, &d.RecordedAt, &providerEvidence)
 		d.InputDigest, d.EnforcedDigest = hex.EncodeToString(in), hex.EncodeToString(enforced)
+		if providerEvidence != nil {
+			d.ProviderEvidence = json.RawMessage(*providerEvidence)
+		}
 		return d, err
 	})
 }

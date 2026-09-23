@@ -30,6 +30,11 @@
 //	                          a retry applies only when a second operator confirms it
 //
 //	eacpctl api <METHOD> <PATH> [JSON]      any other API call
+//
+// Development only (EACP_ENV=development|test):
+//
+//	eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]
+//	                          mutual-TLS PKI for the AGT sidecar PDP (ADR-002 §8)
 package main
 
 import (
@@ -49,7 +54,8 @@ const usage = `usage:
   eacpctl agent register|list|inspect ...
   eacpctl connector register ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
-  eacpctl api <METHOD> <PATH> [JSON]`
+  eacpctl api <METHOD> <PATH> [JSON]
+  eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -79,6 +85,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runAction(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
+	case "pdp-dev-certs":
+		return runPDPDevCerts(args[1:], getenv, out)
 	default:
 		return errors.New(usage)
 	}

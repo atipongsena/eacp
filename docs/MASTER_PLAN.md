@@ -3463,6 +3463,8 @@ Slice A exit criteria = ทุก invariant ใน §103 ที่ติดป�
 
 # 83. Phase 9 — AGT Sidecar PDP (Slice B)
 
+> **Status (2026-09-24): complete.** Normative detail: ADR-002 Rev 2.4 §8, and `research/REFERENCES.md` for the upstream API verified by running it.
+
 Implement:
 
 ```text

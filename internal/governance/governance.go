@@ -50,6 +50,10 @@ type GovernanceDecision struct {
 	Reasons            []string
 	Approval           *ApprovalRequirement
 	EvaluatedAt        time.Time
+	// ProviderEvidence is optional provider-specific evidence (ADR-002 §8),
+	// such as the ACS action identity and the engine versions that decided.
+	// EvaluateChecked canonicalizes it and bounds it to a 4 KiB JSON object.
+	ProviderEvidence json.RawMessage
 	// DigestMismatch is set by EvaluateChecked when the provider's digests
 	// differ from EACP's: a security signal that also denies the action.
 	DigestMismatch bool
@@ -57,6 +61,9 @@ type GovernanceDecision struct {
 
 // EvaluateChecked failures. Both are transient for the caller: nothing
 // becomes executable (ADR-002 §6). A malformed decision also raises an alert.
+// MaxProviderEvidence bounds the canonical provider evidence in bytes.
+const MaxProviderEvidence = 4096
+
 var (
 	ErrProviderUnavailable = errors.New("governance: provider unavailable")
 	ErrMalformedDecision   = errors.New("governance: malformed provider decision")
@@ -95,6 +102,13 @@ func EvaluateChecked(ctx context.Context, provider GovernanceProvider, req Gover
 		}
 	default:
 		return GovernanceDecision{}, fmt.Errorf("%w: unknown verdict", ErrMalformedDecision)
+	}
+	if len(d.ProviderEvidence) != 0 {
+		evidence, err := canonicalize(d.ProviderEvidence)
+		if err != nil || len(evidence) > MaxProviderEvidence || evidence[0] != '{' {
+			return GovernanceDecision{}, fmt.Errorf("%w: provider evidence must be a JSON object of at most %d bytes", ErrMalformedDecision, MaxProviderEvidence)
+		}
+		d.ProviderEvidence = evidence
 	}
 	input, enforced, err := Digests(req.Binding, d.EnforcedPayload)
 	if err != nil {

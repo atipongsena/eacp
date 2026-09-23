@@ -43,6 +43,16 @@ type Config struct {
 	SweepInterval      time.Duration
 	PDPTimeout         time.Duration
 
+	// Governance provider (controlplane-api, ADR-002 §8): "local" or
+	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
+	// name a loopback host; https needs the mutual-TLS files. The client
+	// checks both when the service starts.
+	GovernanceProvider string
+	AGTPDPURL          string
+	AGTPDPCAFile       string
+	AGTPDPCertFile     string
+	AGTPDPKeyFile      string
+
 	// Reconciliation (ADR-004 T33/T34): how many inconclusive lookups, and
 	// how long an unknown outcome may last, before a human must resolve it.
 	// The reconciler (execution-worker) applies both; the sweeper
@@ -144,6 +154,23 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	}
 	cfg.SweepInterval = duration("EACP_ACTION_SWEEP_INTERVAL", "1s", time.Hour)
 	cfg.PDPTimeout = duration("EACP_PDP_TIMEOUT", "5s", time.Minute)
+	cfg.GovernanceProvider = get("EACP_GOVERNANCE_PROVIDER", "local")
+	cfg.AGTPDPURL = get("EACP_AGT_PDP_URL", "")
+	cfg.AGTPDPCAFile = get("EACP_AGT_PDP_CA_FILE", "")
+	cfg.AGTPDPCertFile = get("EACP_AGT_PDP_CERT_FILE", "")
+	cfg.AGTPDPKeyFile = get("EACP_AGT_PDP_KEY_FILE", "")
+	switch cfg.GovernanceProvider {
+	case "local":
+		if cfg.AGTPDPURL != "" {
+			errs = append(errs, errors.New("EACP_AGT_PDP_URL: set, but EACP_GOVERNANCE_PROVIDER is not microsoft-agt"))
+		}
+	case "microsoft-agt":
+		if cfg.AGTPDPURL == "" {
+			errs = append(errs, errors.New("EACP_AGT_PDP_URL: required when EACP_GOVERNANCE_PROVIDER=microsoft-agt"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("EACP_GOVERNANCE_PROVIDER: unknown provider %q (local or microsoft-agt)", cfg.GovernanceProvider))
+	}
 	attempts, err := strconv.Atoi(get("EACP_RECONCILE_MAX_ATTEMPTS", "10"))
 	if err != nil || attempts < 1 || attempts > 50 {
 		errs = append(errs, errors.New("EACP_RECONCILE_MAX_ATTEMPTS: must be an integer in [1, 50]"))
@@ -193,6 +220,9 @@ func (c Config) LogValue() slog.Value {
 		slog.Int64("action_max_queued_global", c.MaxQueuedGlobal),
 		slog.Duration("action_sweep_interval", c.SweepInterval),
 		slog.Duration("pdp_timeout", c.PDPTimeout),
+		slog.String("governance_provider", c.GovernanceProvider),
+		slog.String("agt_pdp_url", RedactURL(c.AGTPDPURL)),
+		slog.String("agt_pdp_cert_file", c.AGTPDPCertFile),
 		slog.Int("reconcile_max_attempts", c.ReconcileMaxAttempts),
 		slog.Duration("reconcile_max_age", c.ReconcileMaxAge),
 		slog.String("worker_id", c.WorkerID),

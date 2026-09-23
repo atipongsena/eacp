@@ -5,7 +5,9 @@
 // (ADR-004), operator resolution of actions that need a human, and runs the
 // action sweeper, which also reclaims lapsed worker and reconciler leases,
 // schedules retries and sends unknown outcomes without proof to a human.
-// The execution worker dispatches and reconciles.
+// The execution worker dispatches and reconciles. Decisions come from the
+// local provider or, with EACP_GOVERNANCE_PROVIDER=microsoft-agt, from the
+// AGT sidecar PDP (ADR-002 §8).
 package main
 
 import (
@@ -16,7 +18,6 @@ import (
 	"eacp/internal/action"
 	"eacp/internal/api"
 	"eacp/internal/config"
-	"eacp/internal/governance"
 	"eacp/internal/service"
 )
 
@@ -24,8 +25,12 @@ func main() {
 	service.Main("controlplane-api", config.Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"},
 		func(d *service.Deps, mux *http.ServeMux) error {
 			instance, _ := os.Hostname()
+			provider, err := governanceProvider(context.Background(), d.Config, d.Log, instance)
+			if err != nil {
+				return err
+			}
 			engine := action.New(d.DB, action.Options{
-				Provider: governance.LocalProvider{InstanceID: "controlplane-api/" + instance},
+				Provider: provider,
 				Limits:   action.Limits{MaxQueuedPerTenant: d.Config.MaxQueuedPerTenant, MaxQueuedGlobal: d.Config.MaxQueuedGlobal},
 				Log:      d.Log, EvaluationTimeout: d.Config.PDPTimeout,
 			})

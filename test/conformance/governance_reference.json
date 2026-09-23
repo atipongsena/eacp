@@ -1,0 +1,588 @@
+{
+  "comment": "ADR-002 §7/§8 conformance reference set. Every provider must produce the expected outcome. Digests are EACP's SHA-256(JCS(binding)); regenerate them with: go test ./internal/governance -run TestConformanceReference -update",
+  "binding": {
+    "tenant": "11111111-1111-4111-8111-111111111111",
+    "agent": "22222222-2222-4222-8222-222222222222",
+    "agent_version": "33333333-3333-4333-8333-333333333333",
+    "subject": "alice",
+    "operation": "create_po",
+    "target": "erp",
+    "tool": "create_po",
+    "tool_schema_version": "1",
+    "resource": "po",
+    "payload": {
+      "amount": 250,
+      "currency": "EUR",
+      "vendor": "acme"
+    }
+  },
+  "risk_class": "medium",
+  "side_effect_class": "FINANCIAL,IRREVERSIBLE_WRITE",
+  "policies": {
+    "basic": {
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "version": 1,
+      "content": {
+        "format_version": 1,
+        "rules": [
+          {
+            "id": "no-delete",
+            "match": {
+              "operation": "delete_po"
+            },
+            "verdict": "deny",
+            "reason": "deleting purchase orders is forbidden"
+          },
+          {
+            "id": "read-warn",
+            "match": {
+              "operation": "read_po"
+            },
+            "verdict": "warn",
+            "reason": "reads are recorded"
+          },
+          {
+            "id": "big-escalate",
+            "match": {
+              "operation": "create_big_po"
+            },
+            "verdict": "escalate",
+            "reason": "large purchase needs two approvers",
+            "approval": {
+              "quorum": 2,
+              "eligible_roles": [
+                "approver"
+              ],
+              "ttl_seconds": 3600
+            }
+          },
+          {
+            "id": "cap-transform",
+            "match": {
+              "operation": "create_capped_po"
+            },
+            "verdict": "transform",
+            "reason": "amount capped by policy",
+            "set": {
+              "amount": 100,
+              "approved_by_policy": true
+            }
+          },
+          {
+            "id": "nested-transform",
+            "match": {
+              "operation": "nested_po"
+            },
+            "verdict": "transform",
+            "reason": "shipping replaced",
+            "set": {
+              "shipping": {
+                "method": "ground"
+              },
+              "notes": null,
+              "tags": [
+                "policy",
+                1.5,
+                {
+                  "k": "v"
+                }
+              ]
+            }
+          },
+          {
+            "id": "full-match",
+            "match": {
+              "subject": "bob",
+              "operation": "create_po",
+              "target": "erp",
+              "tool": "create_po",
+              "risk_class": "high",
+              "side_effect_class": "FINANCIAL,IRREVERSIBLE_WRITE"
+            },
+            "verdict": "warn",
+            "reason": "bob high-risk purchase"
+          },
+          {
+            "id": "wildcard-subject",
+            "match": {
+              "subject": "",
+              "operation": "wildcard_po"
+            },
+            "verdict": "warn",
+            "reason": "blank match fields are wildcards"
+          },
+          {
+            "id": "unicode",
+            "match": {
+              "operation": "créer_po",
+              "target": "erp-😀"
+            },
+            "verdict": "allow",
+            "reason": "unicode rule — ✓"
+          },
+          {
+            "id": "routine",
+            "match": {
+              "target": "erp",
+              "side_effect_class": "FINANCIAL,IRREVERSIBLE_WRITE"
+            },
+            "verdict": "allow",
+            "reason": "routine purchase"
+          },
+          {
+            "id": "shadowed",
+            "match": {
+              "target": "erp"
+            },
+            "verdict": "deny",
+            "reason": "never reached for financial writes"
+          }
+        ]
+      }
+    },
+    "escalate-with-set": {
+      "id": "aaaaaaaa-0000-4000-8000-000000000003",
+      "version": 2,
+      "content": {
+        "format_version": 1,
+        "rules": [
+          {
+            "id": "cap-then-approve",
+            "verdict": "escalate",
+            "reason": "capped amount needs approval",
+            "set": {
+              "amount": 50
+            },
+            "approval": {
+              "quorum": 1,
+              "eligible_roles": [
+                "approver"
+              ],
+              "ttl_seconds": 60
+            }
+          }
+        ]
+      }
+    },
+    "match-all": {
+      "id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "version": 7,
+      "content": {
+        "format_version": 1,
+        "rules": [
+          {
+            "id": "everything",
+            "match": {},
+            "verdict": "allow",
+            "reason": "allow all"
+          }
+        ]
+      }
+    },
+    "no-match-only": {
+      "id": "aaaaaaaa-0000-4000-8000-000000000004",
+      "version": 1,
+      "content": {
+        "format_version": 1,
+        "rules": [
+          {
+            "id": "other",
+            "match": {
+              "tool": "something_else"
+            },
+            "verdict": "allow",
+            "reason": "unrelated tool"
+          }
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "allow_routine",
+      "policy": "basic",
+      "expect": {
+        "verdict": "allow",
+        "reasons": [
+          "routine purchase"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d",
+        "enforced_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d"
+      }
+    },
+    {
+      "name": "deny_explicit",
+      "policy": "basic",
+      "binding": {
+        "operation": "delete_po"
+      },
+      "expect": {
+        "verdict": "deny",
+        "reasons": [
+          "deleting purchase orders is forbidden"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "2fbcace33f5b8f99999c448dc1a82c60339fec601da2bc485f44a2d7dd0ca88a",
+        "enforced_digest": "2fbcace33f5b8f99999c448dc1a82c60339fec601da2bc485f44a2d7dd0ca88a"
+      }
+    },
+    {
+      "name": "warn",
+      "policy": "basic",
+      "binding": {
+        "operation": "read_po"
+      },
+      "expect": {
+        "verdict": "warn",
+        "reasons": [
+          "reads are recorded"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "bb3c1c4f3f6a584c82042323f783fef8ae5e2e649dabeaf72b44ae812ecd5591",
+        "enforced_digest": "bb3c1c4f3f6a584c82042323f783fef8ae5e2e649dabeaf72b44ae812ecd5591"
+      }
+    },
+    {
+      "name": "escalate_with_requirement",
+      "policy": "basic",
+      "binding": {
+        "operation": "create_big_po"
+      },
+      "expect": {
+        "verdict": "escalate",
+        "reasons": [
+          "large purchase needs two approvers"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "approval": {
+          "quorum": 2,
+          "eligible_roles": [
+            "approver"
+          ],
+          "ttl_seconds": 3600
+        },
+        "input_digest": "413483059517cda4d7eafc18278830222e998a15c7313f150c699458249cc581",
+        "enforced_digest": "413483059517cda4d7eafc18278830222e998a15c7313f150c699458249cc581"
+      }
+    },
+    {
+      "name": "transform_multi_key",
+      "policy": "basic",
+      "binding": {
+        "operation": "create_capped_po"
+      },
+      "expect": {
+        "verdict": "transform",
+        "reasons": [
+          "amount capped by policy"
+        ],
+        "enforced_payload": {
+          "amount": 100,
+          "approved_by_policy": true,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "edc48998adfc6a8490ca9c4e27a65881cb2c461407d22aec64cbc39a1cb066e9",
+        "enforced_digest": "6871473e9a74518f9604f7a415373ce629256389a16ab8481b2edabbc98ce0ec"
+      }
+    },
+    {
+      "name": "transform_is_shallow",
+      "policy": "basic",
+      "binding": {
+        "operation": "nested_po",
+        "payload": {
+          "shipping": {
+            "method": "air",
+            "insured": true
+          },
+          "notes": "rush",
+          "amount": 1
+        }
+      },
+      "expect": {
+        "verdict": "transform",
+        "reasons": [
+          "shipping replaced"
+        ],
+        "enforced_payload": {
+          "amount": 1,
+          "notes": null,
+          "shipping": {
+            "method": "ground"
+          },
+          "tags": [
+            "policy",
+            1.5,
+            {
+              "k": "v"
+            }
+          ]
+        },
+        "input_digest": "2e12177d53b15b2d628b29f55f373822ae142093e2959fee0e36b9efd6479472",
+        "enforced_digest": "1ae4e81f0580fd72b61397c7523e7ad8481421b584680c01a8d0faaa76e122ca"
+      }
+    },
+    {
+      "name": "transform_non_object_payload_fails_closed",
+      "policy": "basic",
+      "binding": {
+        "operation": "create_capped_po",
+        "payload": [
+          "not",
+          "an",
+          "object"
+        ]
+      },
+      "expect": {
+        "error": "unavailable"
+      }
+    },
+    {
+      "name": "first_match_wins_over_later_deny",
+      "policy": "basic",
+      "risk_class": "low",
+      "expect": {
+        "verdict": "allow",
+        "reasons": [
+          "routine purchase"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d",
+        "enforced_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d"
+      }
+    },
+    {
+      "name": "every_match_field",
+      "policy": "basic",
+      "binding": {
+        "subject": "bob"
+      },
+      "risk_class": "high",
+      "expect": {
+        "verdict": "warn",
+        "reasons": [
+          "bob high-risk purchase"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "bbbcb5dfc133a232ecb18b0268cadeb88a352738d2cf105080871db120867828",
+        "enforced_digest": "bbbcb5dfc133a232ecb18b0268cadeb88a352738d2cf105080871db120867828"
+      }
+    },
+    {
+      "name": "one_field_differs_falls_through",
+      "policy": "basic",
+      "binding": {
+        "subject": "bob"
+      },
+      "risk_class": "critical",
+      "expect": {
+        "verdict": "allow",
+        "reasons": [
+          "routine purchase"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "bbbcb5dfc133a232ecb18b0268cadeb88a352738d2cf105080871db120867828",
+        "enforced_digest": "bbbcb5dfc133a232ecb18b0268cadeb88a352738d2cf105080871db120867828"
+      }
+    },
+    {
+      "name": "side_effect_class_is_exact",
+      "policy": "basic",
+      "side_effect_class": "FINANCIAL",
+      "expect": {
+        "verdict": "deny",
+        "reasons": [
+          "never reached for financial writes"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d",
+        "enforced_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d"
+      }
+    },
+    {
+      "name": "blank_match_field_is_wildcard",
+      "policy": "basic",
+      "binding": {
+        "operation": "wildcard_po",
+        "subject": "zoe"
+      },
+      "expect": {
+        "verdict": "warn",
+        "reasons": [
+          "blank match fields are wildcards"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "ede7d798e9fe5d9ccc4a82af7db6bb20292b2ed61d18b243552a1a76d8a5e23a",
+        "enforced_digest": "ede7d798e9fe5d9ccc4a82af7db6bb20292b2ed61d18b243552a1a76d8a5e23a"
+      }
+    },
+    {
+      "name": "unicode_rule_and_payload",
+      "policy": "basic",
+      "binding": {
+        "operation": "créer_po",
+        "target": "erp-😀",
+        "payload": {
+          "": "private use",
+          "😀": "astral sorts before BMP private use in UTF-16",
+          "é": "é\u0000\u001f\"\\/",
+          "a": "\u2028"
+        }
+      },
+      "expect": {
+        "verdict": "allow",
+        "reasons": [
+          "unicode rule — ✓"
+        ],
+        "enforced_payload": {
+          "": "private use",
+          "😀": "astral sorts before BMP private use in UTF-16",
+          "é": "é\u0000\u001f\"\\/",
+          "a": "\u2028"
+        },
+        "input_digest": "ac823cd94994bef84a9444d433f262b1a5269d9467aaf135e2f7fdd00ce8b303",
+        "enforced_digest": "ac823cd94994bef84a9444d433f262b1a5269d9467aaf135e2f7fdd00ce8b303"
+      }
+    },
+    {
+      "name": "numbers_canonicalize",
+      "policy": "basic",
+      "binding": {
+        "operation": "create_capped_po",
+        "payload": {
+          "f": 0.1,
+          "e": 1e2,
+          "big": 9007199254740991,
+          "neg": -1.5,
+          "one": 1.0,
+          "tiny": 1e-7,
+          "huge": 1.5e300
+        }
+      },
+      "expect": {
+        "verdict": "transform",
+        "reasons": [
+          "amount capped by policy"
+        ],
+        "enforced_payload": {
+          "amount": 100,
+          "approved_by_policy": true,
+          "big": 9007199254740991,
+          "e": 100,
+          "f": 0.1,
+          "huge": 1.5e300,
+          "neg": -1.5,
+          "one": 1,
+          "tiny": 1e-7
+        },
+        "input_digest": "16cdaf86b6168c8117de5e4086ed3a01a9a516014d94c359f3f5308eceaa8a87",
+        "enforced_digest": "4619a363375f4301a7482779032caf708feccc5d8668d5e320269b274433e28f"
+      }
+    },
+    {
+      "name": "no_matching_rule",
+      "policy": "no-match-only",
+      "expect": {
+        "verdict": "deny",
+        "reasons": [
+          "no_matching_rule"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d",
+        "enforced_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d"
+      }
+    },
+    {
+      "name": "empty_match_matches_all",
+      "policy": "match-all",
+      "binding": {
+        "operation": "anything",
+        "tool": "t",
+        "target": "x"
+      },
+      "expect": {
+        "verdict": "allow",
+        "reasons": [
+          "allow all"
+        ],
+        "enforced_payload": {
+          "amount": 250,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "input_digest": "633ed26c7076f418b730cda9dd52267cc4f1bd0a4f1158583c52d06c07041ec7",
+        "enforced_digest": "633ed26c7076f418b730cda9dd52267cc4f1bd0a4f1158583c52d06c07041ec7"
+      }
+    },
+    {
+      "name": "escalate_with_set",
+      "policy": "escalate-with-set",
+      "expect": {
+        "verdict": "escalate",
+        "reasons": [
+          "capped amount needs approval"
+        ],
+        "enforced_payload": {
+          "amount": 50,
+          "currency": "EUR",
+          "vendor": "acme"
+        },
+        "approval": {
+          "quorum": 1,
+          "eligible_roles": [
+            "approver"
+          ],
+          "ttl_seconds": 60
+        },
+        "input_digest": "5148b3b1dc282e89f5d5796d524861ce1010220f7cdeb5b2690d51f655a27f4d",
+        "enforced_digest": "8da183b1614ade262a355535fcffc30db5382749a311605fd023613e4bcd528d"
+      },
+      "agt_expect": {
+        "error": "policy_unsupported"
+      },
+      "agt_divergence": "ACS cannot carry a transform on escalate (ADR-002 §8); the AGT provider refuses the bundle and the action stays RECEIVED."
+    }
+  ]
+}

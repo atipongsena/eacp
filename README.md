@@ -6,7 +6,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B starts with Phase 9.
+> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B has started: Phase 9 adds the Microsoft AGT/ACS sidecar PDP ([ADR-002](docs/adr/ADR-002-agt-integration-sidecar-pdp.md) Rev 2.4).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -54,6 +54,16 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Slice A invariant map, checked against MASTER_PLAN §103 | `docs/INVARIANTS.md`, `test/invariants` |
 | Slice A demo on an isolated stack (§111) | `scripts/demo.sh`, [docs/DEMO.md](docs/DEMO.md) |
 
+## Slice B (Phase 9): the AGT sidecar PDP
+
+| Capability | Evidence |
+|---|---|
+| Sidecar PDP wrapping the pinned AGT 5.0.0 policy layer, the ACS 0.3.1b1 engine and OPA 1.20.2; stateless, never resolves an approval | `sidecars/agt-pdp`, [research/REFERENCES.md](research/REFERENCES.md) |
+| Go client implementing `GovernanceProvider`: loopback or mutual TLS 1.3 only, version pins per decision, strict responses, clock-skew bound | `integrations/governance/microsoftagt` |
+| Conformance: one reference set with digests; the local provider, the wire protocol and the sidecar (through ACS and OPA, in its image build) must all reproduce it | `test/conformance/governance_reference.json`, `internal/governance/conformance_test.go`, `sidecars/agt-pdp/tests` |
+| Provider evidence (ACS identity, rule, adapter digest, engine versions) stored and journaled with each decision | `migrations/00009_provider_evidence.sql`, `GET /v1/actions/{id}/evidence` |
+| Compose runs `controlplane-api` with `EACP_GOVERNANCE_PROVIDER=microsoft-agt` on an internal `pdp` network; only the API reaches the sidecar | `test/security/agt_pdp_test.go` |
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start
@@ -63,6 +73,8 @@ python3 deployments/docker/secrets/prepare_fakeerp_token.py
 docker compose up -d --build
 curl localhost:8080/readyz
 ```
+
+The stack's governance decisions come from the AGT sidecar (`agt-pdp`). To use the in-process local provider instead, set `EACP_GOVERNANCE_PROVIDER=local` on `controlplane-api`.
 
 The preparation command copies the existing local-development ERP token into a Git-ignored file for the Fake ERP secret mount. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
 
@@ -83,6 +95,7 @@ docker compose up -d postgres
 export EACP_TEST_ADMIN_DSN="postgres://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable"
 go test -race ./...
 EACP_COMPOSE_TEST=1 go test -count=1 ./test/security/
+docker build -f sidecars/agt-pdp/Dockerfile --target test .   # sidecar + conformance through ACS/OPA
 ```
 
 Demo (an isolated stack on ports 18080 and 55433, removed afterwards):
