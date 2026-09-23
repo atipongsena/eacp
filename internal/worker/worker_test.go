@@ -50,6 +50,10 @@ func (f *fake) Execute(ctx context.Context, c worker.Call) worker.Result {
 	return fn(ctx, c)
 }
 
+func (f *fake) Lookup(context.Context, worker.LookupCall) worker.LookupResult {
+	return worker.LookupResult{Status: worker.LookupUnknown}
+}
+
 func (f *fake) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -557,5 +561,29 @@ func TestSecretCanaryNeverLeaks(t *testing.T) {
 	}
 	if got := v.get(a.ID); got.State != "UNKNOWN_OUTCOME" {
 		t.Fatalf("a result whose error class carried a secret = %s", got.State)
+	}
+}
+
+func TestCertifiedNoEffectWithExternalReferenceIsAmbiguous(t *testing.T) {
+	v := newEnv(t)
+	v.conn.fn = func(context.Context, worker.Call) worker.Result {
+		return worker.Result{Outcome: worker.NoEffect, ErrorClass: "validation", ExternalReference: "PO-created"}
+	}
+	a := v.submit("bank.pay")
+	v.runOnce(v.worker("w1"))
+	if got := v.get(a.ID); got.State != "UNKNOWN_OUTCOME" {
+		t.Fatalf("contradictory connector result state = %s, want UNKNOWN_OUTCOME", got.State)
+	}
+}
+
+func TestCertifiedNoEffectWithRedactedReferenceIsAmbiguous(t *testing.T) {
+	v := newEnv(t)
+	v.conn.fn = func(_ context.Context, c worker.Call) worker.Result {
+		return worker.Result{Outcome: worker.NoEffect, ErrorClass: "validation", ExternalReference: c.Secret.Reveal()}
+	}
+	a := v.submit("bank.pay")
+	v.runOnce(v.worker("w1"))
+	if got := v.get(a.ID); got.State != "UNKNOWN_OUTCOME" {
+		t.Fatalf("redacted contradictory result state = %s, want UNKNOWN_OUTCOME", got.State)
 	}
 }

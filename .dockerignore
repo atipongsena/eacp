@@ -3,5 +3,6 @@
 graphify-out
 docs
 research
+deployments/docker/secrets/
 *.md
 !go.mod

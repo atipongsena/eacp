@@ -43,16 +43,19 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Worker claim (`FOR UPDATE SKIP LOCKED`, FIFO), heartbeats and lease generations; PostgreSQL rejects any write by a stale worker | `migrations/00006_execution.sql`, `internal/worker/schema_test.go` (mutation-checked) |
 | Fenced dispatch intent before any call, with drift re-check (T16a/T16b) and an attempt row per dispatch; fenced results and late-result evidence | `internal/worker` (lease race, stale worker never dispatches twice) |
 | Lease reclaim, retries by contract, cancel requests while executing | `internal/action/sweeper.go`, `internal/action/execution_test.go` |
-| Connector credentials only in the worker: tenant-namespaced, host-bound, never logged or stored | `internal/worker/secrets.go`, `test/security` |
+| Worker connector credentials are tenant-namespaced and host-bound; agents receive none | `internal/worker/secrets.go`, `test/security` |
 
-The worker registers no connector protocol yet, so a `QUEUED` action isn't executed in a deployment until Phase 6 adds the HTTP connector and the Fake ERP.
+The worker registers the Phase 6 HTTP connector. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start
 
 ```bash
+python3 deployments/docker/secrets/prepare_fakeerp_token.py
 docker compose up -d --build
 curl localhost:8080/readyz
 ```
+
+The preparation command copies the existing local-development ERP token into a Git-ignored file for the Fake ERP secret mount. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
 
 Bootstrap a tenant (each admin generates their own key; only the hash is registered):
 

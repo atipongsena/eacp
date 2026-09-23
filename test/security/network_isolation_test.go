@@ -110,3 +110,32 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 		t.Fatal("worker logged a connector secret")
 	}
 }
+
+// The ERP has its own verifier token, shared only with the worker. No other
+// service receives that mount or the worker's connector-secret manifest.
+func TestFakeERPCredentialMountsAreLimitedToWorkerAndERP(t *testing.T) {
+	requireCompose(t)
+	for _, service := range []string{"execution-worker", "fakeerp"} {
+		_, mounts := inspect(t, service)
+		if !strings.Contains(mounts, "/run/secrets/fakeerp_token") {
+			t.Errorf("%s has no ERP credential mount: %s", service, mounts)
+		}
+	}
+	for _, service := range []string{"controlplane-api", "agent", "postgres"} {
+		_, mounts := inspect(t, service)
+		if strings.Contains(mounts, "fakeerp_token") {
+			t.Errorf("%s has the ERP credential mount: %s", service, mounts)
+		}
+	}
+}
+
+// A caller with ERP network access but no worker credential still cannot
+// execute a privileged operation. This also proves the ERP's auth gate is live.
+func TestFakeERPRejectsUnauthenticatedPrivilegedCall(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_erp", "busybox:1.37",
+		"wget", "-S", "-T", "3", "-O", "-", "--post-data={}", "http://fakeerp:8090/v1/execute").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "401 Unauthorized") {
+		t.Fatalf("unauthenticated ERP call was not rejected with 401 (err=%v out=%q)", err, out)
+	}
+}

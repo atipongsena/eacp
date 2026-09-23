@@ -3377,11 +3377,13 @@ PostgreSQL rejects every write by a worker that doesn't hold the lease at the na
 
 Connector credentials are tenant-namespaced and host-bound, and only `execution-worker` may load them. Compose mounts them into the worker only, and a secret canary never reaches rows, attempts, the journal, the outbox or logs.
 
-The three mandatory concurrency tests are in `internal/worker/worker_test.go`: the lease race, a stale commit rejected, and a stale worker never dispatching twice. Implementation choices are recorded in ADR-004 Rev 2.3. No connector protocol is registered yet: the HTTP connector and Fake ERP are Phase 6, and reconciliation is Phase 7. The review is in `docs/reviews/2026-09-23-phase5-code-review.md`.
+The three mandatory concurrency tests are in `internal/worker/worker_test.go`: the lease race, a stale commit rejected, and a stale worker never dispatching twice. Implementation choices are recorded in ADR-004 Rev 2.3. At Phase 5 completion no connector protocol was registered; Phase 6 adds HTTP and Fake ERP, while reconciliation remains Phase 7. The review is in `docs/reviews/2026-09-23-phase5-code-review.md`.
 
 ---
 
 # 80. Phase 6 — Connector Framework & Fake ERP (Slice A)
+
+**Implementation status (2026-09-23): delivered.** The worker registers the HTTP connector, whose execute and lookup methods use the operation key under the pinned contract. Fake ERP implements credential-protected purchase order calls, a durable operation-key lookup, an audit log, and the failure modes below. The strong `create_po` tool and eventual `create_po_eventual` tool have distinct proof standards (ADR-004 Rev 2.4). PostgreSQL integration tests cover success, response loss, `UNKNOWN_OUTCOME`, and the absence of automatic re-dispatch. Compose mounts the ERP credential only into the worker and Fake ERP, and keeps the ERP operation log in a durable volume. Network-isolation and unauthenticated-call tests pass. The review is in `docs/reviews/2026-09-23-phase6-code-review.md`.
 
 Build:
 

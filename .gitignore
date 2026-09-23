@@ -16,6 +16,8 @@ vendor/
 .env
 .env.*
 !.env.example
+deployments/docker/secrets/fakeerp-token.dev
+deployments/docker/secrets/.fakeerp-token-*
 
 # Editors / OS
 .idea/

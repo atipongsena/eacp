@@ -59,10 +59,34 @@ type Result struct {
 	ErrorClass        string
 }
 
+// LookupCall asks a connector for evidence about the stable operation key.
+// Only the execution worker supplies the credential; reconciliation owns
+// interpretation of positive and negative evidence (ADR-004 §20.2).
+type LookupCall struct {
+	TenantID     uuid.UUID
+	OperationKey string
+	Endpoint     string
+	Secret       Secret
+}
+
+type LookupStatus string
+
+const (
+	LookupFound   LookupStatus = "found"
+	LookupAbsent  LookupStatus = "absent"
+	LookupUnknown LookupStatus = "unknown"
+)
+
+type LookupResult struct {
+	Status            LookupStatus
+	ExternalReference string
+}
+
 // Connector performs calls for one protocol. Execute must respect ctx: the
 // worker sets its deadline inside the lease and cancels it when the lease
-// is lost or a cancellation is requested. Phase 6 provides the HTTP
-// connector.
+// is lost or a cancellation is requested. Lookup only reports evidence;
+// Phase 7 decides whether absence proves no effect under the pinned contract.
 type Connector interface {
 	Execute(ctx context.Context, c Call) Result
+	Lookup(ctx context.Context, c LookupCall) LookupResult
 }

@@ -303,6 +303,7 @@ func scrub(r Result, secrets []string) Result {
 		}
 		if strings.Contains(r.ExternalReference, s) {
 			r.ExternalReference = ""
+			r.Outcome = Ambiguous
 		}
 		if strings.Contains(r.ErrorClass, s) {
 			r.ErrorClass = "redacted"
@@ -323,7 +324,7 @@ func classify(r Result, c Contract) Result {
 	switch {
 	case r.Outcome == Succeeded && ref != "" && len(ref) <= 512:
 		return Result{Outcome: Succeeded, ExternalReference: ref}
-	case r.Outcome == NoEffect && class != "" && slices.Contains(c.NoEffectErrors, class):
+	case r.Outcome == NoEffect && ref == "" && class != "" && slices.Contains(c.NoEffectErrors, class):
 		return Result{Outcome: NoEffect, ErrorClass: class}
 	default:
 		return Result{Outcome: Ambiguous, ErrorClass: class}

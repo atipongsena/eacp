@@ -7,10 +7,9 @@
 #   erp    : execution-worker + fakeerp               (only the worker reaches the ERP)
 #
 # The "agent" service stands in for an agent runtime. It has no route to
-# fakeerp and holds no ERP credential. Connector credentials are mounted
-# into execution-worker only; every other service refuses to start with
-# EACP_CONNECTOR_SECRETS_FILE set.
-#
+# fakeerp and holds no ERP credential. The connector-secret manifest is
+# mounted into execution-worker only; Fake ERP receives just its verifier
+# token. Every other service refuses EACP_CONNECTOR_SECRETS_FILE.
 # Credentials below are local-development defaults only.
 
 name: eacp
@@ -72,7 +71,7 @@ services:
       EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
       EACP_WORKER_ID: execution-worker-1
       EACP_CONNECTOR_SECRETS_FILE: /run/secrets/connector_secrets
-    secrets: [connector_secrets]
+    secrets: [connector_secrets, fakeerp_token]
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [core, erp]
@@ -83,6 +82,11 @@ services:
     environment:
       <<: *eacp-env
       EACP_HTTP_ADDR: ":8090"
+      EACP_FAKEERP_TOKEN_FILE: /run/secrets/fakeerp_token
+      EACP_FAKEERP_DATA_FILE: /tmp/operations.jsonl
+    secrets: [fakeerp_token]
+    volumes:
+      - fakeerp_data:/tmp
     networks: [erp]
 
   # Stand-in agent runtime used by the network-isolation test.
@@ -99,7 +103,10 @@ networks:
 
 volumes:
   pgdata: {}
+  fakeerp_data: {}
 
 secrets:
   connector_secrets:
     file: ./deployments/docker/secrets/connector-secrets.dev.json # local-development only
+  fakeerp_token:
+    file: ./deployments/docker/secrets/fakeerp-token.dev # generated locally; never committed

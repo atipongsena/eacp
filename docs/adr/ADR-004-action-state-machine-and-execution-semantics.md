@@ -1,6 +1,6 @@
 # ADR-004: Action State Machine and Execution Semantics
 
-- **Status:** Accepted — Rev 2.3 (Phase 5 worker, lease and fencing implementation, 2026-09-23; Rev 2.2 Phase 4 pre-dispatch implementation; Rev 2.1 amended after Codex adversarial review)
+- **Status:** Accepted — Rev 2.4 (Phase 6 HTTP connector and Fake ERP protocol, 2026-09-23; Rev 2.3 Phase 5 worker, lease and fencing; Rev 2.2 Phase 4 pre-dispatch; Rev 2.1 amended after Codex adversarial review)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes (hard gate)
 - **Related:** MASTER_PLAN §18, §19, §20, §22, §23, §29, §31, §103; ADR-001, ADR-005; detail ADRs 007–010 and 013 must conform to this ADR
@@ -273,6 +273,16 @@ A natively idempotent contract goes to T23 and is reconciled first (Phase 7). EA
 - Phase 5 registers no connector protocol, so a deployed worker claims nothing until Phase 6 adds HTTP.
 
 **Worker shutdown.** On shutdown the worker stops claiming. A leased action without a dispatch intent is released (T17). A call already in flight completes within its deadline and records its result.
+
+### Phase 6 HTTP connector and Fake ERP (Rev 2.4)
+
+**HTTP wire protocol.** After T16 commits, the connector sends `POST <endpoint>/v1/execute` with the enforced payload as the `payload` member of a JSON envelope and the registered `connector.tool` as `tool`. It sends the worker-held credential as a bearer token and the tenant UUID in `X-EACP-Tenant-ID`. A native contract puts the stable operation key in its declared idempotency header; a correlation-only contract puts the key in its declared envelope field. A `none` contract sends no key. The HTTP connector rejects malformed operation keys and unsafe header names before sending. It never follows redirects or uses environment proxies. It removes Go's automatic request replay capability from POSTs, even when an `Idempotency-Key` header is present: only the worker's fenced state machine may decide whether another attempt is allowed.
+
+The response is bounded to 16 KiB. A 2xx response needs an external reference to be definitive success. A non-2xx response can be definitive no-effect only if its `error_class` appears in the pinned contract and it carries no external reference. Connection refusal before sending has its own certifiable class. Timeouts, resets, 429, uncertified 5xx, malformed responses, and contradictory result fields are ambiguous. The worker repeats these checks after scrubbing secret-bearing fields.
+
+`Lookup` calls `GET <endpoint>/v1/operations/{operation_key}` with the worker credential. A 200 with an external reference is positive evidence. A 404 is absence evidence only when its bounded JSON body has `error_class: not_found` and no reference; a generic router 404 is unknown. `LookupAbsent` is **not** a no-effect decision. Phase 7 must apply the pinned proof standard before a negative lookup permits any transition or retry.
+
+**Fake ERP proof boundary.** Fake ERP requires the worker bearer credential on its privileged API and records the derived principal, never the token, in its audit log. It appends and syncs an effect and its audit entry before responding, reloads that log on restart, and stops serving privileged operations after an uncertain log write. A registered connector's `create_po` tool has immediate lookup visibility and can be certified `AUTHORITATIVE` when its contract matches the deployment. Its `create_po_eventual` tool permits delayed visibility and must be certified `BEST_EFFORT`; its 404 is never authoritative negative evidence. Native operation keys deduplicate. The same key on a correlation-only call may produce multiple records, in which case lookup reports a conflict. Neither the connector nor Fake ERP claims exactly-once execution.
 
 ## Consequences
 

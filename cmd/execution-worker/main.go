@@ -5,9 +5,7 @@
 //
 // Connector credentials are loaded here and nowhere else (ADR-001 §3):
 // only this service accepts EACP_CONNECTOR_SECRETS_FILE, and their values
-// are redacted from its logs. Slice A Phase 5 registers no connector
-// protocol yet (the HTTP connector is Phase 6), so the worker claims
-// nothing until one is registered.
+// are redacted from its logs. Phase 6 registers the HTTP connector.
 package main
 
 import (
@@ -16,6 +14,7 @@ import (
 	"os"
 
 	"eacp/internal/config"
+	"eacp/internal/connector"
 	"eacp/internal/service"
 	"eacp/internal/worker"
 )
@@ -43,12 +42,12 @@ func main() {
 			w, err := worker.New(d.DB, worker.Options{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
 				PollInterval: d.Config.WorkerPollInterval, Secrets: secrets,
-				Connectors: map[string]worker.Connector{}, Log: d.Log,
+				Connectors: map[string]worker.Connector{"http": connector.NewHTTP()}, Log: d.Log,
 			})
 			if err != nil {
 				return err
 			}
-			d.Log.Info("worker ready", "worker_id", id, "bindings", len(secrets.Bindings()), "protocols", 0)
+			d.Log.Info("worker ready", "worker_id", id, "bindings", len(secrets.Bindings()), "protocols", 1)
 			d.Background(w.Run)
 			return nil
 		})
