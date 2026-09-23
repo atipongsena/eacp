@@ -1,6 +1,6 @@
 # ADR-004: Action State Machine and Execution Semantics
 
-- **Status:** Accepted — Rev 2.2 (Phase 4 pre-dispatch implementation, 2026-09-23; Rev 2.1 amended after Codex adversarial review)
+- **Status:** Accepted — Rev 2.3 (Phase 5 worker, lease and fencing implementation, 2026-09-23; Rev 2.2 Phase 4 pre-dispatch implementation; Rev 2.1 amended after Codex adversarial review)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes (hard gate)
 - **Related:** MASTER_PLAN §18, §19, §20, §22, §23, §29, §31, §103; ADR-001, ADR-005; detail ADRs 007–010 and 013 must conform to this ADR
@@ -83,7 +83,7 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 | T22 | `EXECUTING` | `UNKNOWN_OUTCOME` | Ambiguous result: timeout or reset after send, a 5xx not certified as no-effect, or a cancel/kill during the call | `lease_generation = g` | W(g) |
 | T22a | `EXECUTING` | `RETRY_WAIT` | Ambiguous result | The pinned contract is **READ_ONLY** and not revoked. Retrying a read is safe by definition. | W(g) |
 | T23 | `EXECUTING` | `UNKNOWN_OUTCOME` | **Lease expired while EXECUTING** (crash, pause, partition) | The pinned contract is **not** READ_ONLY or natively idempotent, **or** it has been revoked since release | SWP |
-| T24 | `EXECUTING` | `RETRY_WAIT` | Lease expired while EXECUTING | The pinned contract **is** READ_ONLY or natively idempotent **and is not revoked**. The retry reuses the **same operation key**. | SWP |
+| T24 | `EXECUTING` | `RETRY_WAIT` | Lease expired while EXECUTING | The pinned contract **is** READ_ONLY or natively idempotent **and is not revoked**. The retry reuses the **same operation key**. **Slice A: READ_ONLY only** (Rev 2.3). | SWP |
 | T25 | `RETRY_WAIT` | `QUEUED` | Backoff elapsed | Policy version unchanged since the release boundary | SWP |
 | T26 | `RETRY_WAIT` | `AUTHORIZED` | Backoff elapsed | Policy version **changed**, so the action must pass the release boundary again (T10–T12) | SWP |
 | T27 | `RETRY_WAIT` | `FAILED` | Retry budget (attempts, elapsed, cost) exhausted | — | SWP |
@@ -137,7 +137,7 @@ Actors: **API** (control-plane request handler), **GOV** (governance evaluator),
 | Side effect / idempotency | After definitive no-effect | After lease loss in `EXECUTING` | After `UNKNOWN_OUTCOME` |
 |---|---|---|---|
 | READ_ONLY | Retry per policy | Retry (T24) | Retry per policy |
-| Natively idempotent (same key) | Retry per policy | Retry with the same key (T24) | Reconcile first. Retry with the same key after authoritative negative evidence. |
+| Natively idempotent (same key) | Retry per policy | Retry with the same key (T24). **Slice A: `UNKNOWN_OUTCOME` (T23), reconcile first** (Rev 2.3). | Reconcile first. Retry with the same key after authoritative negative evidence. |
 | Irreversible / non-idempotent | Retry per policy | **Never.** → `UNKNOWN_OUTCOME` (T23) | Only after **authoritative** negative evidence (T31) **or** human authorisation (T37) |
 | Unknown class | Treated as irreversible and non-idempotent | | |
 
@@ -166,7 +166,7 @@ Slice A Phase 4 implements T1–T13 and T15 in `migrations/00005_actions.sql` an
 
 An agent can only act on its own agent's actions. Principals may perform only T6–T8 and cancellation, and the system never cancels.
 
-**T1.** An agent key is required. `Idempotency-Key` (1–255 visible ASCII characters) is unique per (tenant, agent). A replay with the same `input_digest` returns the existing action and is never rejected by admission; a different digest is 409. Admission counts `QUEUED` actions, per tenant and globally (defaults 1000 and 10000, configurable, never unbounded). An action over a limit is 429 with `Retry-After`, and no action is created. The counts are advisory under concurrency: concurrent submissions may overshoot by their number. That is acceptable because admission controls capacity, not safety. `not_after` is at most 24 hours ahead (default 1 hour), by the database clock.
+**T1.** An agent key is required. `Idempotency-Key` (1–255 visible ASCII characters) is unique per (tenant, agent). A replay with the same `input_digest` returns the existing action and is never rejected by admission; a different digest is 409. Admission counts `QUEUED` actions (Rev 2.3: every released, unfinished action), per tenant and globally (defaults 1000 and 10000, configurable, never unbounded). An action over a limit is 429 with `Retry-After`, and no action is created. The counts are advisory under concurrency: concurrent submissions may overshoot by their number. That is acceptable because admission controls capacity, not safety. `not_after` is at most 24 hours ahead (default 1 hour), by the database clock.
 
 **T2.** Deterministic denials also cover an asserted subject that isn't an enabled human principal of the tenant (`subject_invalid`), so the attempt stays auditable.
 
@@ -196,7 +196,7 @@ The API answers 503 with `Retry-After` and `action_id`.
 - `POST /v1/actions/{id}/cancel` is open to agents and principals, and the database decides.
 - Both `POST /v1/actions` and `GET /v1/actions/{id}` accept `?wait=` (at most 60s). It polls until the action is terminal or the wait ends. An agent's own wait also drives the release of its approved action.
 
-**Outbox.** The release transaction inserts one `action.queued` outbox row. It carries only `action_id` and the request's W3C `traceparent`. Publishing it is Phase 5, and the row is a hint, never an authority (principle 2).
+**Outbox.** The release transaction inserts one `action.queued` outbox row. It carries only `action_id` and the request's W3C `traceparent`. The row is a hint, never an authority (principle 2). Phase 5 workers poll PostgreSQL directly, so publishing the outbox is not needed for correctness and remains open.
 
 **Sweeper.** The sweeper runs in `controlplane-api` every `EACP_ACTION_SWEEP_INTERVAL` (default 1s). In each pass it:
 - Expires overdue actions (T5, T13, T15) and lapsed approvals (T8, T13).
@@ -204,6 +204,75 @@ The API answers 503 with `Retry-After` and `action_id`.
 - Releases `AUTHORIZED` ones (T10–T12).
 
 Each step is an ordinary engine transition, so racing an API request on the same action is harmless.
+
+## Phase 5 implementation (Rev 2.3)
+
+Slice A Phase 5 implements T14 and T16–T27, and cancel requests in `EXECUTING` and `RETRY_WAIT`. The code is in `migrations/00006_execution.sql`, `internal/worker` and the sweeper in `internal/action`. Reconciliation and human resolution (T28–T37, T29a) are Phase 7, and the HTTP connector is Phase 6. The rules below record where the implementation had to choose; each is the conservative reading of the table above.
+
+**The worker actor.** A worker transaction binds `app.system_actor = 'worker'`, `app.worker_id` and `app.lease_generation` (`storage.SetWorker`). Every lease-holder move checks all three against the row (`eacp.assert_lease_holder`). A stale worker is therefore rejected by PostgreSQL itself, not only by a `WHERE lease_generation = $g` clause the worker might omit. The worker makes only execution moves: it never makes a governance move, and it never cancels. Only the sweeper makes T23–T27 and the lapsed-lease T17. Heartbeats, dispatch intents and results belong only to the lease holder.
+
+**Claim (T14).** A narrow `SECURITY DEFINER` function (`eacp.claimable_actions`) lists the oldest `QUEUED` actions across tenants, in the order they entered `QUEUED`. It returns only actions whose connector protocol the worker implements, and whose `(tenant, secret_ref, endpoint host)` it holds a credential for. So a worker never claims an action it can't execute, and nothing loops at the head of the queue. The list is a hint. The worker then claims each action in its own tenant transaction with `FOR UPDATE SKIP LOCKED` and a state CAS. The guard requires `lease_generation + 1`, the claiming worker's id and generation, and a lease of at most 10 minutes.
+
+**Heartbeat.** A heartbeat extends a live lease only (`OLD.leased_until > now()`), because an expired lease belongs to the sweeper. It changes nothing but the lease, and it is neither a transition nor journaled. It returns the cancel request. The worker heartbeats every lease/3 while a call is in flight, and cancels the call if the lease is lost or a cancel is requested.
+
+**Dispatch intent (T16).** T16 is its own committed transaction before any external call, with registry rows read `FOR SHARE`. The database requires all of:
+- A live lease held at the named generation.
+- `attempt_count + 1`.
+- No cancel request, and `not_after` not passed.
+- No drift (`eacp.dispatch_drift`): the capability check passes, the subject is an enabled human, the pinned contract is still the tool's active contract and not revoked, and the policy pointer still equals the pinned bundle and version.
+- A new `leased_until` beyond `now()` + the call timeout + 1s, and at most 10 minutes ahead.
+
+The call timeout is the contract's `timeout_ms`: default 30s, capped at 5 minutes. The `action_attempts` row (attempt number, generation, worker, operation key, pinned contract, enforced digest, call deadline) is inserted by the action trigger in the same transaction. A dispatch intent without an attempt, or an attempt without a dispatch intent, is impossible. Every attempt reuses the action's `operation_key`.
+
+**Drift at T16.**
+- A moved policy pointer is T16a: back to `AUTHORIZED`, then through the release boundary again.
+- Any other drift is T16b: `DENIED` with reason `revoked_before_dispatch: <reason>`.
+- The worker recomputes the enforced digest (JCS, RFC 8785) from the stored payloads before the dispatch intent. On a mismatch it denies (T16b, `enforced_digest_mismatch`) and logs the security alert `worker.enforced_digest_mismatch`. This is invariant 14 enforced at the last point before the call. The database accepts that reason only from the lease holder.
+
+**Results (T19–T22a) are fenced.** In one transaction the worker locks the action, completes its attempt row, and moves the action. The attempt outcome is `succeeded`, `no_effect` or `ambiguous`; an attempt completes once, and only by its own worker and generation. The guard requires the matching outcome to have been recorded in the same transaction. A deferred constraint trigger rejects a completed, non-late attempt whose action is still `EXECUTING`.
+
+The worker classifies results conservatively:
+- `succeeded` requires a non-empty external reference.
+- `no_effect` requires an error class in the pinned contract's `no_effect_errors`. The database checks this as well.
+- Everything else, including a connector panic, is `ambiguous`.
+
+Before storing a result, the worker drops any connector-returned field that contains a loaded credential. A success that loses its reference this way becomes ambiguous.
+
+The moves:
+- A definitive no-effect retries (T20) while attempts remain, no cancel is requested and `not_after` hasn't passed. Otherwise it is `FAILED` (T21).
+- An ambiguous result retries (T22a) only for an unrevoked `READ_ONLY` contract under the same conditions. Otherwise it is `UNKNOWN_OUTCOME` (T22).
+- A retry is scheduled within (now, now + 1 hour], with exponential backoff (1s doubling, at most 5 minutes).
+
+**Late results.** If the worker's attempt completes after its action left `EXECUTING` at that generation, the attempt is marked `late` and journaled as `action.late_result`. There is no state change. It is evidence for Phase 7 reconciliation only, never sufficient for `FAILED`.
+
+**Lease expiry (sweeper).**
+- `LEASED` past `leased_until` → T17 `QUEUED`. That is safe because no dispatch intent exists; the attempt count is unchanged and the generation is kept for the next claim.
+- `EXECUTING` past `leased_until` → T23 `UNKNOWN_OUTCOME`.
+- **T24 is narrowed to unrevoked `READ_ONLY` contracts in Slice A.** Its retry is due immediately, because the lapsed lease was its backoff.
+
+A natively idempotent contract goes to T23 and is reconciled first (Phase 7). EACP can't verify that a target honours the key across its deduplication window. With this narrowing, every attempt before a `RETRY_WAIT` or re-queue either definitively had no effect or was a read. That keeps `FAILED` truthful for re-queued actions.
+
+**Retry scheduling (sweeper).**
+- T25 re-queues a due retry only under the pinned policy version.
+- T26 returns it to `AUTHORIZED` when the policy moved, and the same sweep then drives the release boundary.
+- T27 fails the action when attempts are exhausted, `not_after` passed (reason `expired`, since there is no expiry edge from `RETRY_WAIT`), or a cancel was requested (reason `cancelled`).
+
+**Cancellation after release.**
+- `LEASED` → T18: a direct `CANCELLED`. The row lock and state CAS order it against T16, so the holder's dispatch intent then fails and nothing is dispatched.
+- `EXECUTING` and `RETRY_WAIT`: the requester or an operator records a cancel request (`cancel_requested_at`, reason required, once only; a repeat is 409). It is journaled as `action.cancel_requested` without a state change. In `EXECUTING` the worker's heartbeat cancels the call. The result then becomes T22 `UNKNOWN_OUTCOME` (reason `cancelled during the call`), unless a definitive result arrives: a success is `SUCCEEDED`, and a no-effect is T21 `FAILED`, never a retry. In `RETRY_WAIT` the sweeper applies T27.
+- `CANCELLED` is never set after a dispatch intent.
+- `POST /v1/actions/{id}/cancel` answers 202 with `cancel_requested_at` for a recorded request.
+
+**Admission.** Admission now counts every released, unfinished action: `QUEUED`, `LEASED`, `EXECUTING` and `RETRY_WAIT`. Otherwise workers draining the queue would disable the limit.
+
+**Credential custody (ADR-001 §3).**
+- Only `execution-worker` accepts `EACP_CONNECTOR_SECRETS_FILE` (`config.Options.AllowConnectorSecrets`). Any other service refuses to start with it set, and compose mounts the file into the worker only.
+- Secrets are keyed by `(tenant_id, secret_ref)` and bound to one endpoint `host:port`. The worker refuses to hand a secret to any other host, or to an endpoint URL with userinfo. The file is validated strictly and fails closed.
+- Secret values are redacted in every string, JSON and log form, and registered with the service's log redactor.
+- Values are never stored, and never journaled or put in the outbox. A test with a canary secret checks the rows, attempts, journal, outbox and logs.
+- Phase 5 registers no connector protocol, so a deployed worker claims nothing until Phase 6 adds HTTP.
+
+**Worker shutdown.** On shutdown the worker stops claiming. A leased action without a dispatch intent is released (T17). A call already in flight completes within its deadline and records its result.
 
 ## Consequences
 

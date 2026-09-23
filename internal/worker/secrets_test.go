@@ -1,0 +1,116 @@
+package worker_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"eacp/internal/worker"
+)
+
+const canary = "s3cret-canary-4f1d"
+
+var tenant = uuid.MustParse("00000000-0000-4000-8000-00000000000a")
+
+func secretsFile(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "secrets.json")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestSecretsResolveByTenantRefAndBoundHost(t *testing.T) {
+	valueFile := filepath.Join(t.TempDir(), "erp-token")
+	if err := os.WriteFile(valueFile, []byte(canary+"-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[
+		{"tenant_id":%q,"secret_ref":"erp","host":"fakeerp:8090","value":%q},
+		{"tenant_id":%q,"secret_ref":"bank","host":"bank.example","value_file":%q}]}`,
+		tenant, canary, tenant, valueFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Resolve(tenant, "erp", "http://FakeERP:8090/v1/po")
+	if err != nil || s.Reveal() != canary {
+		t.Fatalf("resolve = %v", err)
+	}
+	if s, err := store.Resolve(tenant, "bank", "https://bank.example/pay"); err != nil || s.Reveal() != canary+"-file" {
+		t.Fatalf("value_file secret = %v (trailing newline must be trimmed)", err)
+	}
+	for name, c := range map[string]struct {
+		tenant   uuid.UUID
+		ref, url string
+	}{
+		"other host":   {tenant, "erp", "http://evil.example:8090/v1/po"},
+		"other port":   {tenant, "erp", "http://fakeerp:9999/v1/po"},
+		"other tenant": {uuid.New(), "erp", "http://fakeerp:8090/v1/po"},
+		"unknown ref":  {tenant, "crm", "http://fakeerp:8090/v1/po"},
+		"userinfo":     {tenant, "erp", "http://x@fakeerp:8090/v1/po"},
+		"not a url":    {tenant, "erp", "::"},
+	} {
+		if _, err := store.Resolve(c.tenant, c.ref, c.url); !errors.Is(err, worker.ErrNoCredential) {
+			t.Errorf("%s: err = %v, want ErrNoCredential", name, err)
+		}
+	}
+	b := store.Bindings()
+	if len(b) != 2 || b[0].Host != "bank.example" || b[1].Ref != "erp" {
+		t.Fatalf("bindings = %+v", b)
+	}
+}
+
+func TestSecretsFileIsValidatedFailClosed(t *testing.T) {
+	for name, body := range map[string]string{
+		"not json":      `{`,
+		"unknown field": fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"h","value":"v","x":1}]}`, tenant),
+		"bad tenant":    `{"secrets":[{"tenant_id":"nope","secret_ref":"erp","host":"h","value":"v"}]}`,
+		"bad ref":       fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"ERP!","host":"h","value":"v"}]}`, tenant),
+		"bad host":      fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"http://h","value":"v"}]}`, tenant),
+		"no value":      fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"h"}]}`, tenant),
+		"both values":   fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"h","value":"v","value_file":"/x"}]}`, tenant),
+		"missing file":  fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"h","value_file":"/no/such/file"}]}`, tenant),
+		"duplicate":     fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"h","value":"v"},{"tenant_id":%q,"secret_ref":"erp","host":"g","value":"w"}]}`, tenant, tenant),
+		"empty":         `{"secrets":[]}`,
+	} {
+		_, err := worker.LoadSecrets(secretsFile(t, body))
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if strings.Contains(err.Error(), `"v"`) || strings.Contains(err.Error(), "value\":") {
+			t.Errorf("%s: error echoes the file: %v", name, err)
+		}
+	}
+	if _, err := worker.LoadSecrets(filepath.Join(t.TempDir(), "absent.json")); err == nil {
+		t.Error("a missing secrets file was accepted")
+	}
+}
+
+func TestSecretNeverPrintsLogsOrMarshals(t *testing.T) {
+	store, err := worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[
+		{"tenant_id":%q,"secret_ref":"erp","host":"fakeerp:8090","value":%q}]}`, tenant, canary)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := store.Resolve(tenant, "erp", "http://fakeerp:8090")
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	log.Info("call", "secret", s, "struct", struct{ S worker.Secret }{s})
+	j, _ := json.Marshal(map[string]any{"s": s})
+	out := strings.Join([]string{buf.String(), string(j), fmt.Sprint(s), fmt.Sprintf("%v %+v %#v %s %q", s, s, s, s, s),
+		fmt.Sprintf("%+v", store)}, "\n")
+	if strings.Contains(out, canary) {
+		t.Fatalf("secret leaked: %s", out)
+	}
+	if v := store.Values(); len(v) != 1 || v[0] != canary {
+		t.Fatal("Values must return the raw values for the log redactor")
+	}
+}

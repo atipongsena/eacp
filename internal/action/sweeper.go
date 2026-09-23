@@ -15,10 +15,12 @@ import (
 const SweeperComponent = "sweeper"
 
 // Sweeper is the control plane's background progress loop (ADR-004 actor
-// SWP): it expires overdue actions and approvals (T5, T8, T13, T15),
+// SWP): it expires overdue actions and approvals (T5, T8, T13, T15, T18),
+// reclaims expired leases (T17, T23, T24), schedules retries (T25-T27),
 // re-evaluates actions left RECEIVED by a PDP outage (T2a) and releases
-// approved actions (T10-T13). Every step is an ordinary engine transition,
-// so the sweeper and API requests may race harmlessly on the same action.
+// approved actions (T10-T13). Every step is an ordinary compare-and-set
+// transition on the locked row, so the sweeper, workers and API requests
+// may race harmlessly on the same action.
 type Sweeper struct {
 	e *Engine
 	// Batch bounds the actions handled per tenant and pass (default 100).
@@ -35,7 +37,7 @@ func NewSweeper(e *Engine) *Sweeper {
 
 // Stats counts what one pass did.
 type Stats struct {
-	Tenants, Expired, Advanced int
+	Tenants, Expired, Reclaimed, Retried, Advanced int
 }
 
 // RunOnce makes one pass over every tenant with open actions.
@@ -99,9 +101,9 @@ func (s *Sweeper) ids(ctx context.Context, tenant uuid.UUID, sql string, args ..
 func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) error {
 	a := System(tenant, SweeperComponent)
 
-	// Overdue actions without an outstanding approval: T5, T13, T15.
+	// Overdue actions before any dispatch intent: T5, T13, T15, T18.
 	due, err := s.ids(ctx, tenant, `SELECT id FROM eacp.actions
-		WHERE state IN ('RECEIVED', 'AUTHORIZED', 'QUEUED') AND not_after <= now()
+		WHERE state IN ('RECEIVED', 'AUTHORIZED', 'QUEUED', 'LEASED') AND not_after <= now()
 		ORDER BY not_after LIMIT $1`, s.Batch)
 	if err != nil {
 		return err
@@ -109,7 +111,8 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 	for _, id := range due {
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			r, err := load(ctx, tx, id, true)
-			if err != nil || !r.Expired || (r.State != "RECEIVED" && r.State != "AUTHORIZED" && r.State != "QUEUED") {
+			if err != nil || !r.Expired || (r.State != "RECEIVED" && r.State != "AUTHORIZED" &&
+				r.State != "QUEUED" && r.State != "LEASED") {
 				return err
 			}
 			return expire(ctx, tx, r)
@@ -145,6 +148,97 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 			return err
 		}
 		st.Expired++
+	}
+
+	// Expired leases (§22): before a dispatch intent the action is safely
+	// re-queued (T17); after one the effect may have happened, so it is
+	// UNKNOWN_OUTCOME (T23) unless the contract is an unrevoked READ_ONLY
+	// (T24, narrowed in ADR-004 Rev 2.3).
+	lapsedLeases, err := s.ids(ctx, tenant, `SELECT id FROM eacp.actions
+		WHERE state IN ('LEASED', 'EXECUTING') AND leased_until <= now()
+		ORDER BY leased_until LIMIT $1`, s.Batch)
+	if err != nil {
+		return err
+	}
+	for _, id := range lapsedLeases {
+		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
+			var state string
+			var expired, readOnly bool
+			err := tx.QueryRow(ctx, `SELECT a.state, a.leased_until <= now(),
+				k.side_effects = ARRAY['READ_ONLY'] AND k.revoked_at IS NULL
+				FROM eacp.actions a
+				JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
+				WHERE a.id = $1 FOR UPDATE OF a`, id).Scan(&state, &expired, &readOnly)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && (!expired || (state != "LEASED" && state != "EXECUTING"))) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			to, why := "QUEUED", "lease expired before dispatch"
+			if state == "EXECUTING" && readOnly {
+				to, why = "RETRY_WAIT", "lease expired during a read"
+			} else if state == "EXECUTING" {
+				to, why = "UNKNOWN_OUTCOME", "lease expired during the call"
+			}
+			return move(ctx, tx, `UPDATE eacp.actions SET state = $3, state_reason = $4
+				WHERE id = $1 AND state = $2`, id, state, to, why)
+		})
+		if err != nil {
+			return err
+		}
+		st.Reclaimed++
+	}
+
+	// Retries (T25-T27): a due retry is re-queued under the pinned policy or
+	// sent back through the release boundary under a new one; a cancelled,
+	// expired or exhausted one fails.
+	retries, err := s.ids(ctx, tenant, `SELECT id FROM eacp.actions
+		WHERE state = 'RETRY_WAIT'
+		  AND (next_attempt_at <= now() OR cancel_requested_at IS NOT NULL OR not_after <= now())
+		ORDER BY next_attempt_at LIMIT $1`, s.Batch)
+	if err != nil {
+		return err
+	}
+	for _, id := range retries {
+		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
+			var state string
+			var due, cancelled, expired, exhausted, samePolicy bool
+			err := tx.QueryRow(ctx, `SELECT a.state, a.next_attempt_at <= now(), a.cancel_requested_at IS NOT NULL,
+				a.not_after <= now(), a.attempt_count >= k.max_attempts,
+				p.current_bundle_id = a.policy_bundle_id AND p.current_version = a.policy_version
+				FROM eacp.actions a
+				JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
+				JOIN eacp.tenant_policy_pointer p ON p.tenant_id = a.tenant_id
+				WHERE a.id = $1 FOR UPDATE OF a`, id).Scan(&state, &due, &cancelled, &expired, &exhausted, &samePolicy)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && state != "RETRY_WAIT") {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			var to, why string
+			switch {
+			case cancelled:
+				to, why = "FAILED", "cancelled"
+			case expired:
+				to, why = "FAILED", "expired"
+			case exhausted:
+				to, why = "FAILED", "retry budget exhausted"
+			case !due:
+				return nil
+			case samePolicy:
+				to, why = "QUEUED", "retry"
+			default:
+				to, why = "AUTHORIZED", "policy changed before retry"
+			}
+			return move(ctx, tx, `UPDATE eacp.actions SET state = $2, state_reason = $3
+				WHERE id = $1 AND state = 'RETRY_WAIT'`, id, to, why)
+		})
+		if err != nil {
+			return err
+		}
+		st.Retried++
 	}
 
 	// Pending governance work: T2a retries and releases after approval.

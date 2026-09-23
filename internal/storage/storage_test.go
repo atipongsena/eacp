@@ -3,7 +3,9 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -274,4 +276,85 @@ func TestAppRoleCannotCreateTenants(t *testing.T) {
 	if !errors.As(err, &pgErr) || pgErr.Code != "42501" { // insufficient_privilege
 		t.Fatalf("err = %v, want permission denied (42501)", err)
 	}
+}
+
+// catalog renders every schema object a migration may create or replace,
+// so that a Down section can be compared with the schema it must restore.
+func catalog(t *testing.T, dsn string) string {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var out string
+	err = conn.QueryRow(ctx, `SELECT concat_ws(E'\n----\n',
+		(SELECT string_agg(p.oid::regprocedure::text || E'\n' || pg_get_functiondef(p.oid) || coalesce(p.proacl::text, ''),
+		        E'\n' ORDER BY p.oid::regprocedure::text)
+		   FROM pg_proc p WHERE p.pronamespace = 'eacp'::regnamespace),
+		(SELECT string_agg(concat_ws(' ', table_name, column_name, data_type, is_nullable, column_default),
+		        E'\n' ORDER BY table_name, column_name)
+		   FROM information_schema.columns WHERE table_schema = 'eacp'),
+		(SELECT string_agg(conrelid::regclass::text || ' ' || conname || ' ' || pg_get_constraintdef(oid),
+		        E'\n' ORDER BY conrelid::regclass::text, conname)
+		   FROM pg_constraint WHERE connamespace = 'eacp'::regnamespace),
+		(SELECT string_agg(indexdef, E'\n' ORDER BY indexname) FROM pg_indexes WHERE schemaname = 'eacp'),
+		(SELECT string_agg(tgrelid::regclass::text || ' ' || pg_get_triggerdef(oid) || ' ' || tgenabled::text,
+		        E'\n' ORDER BY tgrelid::regclass::text, tgname)
+		   FROM pg_trigger WHERE NOT tgisinternal AND tgrelid::regclass::text LIKE 'eacp.%'),
+		(SELECT string_agg(concat_ws(' ', tablename, policyname, permissive, cmd, roles::text, qual, with_check),
+		        E'\n' ORDER BY tablename, policyname)
+		   FROM pg_policies WHERE schemaname = 'eacp'),
+		(SELECT string_agg(relname || ' ' || relrowsecurity || ' ' || relforcerowsecurity || ' ' || coalesce(relacl::text, ''),
+		        E'\n' ORDER BY relname)
+		   FROM pg_class WHERE relnamespace = 'eacp'::regnamespace AND relkind IN ('r', 'v', 'S')),
+		(SELECT string_agg(concat_ws(' ', grantee, table_name, column_name, privilege_type),
+		        E'\n' ORDER BY grantee, table_name, column_name, privilege_type)
+		   FROM information_schema.column_privileges WHERE table_schema = 'eacp'))`).Scan(&out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// Each Down section restores exactly the schema of the previous version.
+func TestEveryDownMigrationRestoresThePreviousSchema(t *testing.T) {
+	db := pgtest.New(t)
+	ctx := context.Background()
+	for v := int64(2); v <= migrations.Latest(); v++ { // 1 → 0 is TestMigrationsRoundTrip
+		if err := storage.MigrateTo(ctx, db.OwnerDSN, v-1); err != nil {
+			t.Fatalf("to %d: %v", v-1, err)
+		}
+		before := catalog(t, db.AdminDSN)
+		if err := storage.MigrateTo(ctx, db.OwnerDSN, v); err != nil {
+			t.Fatalf("up to %d: %v", v, err)
+		}
+		if err := storage.MigrateTo(ctx, db.OwnerDSN, v-1); err != nil {
+			t.Fatalf("down from %d: %v", v, err)
+		}
+		if after := catalog(t, db.AdminDSN); after != before {
+			t.Errorf("migration %d: Down does not restore version %d:\n%s", v, v-1, firstDiff(before, after))
+		}
+		if err := storage.MigrateTo(ctx, db.OwnerDSN, v); err != nil {
+			t.Fatalf("re-up to %d: %v", v, err)
+		}
+	}
+}
+
+func firstDiff(a, b string) string {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := range max(len(al), len(bl)) {
+		var x, y string
+		if i < len(al) {
+			x = al[i]
+		}
+		if i < len(bl) {
+			y = bl[i]
+		}
+		if x != y {
+			return fmt.Sprintf("line %d\n  before: %s\n  after:  %s", i+1, x, y)
+		}
+	}
+	return ""
 }

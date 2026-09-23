@@ -135,3 +135,47 @@ func TestLogValueRedactsDatabasePassword(t *testing.T) {
 		t.Fatalf("expected host to remain visible, got: %s", out)
 	}
 }
+
+// ADR-001 §3: connector credentials live only in the execution worker.
+func TestConnectorSecretsOnlyInTheWorker(t *testing.T) {
+	vars := map[string]string{"EACP_CONNECTOR_SECRETS_FILE": "/run/secrets/connector_secrets"}
+	_, err := Load(env(vars), Options{})
+	if err == nil || !strings.Contains(err.Error(), "EACP_CONNECTOR_SECRETS_FILE") {
+		t.Fatalf("a service other than the worker accepted connector secrets: %v", err)
+	}
+	cfg, err := Load(env(vars), Options{AllowConnectorSecrets: true})
+	if err != nil || cfg.ConnectorSecretsFile != "/run/secrets/connector_secrets" {
+		t.Fatalf("worker config = %+v, %v", cfg, err)
+	}
+}
+
+func TestWorkerSettings(t *testing.T) {
+	cfg, err := Load(env(nil), Options{AllowConnectorSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkerID != "" || cfg.WorkerLease != 30*time.Second || cfg.WorkerConcurrency != 4 ||
+		cfg.WorkerPollInterval != 500*time.Millisecond || cfg.ConnectorSecretsFile != "" {
+		t.Fatalf("worker defaults = %+v", cfg)
+	}
+	cfg, err = Load(env(map[string]string{
+		"EACP_WORKER_ID": "worker-a", "EACP_WORKER_LEASE": "10s",
+		"EACP_WORKER_CONCURRENCY": "16", "EACP_WORKER_POLL_INTERVAL": "2s",
+	}), Options{AllowConnectorSecrets: true})
+	if err != nil || cfg.WorkerID != "worker-a" || cfg.WorkerLease != 10*time.Second ||
+		cfg.WorkerConcurrency != 16 || cfg.WorkerPollInterval != 2*time.Second {
+		t.Fatalf("worker overrides = %+v, %v", cfg, err)
+	}
+	for name, vars := range map[string]map[string]string{
+		"short lease":        {"EACP_WORKER_LEASE": "1s"},
+		"long lease":         {"EACP_WORKER_LEASE": "10m"},
+		"zero concurrency":   {"EACP_WORKER_CONCURRENCY": "0"},
+		"huge concurrency":   {"EACP_WORKER_CONCURRENCY": "100000"},
+		"zero poll interval": {"EACP_WORKER_POLL_INTERVAL": "0s"},
+		"bad worker id":      {"EACP_WORKER_ID": "no spaces allowed"},
+	} {
+		if _, err := Load(env(vars), Options{AllowConnectorSecrets: true}); err == nil {
+			t.Errorf("%s: accepted %v", name, vars)
+		}
+	}
+}

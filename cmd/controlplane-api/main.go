@@ -2,7 +2,8 @@
 //
 // It serves the registry, identity and capability API (ADR-003), policies
 // and approvals (ADR-002/005) and the Action API up to the release boundary
-// (ADR-004), and runs the action sweeper. Dispatch arrives in Phase 5.
+// (ADR-004), and runs the action sweeper, which also reclaims lapsed worker
+// leases and schedules retries. The execution worker dispatches.
 package main
 
 import (
@@ -19,7 +20,7 @@ import (
 
 func main() {
 	service.Main("controlplane-api", config.Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"},
-		func(d *service.Deps, mux *http.ServeMux) {
+		func(d *service.Deps, mux *http.ServeMux) error {
 			instance, _ := os.Hostname()
 			engine := action.New(d.DB, action.Options{
 				Provider: governance.LocalProvider{InstanceID: "controlplane-api/" + instance},
@@ -30,5 +31,6 @@ func main() {
 			d.Background(func(ctx context.Context) {
 				action.NewSweeper(engine).Run(ctx, d.Config.SweepInterval)
 			})
+			return nil
 		})
 }

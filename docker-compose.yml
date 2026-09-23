@@ -7,7 +7,9 @@
 #   erp    : execution-worker + fakeerp               (only the worker reaches the ERP)
 #
 # The "agent" service stands in for an agent runtime. It has no route to
-# fakeerp and holds no ERP credential.
+# fakeerp and holds no ERP credential. Connector credentials are mounted
+# into execution-worker only; every other service refuses to start with
+# EACP_CONNECTOR_SECRETS_FILE set.
 #
 # Credentials below are local-development defaults only.
 
@@ -68,6 +70,9 @@ services:
       <<: *eacp-env
       EACP_HTTP_ADDR: ":8081"
       EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
+      EACP_WORKER_ID: execution-worker-1
+      EACP_CONNECTOR_SECRETS_FILE: /run/secrets/connector_secrets
+    secrets: [connector_secrets]
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [core, erp]
@@ -94,3 +99,7 @@ networks:
 
 volumes:
   pgdata: {}
+
+secrets:
+  connector_secrets:
+    file: ./deployments/docker/secrets/connector-secrets.dev.json # local-development only

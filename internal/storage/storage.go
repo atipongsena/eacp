@@ -8,6 +8,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -202,6 +203,22 @@ func SetSystem(ctx context.Context, tx pgx.Tx, component string) error {
 	}
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.system_actor', $1, true)`, component); err != nil {
 		return fmt.Errorf("storage: set system actor: %w", err)
+	}
+	return nil
+}
+
+// SetWorker records that execution worker workerID, holding (or claiming)
+// lease generation generation, performs the transaction's action changes.
+// PostgreSQL rejects any worker write whose generation is not the action's
+// current one (migration 00006), so a stale worker cannot commit.
+func SetWorker(ctx context.Context, tx pgx.Tx, workerID string, generation int64) error {
+	if workerID == "" || generation < 1 {
+		return fmt.Errorf("storage: worker id and a positive lease generation are required")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.system_actor', 'worker', true),
+		set_config('app.worker_id', $1, true), set_config('app.lease_generation', $2, true)`,
+		workerID, strconv.FormatInt(generation, 10)); err != nil {
+		return fmt.Errorf("storage: set worker: %w", err)
 	}
 	return nil
 }

@@ -6,7 +6,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A · Phases 1–4 are complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary. Workers and dispatch are Phase 5.
+> **Status: early development.** Slice A · Phases 1–5 are complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent. Connectors and the Fake ERP are Phase 6.
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -15,7 +15,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 
 This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-001-product-boundary-and-enforcement-point.md).
 
-## What exists today (Phases 1–4)
+## What exists today (Phases 1–5)
 
 | Capability | Evidence |
 |---|---|
@@ -40,8 +40,12 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | ADR-004 pre-dispatch state machine (T1–T13, T15) enforced by PostgreSQL triggers for raw SQL too | `migrations/00005_actions.sql`, `internal/action/schema_test.go` (mutation-checked) |
 | Atomic release boundary: fresh revalidation, one-time grant consumption checked at commit, pinned policy and contract, journal and outbox in one transaction | `internal/action` release tests (parallel releases, activation races, injected failures) |
 | Sweeper: outage recovery, release after approval, expiry; cancel that never consults the PDP | `internal/action/sweeper.go`; `POST /v1/actions/{id}/cancel` |
+| Worker claim (`FOR UPDATE SKIP LOCKED`, FIFO), heartbeats and lease generations; PostgreSQL rejects any write by a stale worker | `migrations/00006_execution.sql`, `internal/worker/schema_test.go` (mutation-checked) |
+| Fenced dispatch intent before any call, with drift re-check (T16a/T16b) and an attempt row per dispatch; fenced results and late-result evidence | `internal/worker` (lease race, stale worker never dispatches twice) |
+| Lease reclaim, retries by contract, cancel requests while executing | `internal/action/sweeper.go`, `internal/action/execution_test.go` |
+| Connector credentials only in the worker: tenant-namespaced, host-bound, never logged or stored | `internal/worker/secrets.go`, `test/security` |
 
-A `QUEUED` action is released but not yet executed: workers, leases, fenced dispatch and outbox publishing arrive in Phase 5.
+The worker registers no connector protocol yet, so a `QUEUED` action isn't executed in a deployment until Phase 6 adds the HTTP connector and the Fake ERP.
 
 ## Quick start
 

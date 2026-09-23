@@ -92,7 +92,7 @@ ADR-004 and ADR-005 impose requirements on these records:
 
 - A `connector` has a slug, protocol, endpoint and a **`secret_ref`**. That's a name the execution worker maps to a secret it holds. **No secret value is ever stored in the database or returned by the API** (ADR-001 §3).
   - **Secret refs are tenant-namespaced by construction.** The worker resolves `(action.tenant_id, secret_ref)`, never a bare ref. A tenant therefore can't name another tenant's secret, or a platform secret, whatever string it registers.
-  - The worker's secret configuration also binds each secret to the endpoint host it may be sent to. That's a Phase 5 obligation.
+  - The worker's secret configuration also binds each secret to the endpoint host it may be sent to. Delivered in Phase 5 (`internal/worker.SecretStore`, ADR-004 Rev 2.3): the worker refuses to resolve a secret for any other `host:port`, or for an endpoint URL with userinfo.
 - **Connectors and tools are immutable** (no `UPDATE` grant). A new endpoint means a new connector, which has no contract and so can't execute until it's recertified.
 - A `tool` belongs to a connector.
 - A `tool_contract` is an **insert-only, versioned** operator declaration (MASTER_PLAN §31). Its fields are validated both in Go and by DB `CHECK` constraints:

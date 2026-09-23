@@ -71,3 +71,42 @@ func TestERPNetworkCanReachFakeERP(t *testing.T) {
 		t.Fatalf("erp network could not reach fakeerp (err=%v out=%q)", err, out)
 	}
 }
+
+// inspect returns a running compose service's environment and mount targets.
+func inspect(t *testing.T, service string) (env, mounts string) {
+	t.Helper()
+	id, err := exec.Command("docker", "compose", "ps", "-q", service).Output()
+	if err != nil || strings.TrimSpace(string(id)) == "" {
+		t.Fatalf("service %s is not running (err=%v)", service, err)
+	}
+	out, err := exec.Command("docker", "inspect", "--format", "{{json .Config.Env}}\n{{range .Mounts}}{{.Destination}} {{end}}",
+		strings.TrimSpace(string(id))).Output()
+	if err != nil {
+		t.Fatalf("docker inspect %s: %v", service, err)
+	}
+	env, mounts, _ = strings.Cut(string(out), "\n")
+	return env, mounts
+}
+
+// ADR-001 §3: connector credentials are mounted into the execution worker
+// and nowhere else.
+func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
+	requireCompose(t)
+	env, mounts := inspect(t, "execution-worker")
+	if !strings.Contains(env, "EACP_CONNECTOR_SECRETS_FILE=") || !strings.Contains(mounts, "/run/secrets/connector_secrets") {
+		t.Fatalf("worker has no connector secrets (env=%s mounts=%s); the negative checks would be meaningless", env, mounts)
+	}
+	for _, service := range []string{"controlplane-api", "fakeerp", "agent", "postgres"} {
+		env, mounts := inspect(t, service)
+		if strings.Contains(env, "CONNECTOR_SECRETS") || strings.Contains(mounts, "connector_secrets") {
+			t.Errorf("%s holds connector secrets (env=%s mounts=%s)", service, env, mounts)
+		}
+	}
+	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
+	if err != nil || !strings.Contains(string(logs), `"bindings":1`) {
+		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
+	}
+	if strings.Contains(string(logs), "dev-only-fakeerp-token") {
+		t.Fatal("worker logged a connector secret")
+	}
+}

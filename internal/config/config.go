@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,10 @@ type Options struct {
 	RequireDatabase bool
 	// DefaultHTTPAddr is used when EACP_HTTP_ADDR is unset.
 	DefaultHTTPAddr string
+	// AllowConnectorSecrets marks the execution worker: only it may hold
+	// connector credentials (ADR-001 §3). Any other service refuses to
+	// start when EACP_CONNECTOR_SECRETS_FILE is set.
+	AllowConnectorSecrets bool
 }
 
 // Config is the process configuration shared by EACP services.
@@ -37,12 +42,22 @@ type Config struct {
 	MaxQueuedGlobal    int64
 	SweepInterval      time.Duration
 	PDPTimeout         time.Duration
+
+	// Execution worker (AllowConnectorSecrets only). WorkerID defaults to
+	// the host name at startup; ConnectorSecretsFile is optional, and a
+	// worker without credentials claims nothing.
+	WorkerID             string
+	WorkerLease          time.Duration
+	WorkerConcurrency    int
+	WorkerPollInterval   time.Duration
+	ConnectorSecretsFile string
 }
 
 var (
 	environments = map[string]bool{"development": true, "test": true, "staging": true, "production": true}
 	logFormats   = map[string]bool{"json": true, "text": true}
 	exporters    = map[string]bool{"none": true, "stdout": true, "otlp": true}
+	workerID     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 )
 
 // Load reads configuration using getenv (normally os.Getenv).
@@ -122,6 +137,26 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	cfg.SweepInterval = duration("EACP_ACTION_SWEEP_INTERVAL", "1s", time.Hour)
 	cfg.PDPTimeout = duration("EACP_PDP_TIMEOUT", "5s", time.Minute)
 
+	if opts.AllowConnectorSecrets {
+		cfg.WorkerID = get("EACP_WORKER_ID", "")
+		if cfg.WorkerID != "" && !workerID.MatchString(cfg.WorkerID) {
+			errs = append(errs, errors.New("EACP_WORKER_ID: 1-128 characters of [A-Za-z0-9._:-]"))
+		}
+		cfg.WorkerLease = duration("EACP_WORKER_LEASE", "30s", 5*time.Minute)
+		if cfg.WorkerLease > 0 && cfg.WorkerLease < 5*time.Second {
+			errs = append(errs, errors.New("EACP_WORKER_LEASE: must be at least 5s"))
+		}
+		n, err := strconv.Atoi(get("EACP_WORKER_CONCURRENCY", "4"))
+		if err != nil || n <= 0 || n > 256 {
+			errs = append(errs, errors.New("EACP_WORKER_CONCURRENCY: must be an integer in [1, 256]"))
+		}
+		cfg.WorkerConcurrency = n
+		cfg.WorkerPollInterval = duration("EACP_WORKER_POLL_INTERVAL", "500ms", time.Minute)
+		cfg.ConnectorSecretsFile = get("EACP_CONNECTOR_SECRETS_FILE", "")
+	} else if get("EACP_CONNECTOR_SECRETS_FILE", "") != "" {
+		errs = append(errs, errors.New("EACP_CONNECTOR_SECRETS_FILE: only the execution worker may hold connector credentials (ADR-001 §3)"))
+	}
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
@@ -144,6 +179,11 @@ func (c Config) LogValue() slog.Value {
 		slog.Int64("action_max_queued_global", c.MaxQueuedGlobal),
 		slog.Duration("action_sweep_interval", c.SweepInterval),
 		slog.Duration("pdp_timeout", c.PDPTimeout),
+		slog.String("worker_id", c.WorkerID),
+		slog.Duration("worker_lease", c.WorkerLease),
+		slog.Int("worker_concurrency", c.WorkerConcurrency),
+		slog.Duration("worker_poll_interval", c.WorkerPollInterval),
+		slog.String("connector_secrets_file", c.ConnectorSecretsFile),
 	)
 }
 

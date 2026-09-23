@@ -143,3 +143,18 @@ func TestStopEndsBackgroundTasksBeforeReleasingResources(t *testing.T) {
 		t.Fatal("stop returned before the background task finished")
 	}
 }
+
+func TestRedactSecretsExtendsTheServiceLogger(t *testing.T) {
+	var out bytes.Buffer
+	deps, stop, err := service.Start(context.Background(), "execution-worker", envFrom(nil),
+		config.Options{AllowConnectorSecrets: true}, &out)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer stop()
+	deps.RedactSecrets("tok-canary-1", "tok-canary-2")
+	deps.Log.Info("call failed: tok-canary-1", "err", "bad token tok-canary-2")
+	if s := out.String(); strings.Contains(s, "tok-canary") || !strings.Contains(s, `"service":"execution-worker"`) {
+		t.Fatalf("log = %s", s)
+	}
+}

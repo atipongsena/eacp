@@ -18,6 +18,7 @@ import (
 	"eacp/internal/governance"
 	"eacp/internal/identity"
 	"eacp/internal/registry/registrytest"
+	"eacp/internal/worker"
 )
 
 // switchPDP is the local provider, or an outage when down is set.
@@ -221,6 +222,38 @@ func TestActionVisibilityAndCancel(t *testing.T) {
 	}
 	code, body = h.as("otto", "POST", path+"/cancel", map[string]any{"reason": "again"})
 	h.want(409, code, body)
+}
+
+func TestCancelOfARunningActionIsARequest(t *testing.T) {
+	h := newActionHarness(t, allowPolicy, action.Limits{})
+	_, queued, _ := h.submit("k1", 1, "")
+	id := uuid.MustParse(str(queued, "id"))
+	ctx := context.Background()
+	s := worker.NewStore(h.f.App, "w1")
+	l, ok, err := s.Claim(ctx, worker.Candidate{TenantID: h.f.Tenant, ActionID: id}, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim = %v %v", ok, err)
+	}
+	if d, _, err := s.Intent(ctx, l, 2*time.Second); err != nil || d != worker.Dispatched {
+		t.Fatalf("intent = %s %v", d, err)
+	}
+	path := "/v1/actions/" + id.String()
+	code, body, _ := h.send(h.key, "POST", path+"/cancel", nil, map[string]any{"reason": "user withdrew"})
+	h.want(202, code, body)
+	if body["state"] != "EXECUTING" || body["cancel_requested_at"] == nil || body["lease_generation"] != float64(1) ||
+		body["attempt_count"] != float64(1) {
+		t.Fatalf("cancel request = %v", body)
+	}
+	code, body = h.as("otto", "POST", path+"/cancel", map[string]any{"reason": "again"})
+	h.want(409, code, body)
+	if _, err := s.Complete(ctx, l, worker.Result{Outcome: worker.Succeeded, ExternalReference: "PO-1"}, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	code, body = h.as("otto", "GET", path, nil)
+	h.want(200, code, body)
+	if body["state"] != "SUCCEEDED" || body["external_reference"] != "PO-1" {
+		t.Fatalf("after the call = %v", body)
+	}
 }
 
 func TestAgentWaitReleasesItsApprovedAction(t *testing.T) {

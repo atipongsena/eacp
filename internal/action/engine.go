@@ -259,11 +259,13 @@ func (e *Engine) Submit(ctx context.Context, a Actor, s Submission) (View, error
 	return e.Advance(ctx, a, id)
 }
 
-// admit applies the static admission limits. Counts are advisory under
-// concurrency: concurrent submissions may overshoot by their number.
+// admit applies the static admission limits to released, unfinished
+// actions (QUEUED to RETRY_WAIT). Counts are advisory under concurrency:
+// concurrent submissions may overshoot by their number.
 func (e *Engine) admit(ctx context.Context, tx pgx.Tx) error {
 	var tenant, global int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.actions WHERE state = 'QUEUED'`).Scan(&tenant); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.actions
+		WHERE state IN ('QUEUED', 'LEASED', 'EXECUTING', 'RETRY_WAIT')`).Scan(&tenant); err != nil {
 		return err
 	}
 	if tenant >= e.o.Limits.MaxQueuedPerTenant {
@@ -760,10 +762,13 @@ func (e *Engine) queue(ctx context.Context, tx pgx.Tx, a Actor, r row, evidence 
 		WHERE id = $1 AND state = 'AUTHORIZED'`, r.ID, reason(d), evidence, s.contractID)
 }
 
-// Cancel cancels an action before any dispatch (T9, T13, T15). It never
-// consults governance, so it works while the PDP is down (ADR-002 §6). The
-// database allows the submitting agent, the subject and operators, and
-// voids outstanding approval state in the same transaction.
+// Cancel cancels an action (ADR-004 T9, T13, T15, T18). Before any
+// dispatch intent the action becomes CANCELLED; once a dispatch intent
+// exists (EXECUTING, RETRY_WAIT) only a cancel request is recorded: the
+// worker cancels the in-flight call and the sweeper fails a waiting retry
+// (ADR-004 Rev 2.3). It never consults governance, so it works while the
+// PDP is down (ADR-002 §6). The database allows the submitting agent, the
+// subject and operators, and voids outstanding approval state.
 func (e *Engine) Cancel(ctx context.Context, a Actor, id uuid.UUID, why string) (View, error) {
 	if strings.TrimSpace(why) == "" {
 		return View{}, invalid("a cancellation requires a reason")
@@ -777,12 +782,17 @@ func (e *Engine) Cancel(ctx context.Context, a Actor, id uuid.UUID, why string) 
 			return pgx.ErrNoRows
 		}
 		switch r.State {
-		case "PENDING_APPROVAL", "AUTHORIZED", "QUEUED":
-		default:
-			return &registry.Error{Kind: registry.ErrConflict, Msg: "an action in state " + r.State + " cannot be cancelled"}
+		case "PENDING_APPROVAL", "AUTHORIZED", "QUEUED", "LEASED":
+			return move(ctx, tx, `UPDATE eacp.actions SET state = 'CANCELLED', state_reason = $3
+				WHERE id = $1 AND state = $2`, r.ID, r.State, why)
+		case "EXECUTING", "RETRY_WAIT":
+			if r.CancelRequestedAt != nil {
+				return &registry.Error{Kind: registry.ErrConflict, Msg: "cancellation was already requested"}
+			}
+			return move(ctx, tx, `UPDATE eacp.actions SET cancel_requested_at = now(), cancel_reason = $3
+				WHERE id = $1 AND state = $2`, r.ID, r.State, why)
 		}
-		return move(ctx, tx, `UPDATE eacp.actions SET state = 'CANCELLED', state_reason = $3
-			WHERE id = $1 AND state = $2`, r.ID, r.State, why)
+		return &registry.Error{Kind: registry.ErrConflict, Msg: "an action in state " + r.State + " cannot be cancelled"}
 	})
 	if err != nil {
 		return View{}, mapErr(err)

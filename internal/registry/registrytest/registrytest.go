@@ -297,12 +297,19 @@ type Tooling struct {
 // contract (by erin) activated by rita.
 func (f *Fixture) ActiveTool(t testing.TB, connector, tool string) Tooling {
 	t.Helper()
+	return f.ActiveToolWith(t, connector, tool, SafeContractSQL)
+}
+
+// ActiveToolWith is ActiveTool with contractSQL ($1 tool id) as the
+// activated contract.
+func (f *Fixture) ActiveToolWith(t testing.TB, connector, tool, contractSQL string) Tooling {
+	t.Helper()
 	var r Tooling
 	r.Connector = f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
 		VALUES (eacp.current_tenant_id(), $1, 'http', 'http://fakeerp:8090', $1) RETURNING id`, connector)
 	r.Tool = f.ID(t, "erin", `INSERT INTO eacp.tools (tenant_id, connector_id, name)
 		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, r.Connector, tool)
-	r.Contract = f.ID(t, "erin", SafeContractSQL, r.Tool)
+	r.Contract = f.ID(t, "erin", contractSQL, r.Tool)
 	if err := f.Exec("rita", `UPDATE eacp.tools SET active_contract_id = $1 WHERE id = $2`, r.Contract, r.Tool); err != nil {
 		t.Fatalf("registrytest: activate contract: %v", err)
 	}
@@ -315,6 +322,93 @@ const SafeContractSQL = `INSERT INTO eacp.tool_contracts
 	 reconciliation_consistency, proof_standard, max_attempts)
 	VALUES (eacp.current_tenant_id(), $1, '{READ_ONLY}', 'none', 'none', 'none', 'none', 3)
 	RETURNING id`
+
+// WriteContractSQL inserts an irreversible, non-idempotent financial write
+// contract for tool $1: one attempt, no certified no-effect errors, 5 s
+// timeout, best-effort lookup.
+const WriteContractSQL = `INSERT INTO eacp.tool_contracts
+	(tenant_id, tool_id, side_effects, idempotency_mode, reconciliation_lookup,
+	 reconciliation_consistency, proof_standard, max_attempts, timeout_ms)
+	VALUES (eacp.current_tenant_id(), $1, '{IRREVERSIBLE_WRITE,FINANCIAL}', 'none', 'by_operation_key',
+	 'eventual', 'best_effort', 1, 5000)
+	RETURNING id`
+
+// IdempotentContractSQL inserts a natively idempotent write contract for
+// tool $1: three attempts, "validation" and "refused" certified no-effect.
+const IdempotentContractSQL = `INSERT INTO eacp.tool_contracts
+	(tenant_id, tool_id, side_effects, idempotency_mode, idempotency_key_field, reconciliation_lookup,
+	 reconciliation_consistency, proof_standard, no_effect_errors, max_attempts, timeout_ms)
+	VALUES (eacp.current_tenant_id(), $1, '{REVERSIBLE_WRITE}', 'native', 'Idempotency-Key',
+	 'by_operation_key', 'strong', 'authoritative', '{validation,refused}', 3, 5000)
+	RETURNING id`
+
+// ActivatePolicy creates policy content (by alice) and activates it (by
+// bob), returning the bundle id.
+func (f *Fixture) ActivatePolicy(t testing.TB, content string) uuid.UUID {
+	t.Helper()
+	id := f.ID(t, "alice", `INSERT INTO eacp.policy_bundles (tenant_id, content)
+		VALUES (eacp.current_tenant_id(), $1::jsonb) RETURNING id`, content)
+	if err := f.Exec("bob", `UPDATE eacp.tenant_policy_pointer SET current_bundle_id = $1,
+		activation_reason = 'reviewed' WHERE tenant_id = eacp.current_tenant_id()`, id); err != nil {
+		t.Fatalf("registrytest: activate policy: %v", err)
+	}
+	return id
+}
+
+// AllowPolicy allows everything.
+const AllowPolicy = `{"format_version":1,"rules":[{"id":"all","verdict":"allow","reason":"permitted"}]}`
+
+// AllowEvidenceSQL records allow evidence for RECEIVED action $1 under the
+// current policy, with the fixture enforced digest and payload.
+const AllowEvidenceSQL = `INSERT INTO eacp.decision_evidence
+	(tenant_id, action_id, policy_bundle_id, policy_version, provider, provider_instance_id,
+	 decision_id, verdict, reasons, input_digest, enforced_digest, evaluated_at, enforced_payload)
+	SELECT a.tenant_id, a.id, p.current_bundle_id, p.current_version, 'local', 'local-test',
+	 gen_random_uuid(), 'allow', ARRAY['ok'], a.input_digest, decode(repeat('22', 32), 'hex'), now(),
+	 '` + ActionPayload + `'::jsonb
+	FROM eacp.actions a JOIN eacp.tenant_policy_pointer p ON p.tenant_id = a.tenant_id
+	WHERE a.id = $1 RETURNING id`
+
+// QueuedAction submits an action, authorizes it (T3) and releases it (T10)
+// under the active policy, as the agent. The policy must be active.
+func (f *Fixture) QueuedAction(t testing.TB, version uuid.UUID, subject, tool string) uuid.UUID {
+	t.Helper()
+	id := f.ReceivedAction(t, version, subject, tool)
+	ev := f.AgentID(t, version, AllowEvidenceSQL, id)
+	if err := f.ExecAgent(version, `UPDATE eacp.actions SET state = 'AUTHORIZED', state_reason = 'ok',
+		decision_evidence_id = $2, enforced_payload = $3 WHERE id = $1`, id, ev, ActionPayload); err != nil {
+		t.Fatalf("registrytest: authorize: %v", err)
+	}
+	ctx := context.Background()
+	err := storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		if err := storage.SetAgent(ctx, tx, version); err != nil {
+			return err
+		}
+		var rev uuid.UUID
+		if err := tx.QueryRow(ctx, ReleaseEvidenceSQL, id, "allow").Scan(&rev); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, QueueSQL, id, rev)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("registrytest: release: %v", err)
+	}
+	return id
+}
+
+// ExecWorker runs sql in tenant A as execution worker worker at lease
+// generation gen.
+func (f *Fixture) ExecWorker(worker string, gen int64, sql string, args ...any) error {
+	ctx := context.Background()
+	return storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		if err := storage.SetWorker(ctx, tx, worker, gen); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, sql, args...)
+		return err
+	})
+}
 
 // Agent is an agent with one version.
 type Agent struct {

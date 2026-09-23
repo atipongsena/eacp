@@ -3338,7 +3338,7 @@ Outbox table
 - The ADR-005 release boundary: fresh revalidation, one-time grant consumption checked at commit, pinned policy and contract, the budget hook, the journal and an outbox row.
 - Pre-dispatch cancel and expiry.
 
-PostgreSQL triggers enforce every guard for raw SQL as `eacp_app`. The API adds `POST /v1/actions`, `GET /v1/actions/{id}` and `POST /v1/actions/{id}/cancel`, and `controlplane-api` runs the sweeper. Implementation choices are recorded in ADR-004 Rev 2.2, ADR-005 §9 and ADR-002 Rev 2.3. Workers, leases, dispatch and outbox publishing are Phase 5. The review is in `docs/reviews/2026-09-23-phase4-code-review.md`.
+PostgreSQL triggers enforce every guard for raw SQL as `eacp_app`. The API adds `POST /v1/actions`, `GET /v1/actions/{id}` and `POST /v1/actions/{id}/cancel`, and `controlplane-api` runs the sweeper. Implementation choices are recorded in ADR-004 Rev 2.2, ADR-005 §9 and ADR-002 Rev 2.3. Workers, leases and dispatch are Phase 5. The review is in `docs/reviews/2026-09-23-phase4-code-review.md`.
 
 ---
 
@@ -3363,6 +3363,21 @@ lease race
 stale worker commit ถูก reject
 stale worker ไม่ทำให้เกิด dispatch ครั้งที่สอง (non-idempotent)
 ```
+
+**Status (2026-09-23): delivered.** Migration 00006 and `internal/worker` implement ADR-004 T14 and T16–T27:
+- Claim: a FIFO hint filtered by protocol and credential, then `FOR UPDATE SKIP LOCKED` plus a state CAS that takes the next lease generation.
+- Heartbeats that extend only a live lease and carry cancel requests.
+- A fenced dispatch intent that inserts the attempt row in the same transaction and re-checks drift (T16a/T16b).
+- Fenced result commits with conservative classification.
+- Late-result evidence.
+- Sweeper reclaim (T17, T23, T24 narrowed to READ_ONLY) and retry scheduling (T25–T27).
+- Cancel requests in `EXECUTING` and `RETRY_WAIT`.
+
+PostgreSQL rejects every write by a worker that doesn't hold the lease at the named generation, including raw SQL as `eacp_app`.
+
+Connector credentials are tenant-namespaced and host-bound, and only `execution-worker` may load them. Compose mounts them into the worker only, and a secret canary never reaches rows, attempts, the journal, the outbox or logs.
+
+The three mandatory concurrency tests are in `internal/worker/worker_test.go`: the lease race, a stale commit rejected, and a stale worker never dispatching twice. Implementation choices are recorded in ADR-004 Rev 2.3. No connector protocol is registered yet: the HTTP connector and Fake ERP are Phase 6, and reconciliation is Phase 7. The review is in `docs/reviews/2026-09-23-phase5-code-review.md`.
 
 ---
 

@@ -41,6 +41,9 @@ type Deps struct {
 	// DB is nil for services started without RequireDatabase.
 	DB *pgxpool.Pool
 
+	out     io.Writer
+	secrets []string
+
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bg       sync.WaitGroup
@@ -54,6 +57,14 @@ func (d *Deps) Background(fn func(context.Context)) {
 	d.bg.Go(func() { fn(d.bgCtx) })
 }
 
+// RedactSecrets replaces Log with a logger that also redacts values, such
+// as connector credentials loaded after startup. Call it before handing Log
+// to any component.
+func (d *Deps) RedactSecrets(values ...string) {
+	d.secrets = append(d.secrets, values...)
+	d.Log = logging.New(d.out, d.Config.LogLevel, d.Config.LogFormat, d.secrets...).With("service", d.Name)
+}
+
 // Start initialises a service. It fails closed: invalid configuration, an
 // unreachable database, a database role able to bypass Row-Level Security,
 // or a schema older than this binary all abort startup. The returned stop
@@ -63,7 +74,8 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: config: %w", name, err)
 	}
-	log := logging.New(out, cfg.LogLevel, cfg.LogFormat, dsnPassword(cfg.DatabaseURL)).With("service", name)
+	secrets := []string{dsnPassword(cfg.DatabaseURL)}
+	log := logging.New(out, cfg.LogLevel, cfg.LogFormat, secrets...).With("service", name)
 
 	shutdownTelemetry, err := telemetry.Setup(ctx, telemetry.Options{
 		ServiceName: name, Environment: cfg.Environment,
@@ -80,7 +92,7 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 		}
 	}
 
-	deps := &Deps{Name: name, Config: cfg, Log: log}
+	deps := &Deps{Name: name, Config: cfg, Log: log, out: out, secrets: secrets}
 	deps.bgCtx, deps.bgCancel = context.WithCancel(ctx)
 	if cfg.DatabaseURL != "" {
 		pool, err := storage.Open(ctx, cfg.DatabaseURL)
@@ -172,8 +184,9 @@ func dsnPassword(dsn string) string {
 // Main runs a probe-serving service process until SIGINT/SIGTERM and exits
 // non-zero on startup or serving failure. It is the whole main() of every
 // binary: register mounts the service's routes and may start background
-// tasks with Deps.Background, which stop before the pool is closed.
-func Main(name string, opts config.Options, register func(*Deps, *http.ServeMux)) {
+// tasks with Deps.Background, which stop before the pool is closed. An
+// error from register aborts startup (fail closed).
+func Main(name string, opts config.Options, register func(*Deps, *http.ServeMux) error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -184,7 +197,11 @@ func Main(name string, opts config.Options, register func(*Deps, *http.ServeMux)
 	}
 	mux := http.NewServeMux()
 	if register != nil {
-		register(deps, mux)
+		if err := register(deps, mux); err != nil {
+			cleanup()
+			deps.Log.Error("startup", "err", err)
+			os.Exit(1)
+		}
 	}
 	err = deps.Serve(ctx, deps.Handler(mux))
 	cleanup()
