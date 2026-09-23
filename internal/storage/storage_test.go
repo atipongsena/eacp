@@ -21,25 +21,11 @@ const (
 )
 
 // migratedDB returns a fresh database with all migrations applied and two
-// tenants seeded by the superuser (which bypasses RLS).
+// tenants seeded under their own tenant contexts, including their audited
+// policy pointers.
 func migratedDB(t *testing.T) pgtest.DB {
 	t.Helper()
-	db := pgtest.New(t)
-	ctx := context.Background()
-	if err := storage.MigrateUp(ctx, db.OwnerDSN); err != nil {
-		t.Fatalf("MigrateUp: %v", err)
-	}
-	admin, err := pgx.Connect(ctx, db.AdminDSN)
-	if err != nil {
-		t.Fatalf("connect admin: %v", err)
-	}
-	defer admin.Close(ctx)
-	_, err = admin.Exec(ctx, `INSERT INTO eacp.tenants (id, slug, display_name) VALUES
-		($1, 'tenant-a', 'Tenant A'), ($2, 'tenant-b', 'Tenant B')`, tenantA, tenantB)
-	if err != nil {
-		t.Fatalf("seed tenants: %v", err)
-	}
-	return db
+	return pgtest.Migrated(t)
 }
 
 func appPool(t *testing.T, dsn string, maxConns int32) *pgxpool.Pool {

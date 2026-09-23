@@ -22,6 +22,7 @@ import (
 //	otto         human operator
 //	audra        human auditor
 //	carol        human, no roles
+//	amy, ben, cy human approver
 //	ci           service auditor (the only role a service may hold)
 var cast = []struct {
 	name, kind string
@@ -35,6 +36,9 @@ var cast = []struct {
 	{"otto", "human", []string{"operator"}},
 	{"audra", "human", []string{"auditor"}},
 	{"carol", "human", nil},
+	{"amy", "human", []string{"approver"}},
+	{"ben", "human", []string{"approver"}},
+	{"cy", "human", []string{"approver"}},
 	{"ci", "service", []string{"auditor"}},
 }
 

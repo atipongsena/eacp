@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A, Phases 1–2 complete** (Platform Foundation; Registry, Identity & Capability per ADR-003). Phase 3 has not started.
+Current status: **Slice A, Phases 1–3 complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005). Phase 4 has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -57,7 +57,9 @@ internal/identity    API keys (bring your own key) and Authenticate
 internal/registry    principals, roles, groups, credentials, agents, versions,
                      allowlists, connectors, tools, contracts; CheckCapability
 internal/registry/registrytest  bootstrapped fixture for tests
-internal/api         HTTP API (/v1/...) for the registry and agent runtimes
+internal/governance  local PDP, JCS digests, policy versions and decision evidence
+internal/approval    approval request, vote and one-time grant transactions
+internal/api         HTTP API (/v1/...) for registry, policies and approvals
 migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests
 deployments/docker   Dockerfile, postgres bootstrap

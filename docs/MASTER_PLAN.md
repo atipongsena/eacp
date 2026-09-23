@@ -3311,6 +3311,8 @@ PDP error → fail closed
 
 AGT sidecar **ยังไม่ทำ** ใน Phase นี้ ไปทำที่ Phase 9
 
+**Status (2026-09-23): delivered.** `internal/governance` implements the local provider and binding digests. Migration 00004 and `internal/approval` implement policy versions, evidence, requests, votes and grants under tenant RLS. The API exposes policy administration and approver queue/voting. Phase 4 still owns action creation, atomic release and worker execution. The Phase 3 review is in `docs/reviews/2026-09-23-phase3-code-review.md`.
+
 ---
 
 # 78. Phase 4 — Action API & Atomic Boundary (Slice A)

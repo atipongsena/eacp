@@ -1,6 +1,6 @@
 # ADR-005: Approval Ownership and the Atomic Execution Boundary
 
-- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
+- **Status:** Accepted — Rev 2.2 (Phase 3 approval-store contract, 2026-09-23)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §13, §14, §14.1, §14.2, §15, §16, §57, §103 (inv. 2, 7, 10, 14–18); ADR-002, ADR-004
@@ -56,7 +56,8 @@ approval_requests
 approval_votes
   id, tenant_id, request_id, approver_principal_id,
   decision (APPROVE | DENY), reason,
-  authorization_basis (role, rule id, policy_version), voted_at
+  authorization_basis (role, role_grant_id, policy_bundle_id, policy_version),
+  snapshot_hash, voted_at
   UNIQUE (request_id, approver_principal_id)
 
 approval_grants
@@ -68,9 +69,9 @@ approval_grants
 
 ### 4. Approver eligibility and separation of duties (conservative)
 
-Eligibility is evaluated **inside the vote transaction** against EACP's canonical `principals`, `principal_roles` and `group_memberships` tables. Those rows are read `FOR SHARE`, so a concurrent role or membership change serialises with the vote. The vote stores a hash of the effective-principal snapshot it was evaluated against.
+Eligibility is evaluated **inside the vote transaction** against EACP's canonical `principals`, `role_grants` and `group_memberships` tables. Those rows are read `FOR SHARE`, so a concurrent role or membership change serialises with the vote. The vote stores a hash of the effective-principal snapshot it was evaluated against.
 
-A vote counts only if **all** of these hold. Otherwise it's rejected with an audit event.
+A vote counts only if **all** of these hold. Otherwise the transaction rejects it and stores no vote. A rejected SQL statement cannot append an audit event in the same rolled-back transaction; API security logging for failed attempts is separate from the durable change journal.
 
 - The approver is an authenticated **human principal** in the **same tenant**. Service principals and agents can't vote.
 - Votes cast through delegation count as the **effective (delegating) human principal**, and every rule below applies to that principal.
@@ -171,6 +172,14 @@ Human resolution (ADR-004 T35–T37), approval votes, policy bundle changes, all
 - A mandatory reason.
 - A hash-chained audit event.
 - A two-person rule for high-risk operations (§57).
+
+### 8. Phase 3 implementation boundary and defaults
+
+Migration `00004_governance_approvals.sql` owns policy versions, the per-tenant pointer, decision evidence, requests, votes and grants. `internal/approval` exposes request creation and grant consumption as caller-transaction operations so Phase 4 can put them inside the action transition. There is no `actions` table or Action API in Phase 3; `action_id` is an immutable future reference and Phase 4 must add the tenant-scoped action FK and atomic release transaction.
+
+Only the EACP-managed `approver` role is eligible in Slice A. A request captures the owner-group membership at creation and the enabling policy, allowlist and contract actors. A vote checks both that snapshot and current membership, role, principal state, policy version and policy revocation. The current policy and unexpired request are checked again at grant consumption. A `DENY` vote immediately ends the request; a distinct-person quorum creates one grant. Phase 4 maps those states to action transitions.
+
+The approval TTL is explicit in the policy, capped at 24 hours, and request expiry cannot exceed the action's `not_after` or the evaluation time plus TTL. Expiry can only be shortened. Direct SQL under `eacp_app` is subject to the same triggers, tenant RLS and audit as the Go service. The database guards protect application mistakes; a party holding a usable `eacp_app` credential can set tenant and actor transaction context, so database credentials remain a trusted service boundary under ADR-003. Phase 4 must treat the release transaction as the final enforcement point.
 
 ## Consequences
 

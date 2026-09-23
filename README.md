@@ -6,7 +6,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A · Phases 1–2 are complete: platform foundation, plus registry, identity and capability. There's no Action API yet (Phase 4).
+> **Status: early development.** Slice A · Phases 1–3 are complete: platform foundation; registry, identity and capability; local governance and durable approvals. The Action API and atomic release boundary are Phase 4.
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -15,7 +15,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 
 This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-001-product-boundary-and-enforcement-point.md).
 
-## What exists today (Phases 1–2)
+## What exists today (Phases 1–3)
 
 | Capability | Evidence |
 |---|---|
@@ -33,6 +33,11 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | API keys: bring your own key, hash-only, bound to a principal or one agent version, 90-day maximum | `internal/identity` |
 | Capability check: tool must be in the ACTIVE version's allowlist with an active, unrevoked, fingerprint-matching contract | `registry.CheckCapability`, `POST /v1/agent/capability-check` |
 | Hash-chained, append-only audit journal written in the same transaction as each change | `internal/audit` (tamper tests) |
+| Local governance provider with five verdicts, immutable policy versions and two-person activation | `internal/governance`; `POST /v1/policies`, `POST /v1/policies/{id}/activate`, `GET /v1/policies/current` |
+| JCS + SHA-256 input and enforced digests; immutable decision evidence | `internal/governance/digest.go`, `migrations/00004_governance_approvals.sql` |
+| Durable approval requests, human votes, quorum, separation of duties, expiry and one-time action-bound grants | `internal/approval`; `GET /v1/approvals`, `GET /v1/approvals/{id}`, `POST /v1/approvals/{id}/votes` |
+
+Approval request creation and grant consumption are internal transaction operations for Phase 4's Action API. The approval API exposes only the eligible queue, enforced payload and voting; it does not make an action executable by itself.
 
 ## Quick start
 

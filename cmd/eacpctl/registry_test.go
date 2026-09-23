@@ -112,9 +112,9 @@ func TestTenantCreateBootstrapsTwoAdmins(t *testing.T) {
 		return err
 	})
 	// Per admin: principal, grant and credential rows (audited by the
-	// database), plus the tenant.bootstrapped event.
-	if err != nil || res.Count != 7 {
-		t.Fatalf("bootstrap audit: count=%d err=%v, want 7 verified events", res.Count, err)
+	// database), plus the policy-pointer seed and tenant.bootstrapped event.
+	if err != nil || res.Count != 8 {
+		t.Fatalf("bootstrap audit: count=%d err=%v, want 8 verified events", res.Count, err)
 	}
 }
 

@@ -19,7 +19,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"eacp/internal/approval"
 	"eacp/internal/audit"
+	"eacp/internal/governance"
 	"eacp/internal/identity"
 	"eacp/internal/registry"
 	"eacp/internal/storage"
@@ -31,12 +33,15 @@ const maxBody = 1 << 20
 type Server struct {
 	pool *pgxpool.Pool
 	reg  *registry.Service
+	gov  *governance.Store
+	appr *approval.Service
 	log  *slog.Logger
 }
 
 // New returns a Server using pool (connected as the application role).
 func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
-	return &Server{pool: pool, reg: registry.New(pool), log: log}
+	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
+		appr: approval.New(pool), log: log}
 }
 
 // Role sets used by routes.
@@ -48,6 +53,8 @@ var (
 	editorOrApprover = []string{"registry_editor", "registry_approver"}
 	containment      = []string{"operator", "registry_approver"}
 	auditor          = []string{"auditor"}
+	policyAdmin      = []string{"admin"}
+	actionApprover   = []string{"approver"}
 )
 
 // Register mounts every route on mux.
@@ -84,6 +91,12 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/tool-contracts/{id}/revoke", p(containment, s.revokeContract))
 
 	mux.Handle("GET /v1/audit/verify", p(auditor, s.verifyAudit))
+	mux.Handle("POST /v1/policies", p(policyAdmin, s.createPolicy))
+	mux.Handle("POST /v1/policies/{id}/activate", p(policyAdmin, s.activatePolicy))
+	mux.Handle("GET /v1/policies/current", p(policyAdmin, s.currentPolicy))
+	mux.Handle("GET /v1/approvals/{id}", p(actionApprover, s.getApproval))
+	mux.Handle("GET /v1/approvals", p(actionApprover, s.listApprovals))
+	mux.Handle("POST /v1/approvals/{id}/votes", p(actionApprover, s.voteApproval))
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

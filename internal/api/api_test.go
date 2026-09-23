@@ -40,7 +40,7 @@ func newHarness(t *testing.T) *harness {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	h := &harness{t: t, f: f, srv: srv, logs: logs, keys: map[string]string{}}
-	for _, who := range []string{"alice", "bob", "erin", "rita", "ravi", "otto", "audra", "carol"} {
+	for _, who := range []string{"alice", "bob", "erin", "rita", "ravi", "otto", "audra", "carol", "amy", "ben", "cy"} {
 		// Two admins: neither may approve their own proposal nor their own key.
 		proposer, approver := "alice", "bob"
 		if who == "bob" {
@@ -49,6 +49,80 @@ func newHarness(t *testing.T) *harness {
 		h.keys[who] = h.issue(identity.KindPrincipal, f.P[who], proposer, approver)
 	}
 	return h
+}
+
+func TestPolicyAPICreatesAndActivatesWithTwoAdmins(t *testing.T) {
+	h := newHarness(t)
+	content := json.RawMessage(`{"format_version":1,"rules":[{"id":"read","match":{"operation":"read"},"verdict":"allow","reason":"permitted"}]}`)
+	code, policy := h.as("alice", "POST", "/v1/policies", map[string]any{"content": content})
+	h.want(201, code, policy)
+	id := str(policy, "id")
+	if id == "" || policy["version"] != float64(1) {
+		t.Fatalf("policy = %v", policy)
+	}
+	code, body := h.as("alice", "POST", "/v1/policies/"+id+"/activate", map[string]any{"reason": "self"})
+	h.want(403, code, body)
+	code, body = h.as("bob", "POST", "/v1/policies/"+id+"/activate", map[string]any{"reason": "reviewed"})
+	h.want(204, code, body)
+	code, current := h.as("alice", "GET", "/v1/policies/current", nil)
+	h.want(200, code, current)
+	if str(current, "id") != id {
+		t.Fatalf("current policy = %v", current)
+	}
+	code, body = h.as("amy", "POST", "/v1/policies", map[string]any{"content": content})
+	h.want(403, code, body)
+}
+
+func TestApprovalAPIShowsEnforcedPayloadAndRecordsVotes(t *testing.T) {
+	h := newHarness(t)
+	tool := h.f.ActiveTool(t, "erp", "purchase")
+	agent := h.f.ActiveAgent(t, "buyer", tool.Tool)
+	content := json.RawMessage(`{"format_version":1,"rules":[{"id":"high","verdict":"escalate","reason":"high risk","approval":{"quorum":2,"eligible_roles":["approver"],"ttl_seconds":600}}]}`)
+	code, policy := h.as("alice", "POST", "/v1/policies", map[string]any{"content": content})
+	h.want(201, code, policy)
+	policyID := uuid.MustParse(str(policy, "id"))
+	code, body := h.as("bob", "POST", "/v1/policies/"+policyID.String()+"/activate", map[string]any{"reason": "reviewed"})
+	h.want(204, code, body)
+	actionID := uuid.New()
+	evidence := h.f.ID(t, "carol", `INSERT INTO eacp.decision_evidence
+		(tenant_id, action_id, policy_bundle_id, policy_version, provider, provider_instance_id,
+		 decision_id, verdict, reasons, input_digest, enforced_digest, enforced_payload,
+		 required_quorum, eligible_roles, approval_ttl_seconds, evaluated_at)
+		VALUES (eacp.current_tenant_id(), $1, $2, 1, 'local', 'local-test', $3, 'escalate',
+		 ARRAY['high risk'], decode(repeat('11', 32), 'hex'), decode(repeat('22', 32), 'hex'),
+		 '{"amount":1000000,"currency":"THB"}'::jsonb, 2, ARRAY['approver'], 600, now())
+		RETURNING id`, actionID, policyID, uuid.New())
+	request := h.f.ID(t, "carol", `INSERT INTO eacp.approval_requests
+		(tenant_id, action_id, agent_version_id, tool_id, requesting_subject_id,
+		 decision_evidence_id, not_after, expires_at)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5,
+		 now() + interval '1 hour', now() + interval '9 minutes') RETURNING id`,
+		actionID, agent.Version, tool.Tool, h.f.P["carol"], evidence)
+	path := "/v1/approvals/" + request.String()
+	code, queue := h.as("amy", "GET", "/v1/approvals", nil)
+	h.want(200, code, queue)
+	items, _ := queue["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["id"] != request.String() {
+		t.Fatalf("approval queue = %v", queue)
+	}
+	code, detail := h.as("amy", "GET", path, nil)
+	h.want(200, code, detail)
+	payload, _ := detail["enforced_payload"].(map[string]any)
+	if payload["amount"] != float64(1000000) || str(detail, "enforced_digest") != strings.Repeat("22", 32) {
+		t.Fatalf("approval detail = %v", detail)
+	}
+	code, body = h.as("carol", "GET", path, nil)
+	h.want(403, code, body)
+	code, result := h.as("amy", "POST", path+"/votes", map[string]any{"decision": "APPROVE", "reason": "reviewed"})
+	h.want(200, code, result)
+	if result["request_state"] != "PENDING" {
+		t.Fatalf("first vote = %v", result)
+	}
+	code, result = h.as("ben", "POST", path+"/votes", map[string]any{"decision": "APPROVE", "reason": "reviewed"})
+	h.want(200, code, result)
+	if result["request_state"] != "GRANTED" {
+		t.Fatalf("second vote = %v", result)
+	}
 }
 
 // issue registers a holder-generated key via SQL (see ADR-003 §5).

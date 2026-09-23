@@ -1,6 +1,6 @@
 # ADR-002: AGT/ACS Integration via Sidecar PDP
 
-- **Status:** Accepted — Rev 2.1 (amended after Codex adversarial review, 2026-09-23)
+- **Status:** Accepted — Rev 2.2 (Phase 3 local-provider contract, 2026-09-23)
 - **Date:** 2026-09-23
 - **Phase 0 gate:** yes
 - **Related:** MASTER_PLAN §4, §5, §5.1, §12, §13, §83 (Phase 9); ADR-001, ADR-005
@@ -44,11 +44,15 @@ type GovernanceProvider interface {
 
 ### 3. `local` provider first
 
-`integrations/governance/local/` is a deterministic Go provider that evaluates versioned policy bundles stored in Postgres. It can return all five verdicts, including `transform`. **Slice A uses only this provider**, so execution correctness never waits on AGT. The AGT sidecar arrives in Slice B (Phase 9).
+`internal/governance.LocalProvider` is a deterministic Go provider that evaluates immutable, versioned policy bundles stored in Postgres. It can return all five verdicts, including `transform`. **Slice A uses only this provider**, so execution correctness never waits on AGT. The AGT sidecar arrives in Slice B (Phase 9).
+
+The Phase 3 bundle format is JSON with `format_version: 1` and a nonempty ordered `rules` array. Each rule has a unique `id`, a nonblank `reason`, a `verdict`, and optional exact-match fields (`subject`, `operation`, `target`, `tool`, `risk_class`, `side_effect_class`). The first matching rule wins; no match returns `deny` with `no_matching_rule`. `transform` requires a nonempty top-level JSON object `set`; `escalate` may apply the same replacements before approval and requires `approval` with quorum 1–5, `eligible_roles: ["approver"]`, and TTL 1–86400 seconds. Numeric replacements are limited to magnitude 2^53 because PostgreSQL `jsonb` can expand exponent notation when a bundle is reloaded; larger amounts must be strings. Unknown fields and malformed input are rejected. Policy insertion validates the format in Go and PostgreSQL so raw application-role SQL cannot activate a bundle the local provider cannot parse.
 
 ### 4. EACP computes digests itself
 
 EACP computes `input_digest` and `enforced_digest` in Go (JCS + SHA-256) from the snapshot it sent and the enforced payload it received. If the provider also reports digests and they differ, the decision is treated as **Deny** (reason `digest_mismatch`) and a security alert is raised. This is deterministic and terminal. EACP never trusts a digest it didn't compute.
+
+Phase 3 implements the digest check and deny verdict in `EvaluateChecked`. Alert emission belongs to the Phase 4 action and telemetry integration. The JCS parser rejects duplicate keys, invalid Unicode and integer tokens outside the interoperable I-JSON range; callers must use JSON strings for larger identifiers or amounts.
 
 ### 5. Decision evidence is mandatory
 

@@ -55,12 +55,12 @@ func TestAppendBuildsGaplessChainPerTenant(t *testing.T) {
 	appendN(t, pool, pgtest.TenantB, 2)
 
 	a, err := verify(t, pool, pgtest.TenantA)
-	if err != nil || a.Count != 3 {
-		t.Fatalf("tenant A: count=%d err=%v, want 3 valid events", a.Count, err)
+	if err != nil || a.Count != 4 {
+		t.Fatalf("tenant A: count=%d err=%v, want policy-pointer seed plus 3 valid events", a.Count, err)
 	}
 	b, err := verify(t, pool, pgtest.TenantB)
-	if err != nil || b.Count != 2 {
-		t.Fatalf("tenant B: count=%d err=%v, want its own chain of 2", b.Count, err)
+	if err != nil || b.Count != 3 {
+		t.Fatalf("tenant B: count=%d err=%v, want its own seed plus 2 events", b.Count, err)
 	}
 }
 
@@ -73,14 +73,17 @@ func TestAppendReturnsDatabaseAssignedLink(t *testing.T) {
 		second, _ = audit.Append(context.Background(), tx, event("two"))
 		return nil
 	})
-	if first.Seq != 1 || second.Seq != 2 {
-		t.Fatalf("seq = %d,%d, want 1,2", first.Seq, second.Seq)
+	if first.Seq != 2 || second.Seq != 3 {
+		t.Fatalf("seq = %d,%d, want 2,3 after policy-pointer seed", first.Seq, second.Seq)
 	}
 	if string(second.PrevHash) != string(first.Hash) {
 		t.Fatal("second event does not link to the first")
 	}
-	if len(first.PrevHash) != 32 || string(first.PrevHash) != string(make([]byte, 32)) {
-		t.Fatal("genesis prev_hash must be 32 zero bytes")
+	var seedHash []byte
+	if err := storage.InTenantTx(context.Background(), pool, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT hash FROM eacp.audit_events WHERE seq = 1`).Scan(&seedHash)
+	}); err != nil || string(first.PrevHash) != string(seedHash) {
+		t.Fatalf("first test event does not link to policy-pointer seed: %v", err)
 	}
 }
 
@@ -110,8 +113,8 @@ func TestConcurrentAppendsStayGapless(t *testing.T) {
 		}
 	}
 	res, err := verify(t, pool, pgtest.TenantA)
-	if err != nil || res.Count != workers*each {
-		t.Fatalf("count=%d err=%v, want %d", res.Count, err, workers*each)
+	if err != nil || res.Count != 1+workers*each {
+		t.Fatalf("count=%d err=%v, want seed plus %d", res.Count, err, workers*each)
 	}
 }
 
@@ -128,8 +131,8 @@ func TestRolledBackAppendLeavesNoTrace(t *testing.T) {
 	})
 	appendN(t, pool, pgtest.TenantA, 1)
 	res, err := verify(t, pool, pgtest.TenantA)
-	if err != nil || res.Count != 2 {
-		t.Fatalf("count=%d err=%v, want 2 (rolled-back event absent, no gap)", res.Count, err)
+	if err != nil || res.Count != 3 {
+		t.Fatalf("count=%d err=%v, want seed plus 2 (rolled-back event absent, no gap)", res.Count, err)
 	}
 }
 
@@ -147,7 +150,7 @@ func TestClientCannotForgeChainFields(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	res, err := verify(t, pool, pgtest.TenantA)
-	if err != nil || res.Count != 2 {
+	if err != nil || res.Count != 3 {
 		t.Fatalf("count=%d err=%v: database must assign seq and hashes itself", res.Count, err)
 	}
 }
@@ -262,7 +265,8 @@ func TestEventsAreTenantIsolated(t *testing.T) {
 	appendN(t, pool, pgtest.TenantA, 2)
 	var n int
 	storage.InTenantTx(context.Background(), pool, pgtest.TenantB, func(tx pgx.Tx) error {
-		return tx.QueryRow(context.Background(), "SELECT count(*) FROM eacp.audit_events").Scan(&n)
+		return tx.QueryRow(context.Background(), `SELECT count(*) FROM eacp.audit_events
+			WHERE convert_from(payload, 'UTF8')::jsonb->>'action' = 'test.appended'`).Scan(&n)
 	})
 	if n != 0 {
 		t.Fatalf("tenant B sees %d of tenant A's events", n)

@@ -165,9 +165,21 @@ func Migrated(t testing.TB) DB {
 		t.Fatalf("pgtest: connect admin: %v", err)
 	}
 	defer admin.Close(ctx)
-	if _, err := admin.Exec(ctx, `INSERT INTO eacp.tenants (id, slug, display_name) VALUES
-		($1, 'tenant-a', 'Tenant A'), ($2, 'tenant-b', 'Tenant B')`, TenantA, TenantB); err != nil {
-		t.Fatalf("pgtest: seed tenants: %v", err)
+	for _, tenant := range []struct{ id, slug, name string }{
+		{TenantA, "tenant-a", "Tenant A"},
+		{TenantB, "tenant-b", "Tenant B"},
+	} {
+		err := pgx.BeginFunc(ctx, admin, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenant.id); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `INSERT INTO eacp.tenants (id, slug, display_name) VALUES ($1, $2, $3)`,
+				tenant.id, tenant.slug, tenant.name)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("pgtest: seed tenant %s: %v", tenant.slug, err)
+		}
 	}
 	return db
 }
