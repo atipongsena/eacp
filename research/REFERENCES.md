@@ -3,6 +3,51 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 10 — NATS JetStream Go client and server (2026-09-24)
+
+Checked against the module sources (`go mod download`) and by running the
+embedded server in `internal/messaging` tests and the `nats:2.15.0-alpine`
+image in compose.
+
+### Pinned artifacts
+
+- `github.com/nats-io/nats.go` **v1.54.0** (h1:vsXoOxjHp/GmPUN+EcI7uOf/uB+iAP+kEsAFNQN0yzA=), package `jetstream`.
+- `github.com/nats-io/nats-server/v2` **v2.15.0** (h1:M99yf0y05rTr46/qc/Is6ZAowI58Ryp2SjufLCUeVJc=). It is imported by test code only (`internal/messaging/natstest`), so no EACP binary links it.
+- Compose image `nats:2.15.0-alpine` (`nats-server: v2.15.0`, entrypoint `docker-entrypoint.sh`, runs as root).
+
+### API used
+
+- **Client construction.** `jetstream.New(*nats.Conn)`, then `JetStream.PublishMsg(ctx, *nats.Msg, ...PublishOpt) (*PubAck, error)`.
+  - The publish is synchronous and waits for the stream's ack.
+  - `PubAck.Duplicate` is true when the stream's duplicate window dropped the message.
+- **Publish options.**
+  - `jetstream.WithMsgID(id)` sets the `Nats-Msg-Id` header (`jetstream.MsgIDHeader`).
+  - `WithRetryAttempts(0)` disables the client's retry on "no responders". The default is 2 retries, 250 ms apart.
+  - `nats.NewMsg(subject)` initializes `Header`. `nats.Header.Get`/`Set` are **case-sensitive**, so the relay and the consumer both use `traceparent`.
+- **Streams and consumers.** `CreateOrUpdateStream` / `CreateOrUpdateConsumer` are idempotent.
+  - `StreamConfig.Duplicates` is the dedup window; the server default is 2 minutes.
+  - Retention: `WorkQueuePolicy` removes a message once it is ACKed, and `LimitsPolicy` keeps it by age and size. `Discard: DiscardOld` drops the oldest at a limit.
+  - Consumer: `ConsumerConfig{Durable, FilterSubject, AckPolicy: AckExplicitPolicy, AckWait, MaxDeliver}`.
+- **Consuming.** `JetStream.Consumer(ctx, stream, name)` binds to an existing consumer and returns `ErrConsumerNotFound` otherwise.
+  - `Consumer.Fetch(n, FetchContext(ctx))` makes one pull request. A context deadline sets the request's expiry.
+  - `MessageBatch.Messages()` is always closed, and `Error()` reports the failure.
+  - `Msg.Ack`, `NakWithDelay`, `TermWithReason` (servers >= 2.10.4) all publish to the message's reply subject, `$JS.ACK.<stream>.<consumer>...`.
+- **Dashboards.** `JetStream.OrderedConsumer(ctx, stream, OrderedConsumerConfig{FilterSubjects})`, and `FetchNoWait(n)` for a read that doesn't wait.
+- **Connection options.**
+  - `nats.RetryOnFailedConnect(true)` makes `Connect` succeed while the server is down.
+  - `MaxReconnects(-1)` retries forever.
+  - `ReconnectBufSize(-1)` disables the reconnect buffer, so publishes fail at once while disconnected rather than being flushed later.
+- **Embedded test server.** `server.NewServer(&server.Options{Host, Port: -1, JetStream: true, StoreDir, NoLog, NoSigs})`, then `Start()` and `ReadyForConnections(d)`.
+  - `Addr()` gives the chosen port.
+  - `Shutdown()` + `WaitForShutdown()`.
+- **Permissions the worker needs to bind, pull and ACK** (checked in compose):
+  - `$JS.API.CONSUMER.INFO.<stream>.<consumer>`
+  - `$JS.API.CONSUMER.MSG.NEXT.<stream>.<consumer>`
+  - `$JS.ACK.<stream>.<consumer>.>`
+  - subscribe on `_INBOX.>`
+
+  A publish outside its permissions gets `-ERR 'Permissions Violation for Publish to "<subject>"'`.
+
 ## Phase 9 spike — AGT / ACS Python API (2026-09-24)
 
 ### Pinned artifacts

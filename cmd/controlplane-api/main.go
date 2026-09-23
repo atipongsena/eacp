@@ -7,19 +7,28 @@
 // schedules retries and sends unknown outcomes without proof to a human.
 // The execution worker dispatches and reconciles. Decisions come from the
 // local provider or, with EACP_GOVERNANCE_PROVIDER=microsoft-agt, from the
-// AGT sidecar PDP (ADR-002 §8).
+// AGT sidecar PDP (ADR-002 §8). It prunes the transactional outbox and, with
+// EACP_NATS_URL set, relays it to NATS JetStream as work hints and dashboard
+// events (ADR-014); NATS is never an authority or a readiness dependency.
 package main
 
 import (
 	"context"
 	"net/http"
 	"os"
+	"time"
+
+	"github.com/nats-io/nats.go/jetstream"
 
 	"eacp/internal/action"
 	"eacp/internal/api"
 	"eacp/internal/config"
+	"eacp/internal/messaging"
 	"eacp/internal/service"
 )
+
+// relayInterval is the idle wait between outbox relay passes.
+const relayInterval = 200 * time.Millisecond
 
 func main() {
 	service.Main("controlplane-api", config.Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"},
@@ -38,6 +47,33 @@ func main() {
 			sweeper := action.NewSweeper(engine)
 			sweeper.ReconcileMaxAge = d.Config.ReconcileMaxAge
 			d.Background(func(ctx context.Context) { sweeper.Run(ctx, d.Config.SweepInterval) })
-			return nil
+			d.Background(func(ctx context.Context) { messaging.RunPruner(ctx, d.DB, time.Minute, d.Log) })
+			return startRelay(d)
 		})
+}
+
+// startRelay runs the outbox relay when EACP_NATS_URL is set. An
+// unreachable NATS server is not a startup failure: the client reconnects
+// and the rows wait in the outbox.
+func startRelay(d *service.Deps) error {
+	if d.Config.NATSURL == "" {
+		d.Log.Info("NATS not configured; work hints off, workers poll")
+		return nil
+	}
+	nc, err := messaging.Connect(d.Config.NATSURL, d.Config.NATSCAFile, "controlplane-api relay", d.Log)
+	if err != nil {
+		return err
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		nc.Close()
+		return err
+	}
+	relay := messaging.NewRelay(d.DB, js, messaging.RelayOptions{PublishTimeout: d.Config.NATSPublishTimeout, Log: d.Log})
+	d.Background(func(ctx context.Context) {
+		defer nc.Close()
+		relay.Run(ctx, relayInterval)
+	})
+	d.Log.Info("outbox relay started", "nats", config.RedactURL(d.Config.NATSURL))
+	return nil
 }

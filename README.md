@@ -6,7 +6,9 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B has started: Phase 9 adds the Microsoft AGT/ACS sidecar PDP ([ADR-002](docs/adr/ADR-002-agt-integration-sidecar-pdp.md) Rev 2.4).
+> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B has started:
+- Phase 9 adds the Microsoft AGT/ACS sidecar PDP ([ADR-002](docs/adr/ADR-002-agt-integration-sidecar-pdp.md) Rev 2.4).
+- Phase 10 adds NATS JetStream work hints and dashboard events ([ADR-014](docs/adr/ADR-014-postgresql-authority-nats-signals.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -63,6 +65,16 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Conformance: one reference set with digests; the local provider, the wire protocol and the sidecar (through ACS and OPA, in its image build) must all reproduce it | `test/conformance/governance_reference.json`, `internal/governance/conformance_test.go`, `sidecars/agt-pdp/tests` |
 | Provider evidence (ACS identity, rule, adapter digest, engine versions) stored and journaled with each decision | `migrations/00009_provider_evidence.sql`, `GET /v1/actions/{id}/evidence` |
 | Compose runs `controlplane-api` with `EACP_GOVERNANCE_PROVIDER=microsoft-agt` on an internal `pdp` network; only the API reaches the sidecar | `test/security/agt_pdp_test.go` |
+
+## Slice B (Phase 10): NATS JetStream signals
+
+| Capability | Evidence |
+|---|---|
+| The outbox relay in `controlplane-api` publishes after the transaction commits. It locks rows with SKIP LOCKED and uses the row id as `Nats-Msg-Id` and the row's `traceparent`. A row is marked published only after the PubAck; delivery is at least once. | `internal/messaging/relay.go`, `internal/messaging/relay_test.go` |
+| Work hints carry only `action_id` and wake the worker's PostgreSQL claim loop. Polling stays on, so without NATS the system is slower, not wrong. | `internal/messaging/hints.go`, `TestHintedWorkerExecutesLongBeforeItsPollInterval`, `TestWithoutNATSTheWorkerStillExecutes` |
+| Inbox dedup (§63). A tenant table under RLS, written only by the `inbox` messaging actor. A duplicate is ACKed and not processed again. | `migrations/00010_messaging.sql`, `TestHintWakesOnceAndADuplicateIsAckedWithoutWaking` |
+| Dashboard event stream (`eacp.events.<tenant>.action.transition`). Each event carries only ids, states and a time, never a reason or a payload. | `TestTransitionsWriteDashboardEvents`, `TestDashboardEventsArrivePerTenant` |
+| Compose runs NATS on an internal `bus` network with one user per role. The worker's user cannot publish, and the agent has no route. | `deployments/docker/nats/nats.conf`, `test/security/nats_test.go` |
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

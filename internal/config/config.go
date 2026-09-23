@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -52,6 +53,14 @@ type Config struct {
 	AGTPDPCAFile       string
 	AGTPDPCertFile     string
 	AGTPDPKeyFile      string
+
+	// Messaging (ADR-014): the optional NATS JetStream server for work hints
+	// and dashboard events. NATS carries signals only; without it the
+	// system is correct, only slower. Plain nats:// is for loopback hosts or
+	// development and test; the URL's password is redacted from logs.
+	NATSURL            string
+	NATSCAFile         string
+	NATSPublishTimeout time.Duration
 
 	// Reconciliation (ADR-004 T33/T34): how many inconclusive lookups, and
 	// how long an unknown outcome may last, before a human must resolve it.
@@ -171,6 +180,14 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("EACP_GOVERNANCE_PROVIDER: unknown provider %q (local or microsoft-agt)", cfg.GovernanceProvider))
 	}
+	cfg.NATSURL = get("EACP_NATS_URL", "")
+	cfg.NATSCAFile = get("EACP_NATS_CA_FILE", "")
+	cfg.NATSPublishTimeout = duration("EACP_NATS_PUBLISH_TIMEOUT", "5s", time.Minute)
+	if cfg.NATSURL != "" {
+		errs = append(errs, checkNATSURL(cfg.NATSURL, cfg.NATSCAFile, cfg.Environment)...)
+	} else if cfg.NATSCAFile != "" {
+		errs = append(errs, errors.New("EACP_NATS_CA_FILE: set, but EACP_NATS_URL is not"))
+	}
 	attempts, err := strconv.Atoi(get("EACP_RECONCILE_MAX_ATTEMPTS", "10"))
 	if err != nil || attempts < 1 || attempts > 50 {
 		errs = append(errs, errors.New("EACP_RECONCILE_MAX_ATTEMPTS: must be an integer in [1, 50]"))
@@ -223,6 +240,9 @@ func (c Config) LogValue() slog.Value {
 		slog.String("governance_provider", c.GovernanceProvider),
 		slog.String("agt_pdp_url", RedactURL(c.AGTPDPURL)),
 		slog.String("agt_pdp_cert_file", c.AGTPDPCertFile),
+		slog.String("nats_url", RedactURL(c.NATSURL)),
+		slog.String("nats_ca_file", c.NATSCAFile),
+		slog.Duration("nats_publish_timeout", c.NATSPublishTimeout),
 		slog.Int("reconcile_max_attempts", c.ReconcileMaxAttempts),
 		slog.Duration("reconcile_max_age", c.ReconcileMaxAge),
 		slog.String("worker_id", c.WorkerID),
@@ -231,6 +251,35 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("worker_poll_interval", c.WorkerPollInterval),
 		slog.String("connector_secrets_file", c.ConnectorSecretsFile),
 	)
+}
+
+// checkNATSURL accepts one nats:// or tls:// server URL (ADR-014 §6). Plain
+// nats:// must name a loopback host unless the environment is development
+// or test; a CA file needs tls://.
+func checkNATSURL(raw, caFile, environment string) []error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "nats" && u.Scheme != "tls") || u.Hostname() == "" ||
+		strings.Contains(raw, ",") || (u.Path != "" && u.Path != "/") {
+		return []error{errors.New("EACP_NATS_URL: must be one nats:// or tls:// server URL")}
+	}
+	var errs []error
+	if u.Scheme == "nats" {
+		if caFile != "" {
+			errs = append(errs, errors.New("EACP_NATS_CA_FILE: needs a tls:// EACP_NATS_URL"))
+		}
+		if environment != "development" && environment != "test" && !isLoopback(u.Hostname()) {
+			errs = append(errs, fmt.Errorf("EACP_NATS_URL: plain nats:// is allowed only for a loopback host in %s; use tls://", environment))
+		}
+	}
+	return errs
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // RedactURL removes the password from a URL-form DSN. Unparsable input is

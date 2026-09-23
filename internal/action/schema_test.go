@@ -306,7 +306,7 @@ func TestReleaseRequiresFreshEvidenceAndConsumedGrant(t *testing.T) {
 		var topic, traceparent string
 		var payload []byte
 		if err := tx.QueryRow(ctx, `SELECT topic, payload::text, traceparent FROM eacp.outbox_events
-			WHERE aggregate_id = $1`, e.Action).Scan(&topic, &payload, &traceparent); err != nil {
+			WHERE aggregate_id = $1 AND topic = 'action.queued'`, e.Action).Scan(&topic, &payload, &traceparent); err != nil {
 			return err
 		}
 		var body map[string]any

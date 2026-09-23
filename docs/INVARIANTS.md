@@ -2,6 +2,8 @@
 
 Phase 9 (Slice B) adds the AGT sidecar PDP. Its tests join invariants 10, 14 and 18. The sidecar's own suites, including the conformance reference set run through ACS and OPA, run in `docker build -f sidecars/agt-pdp/Dockerfile --target test .`.
 
+Phase 10 (Slice B) adds NATS JetStream for work hints and dashboard events (ADR-014). Its tests join invariants 4 and 8. They run against a JetStream server embedded in the test process, so they never skip for want of NATS.
+
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
 
 `test/invariants` checks the map mechanically. It reads the [A] invariants from MASTER_PLAN §103, requires a section here for each, and requires that every test named in a section exists in the named package. `go test -race ./...` with `EACP_TEST_ADMIN_DSN` runs them all. The `test/security` tests also need `EACP_COMPOSE_TEST=1` and the compose stack, and `test/demo` needs `EACP_DEMO=1` (see [DEMO.md](DEMO.md)).
@@ -32,6 +34,10 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/worker` TestLoopsSurviveRepeatedDatabaseConnectionLoss — connection storms, one ERP record per operation key
 - `internal/worker` TestWorkerExecutesAQueuedActionOnce — workers claim from PostgreSQL, not from queue messages
 - `internal/connector` TestHTTPExecuteDoesNotReplayAfterAReusedConnectionLosesResponse — the HTTP client never replays a POST
+- `internal/messaging` TestRepublishedRowIsDeduplicatedByTheStream — a republished outbox row is dropped by the stream's duplicate window
+- `internal/messaging` TestHintWakesOnceAndADuplicateIsAckedWithoutWaking — a duplicate hint past that window is ACKed through the inbox, not processed
+- `internal/messaging` TestHintedWorkerExecutesLongBeforeItsPollInterval — a hint only wakes the claim loop: one fenced claim, one call
+- `internal/messaging` TestWithoutNATSTheWorkerStillExecutes — without NATS the worker polls; the late hint claims nothing
 
 ## 5 [A] Timeout after dispatch does not automatically mean failure
 
@@ -66,6 +72,8 @@ Format: one `## <n> [A]` section per invariant, and one list item per test (`` `
 - `internal/api` TestOtherTenantsResourcesAreNotFound — the registry API answers 404 across tenants
 - `internal/registry` TestCrossTenantReferencesAreRejected — rows cannot reference another tenant's rows
 - `internal/action` TestCrossTenantScansExposeOnlyCountsAndTenantIDs — the SECURITY DEFINER hints expose ids and counts only
+- `internal/messaging` TestInboxIsGuardedAndTenantIsolated — inbox records are tenant rows under RLS, written only by the inbox actor
+- `internal/messaging` TestDashboardEventsArrivePerTenant — dashboard events carry the tenant in the subject; another tenant's filter sees none
 
 ## 10 [A] Audit and evidence references remain reconstructible end-to-end
 

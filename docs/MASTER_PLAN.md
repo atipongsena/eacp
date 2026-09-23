@@ -3481,6 +3481,8 @@ conformance tests: local provider vs AGT provider ต้องได้ verdict 
 
 # 84. Phase 10 — NATS JetStream (Slice B)
 
+> **Status (2026-09-24): complete.** Normative detail: [ADR-014](adr/ADR-014-postgresql-authority-nats-signals.md) Rev 1.0. PostgreSQL stays the only authority; a work hint only wakes the worker's claim loop, and polling stays on.
+
 Implement:
 
 ```text

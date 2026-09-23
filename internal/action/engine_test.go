@@ -209,7 +209,7 @@ func TestAllowReleasesWithPinnedPolicyAndContract(t *testing.T) {
 	if n := v.count(`SELECT count(*) FROM eacp.decision_evidence WHERE action_id = $1`, got.ID); n != 2 {
 		t.Fatalf("evidence rows = %d, want 2", n)
 	}
-	if n := v.count(`SELECT count(*) FROM eacp.outbox_events WHERE aggregate_id = $1`, got.ID); n != 1 {
+	if n := v.count(`SELECT count(*) FROM eacp.outbox_events WHERE aggregate_id = $1 AND topic = 'action.queued'`, got.ID); n != 1 {
 		t.Fatalf("outbox rows = %d, want 1", n)
 	}
 }
@@ -354,7 +354,7 @@ func TestConcurrentSubmissionsWithOneKeyCreateOneAction(t *testing.T) {
 	if n := v.count(`SELECT count(*) FROM eacp.actions`); n != 1 {
 		t.Fatalf("actions = %d", n)
 	}
-	if n := v.count(`SELECT count(*) FROM eacp.outbox_events`); n != 1 {
+	if n := v.count(`SELECT count(*) FROM eacp.outbox_events WHERE topic = 'action.queued'`); n != 1 {
 		t.Fatalf("outbox rows = %d", n)
 	}
 }
@@ -403,7 +403,7 @@ func TestApprovalThenParallelReleasesConsumeTheGrantOnce(t *testing.T) {
 	if n := v.count(`SELECT count(*) FROM eacp.approval_grants WHERE consumed_by_action_id = $1`, got.ID); n != 1 {
 		t.Fatalf("consumed grants = %d", n)
 	}
-	if n := v.count(`SELECT count(*) FROM eacp.outbox_events WHERE aggregate_id = $1`, got.ID); n != 1 {
+	if n := v.count(`SELECT count(*) FROM eacp.outbox_events WHERE aggregate_id = $1 AND topic = 'action.queued'`, got.ID); n != 1 {
 		t.Fatalf("outbox rows = %d", n)
 	}
 }

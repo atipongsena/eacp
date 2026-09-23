@@ -197,7 +197,7 @@ The API answers 503 with `Retry-After` and `action_id`.
 - `POST /v1/actions/{id}/cancel` is open to agents and principals, and the database decides.
 - Both `POST /v1/actions` and `GET /v1/actions/{id}` accept `?wait=` (at most 60s). It polls until the action is terminal or the wait ends. An agent's own wait also drives the release of its approved action.
 
-**Outbox.** The release transaction inserts one `action.queued` outbox row. It carries only `action_id` and the request's W3C `traceparent`. The row is a hint, never an authority (principle 2). Phase 5 workers poll PostgreSQL directly, so publishing the outbox is not needed for correctness and remains open.
+**Outbox.** The release transaction inserts one `action.queued` outbox row. It carries only `action_id` and the request's W3C `traceparent`. The row is a hint, never an authority (principle 2). Phase 5 workers poll PostgreSQL directly, so publishing the outbox is not needed for correctness. Phase 10 publishes it to NATS JetStream as work hints and dashboard events (ADR-014). A hint only wakes the worker's claim loop, and polling stays on.
 
 **Sweeper.** The sweeper runs in `controlplane-api` every `EACP_ACTION_SWEEP_INTERVAL` (default 1s). In each pass it:
 - Expires overdue actions (T5, T13, T15) and lapsed approvals (T8, T13).

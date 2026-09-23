@@ -30,6 +30,10 @@ type Options struct {
 	Concurrency int
 	// PollInterval is the idle wait between claims (default 500ms).
 	PollInterval time.Duration
+	// Wake, when set, ends an idle wait early: a NATS work hint (ADR-014)
+	// makes the loop claim at once. A wake-up only triggers the ordinary
+	// fenced claim through PostgreSQL; polling continues as the backstop.
+	Wake <-chan struct{}
 	// Backoff is the delay before retry attempt n+1 after attempt n
 	// (default 1s doubling, at most 5m).
 	Backoff func(attempt int) time.Duration
@@ -160,6 +164,7 @@ func (w *Worker) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 		case <-freed:
+		case <-w.o.Wake: // a nil channel never fires
 		case <-time.After(w.o.PollInterval):
 		}
 	}

@@ -542,6 +542,28 @@ func TestRunLoopStopsUnderLoad(t *testing.T) {
 	}
 }
 
+// ADR-014 §1: a wake-up (a NATS work hint) makes an idle loop claim at
+// once instead of at its next poll; the claim itself is unchanged.
+func TestWakeClaimsBeforeThePollInterval(t *testing.T) {
+	v := newEnv(t)
+	wake := make(chan struct{}, 1)
+	w := v.worker("woken", func(o *worker.Options) { o.PollInterval = time.Minute; o.Wake = wake })
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { w.Run(ctx); close(stopped) }()
+	defer func() { cancel(); <-stopped }()
+	time.Sleep(200 * time.Millisecond) // the first claim found nothing; the loop is idle
+	a := v.submit("erp.lookup")
+	wake <- struct{}{}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && v.get(a.ID).State != "SUCCEEDED" {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := v.get(a.ID).State; got != "SUCCEEDED" || v.conn.count() != 1 {
+		t.Fatalf("state = %s with %d calls, want SUCCEEDED once", got, v.conn.count())
+	}
+}
+
 // ADR-001 §3: a secret never appears in logs, action rows, attempts, the
 // journal or the outbox.
 func TestSecretCanaryNeverLeaks(t *testing.T) {

@@ -220,3 +220,46 @@ func TestGovernanceProvider(t *testing.T) {
 		}
 	}
 }
+
+// ADR-014 §6: NATS is optional. Plain nats:// is for loopback hosts or
+// development and test; staging and production need tls://. The password
+// in the URL never reaches the logged configuration.
+func TestNATSSettings(t *testing.T) {
+	cfg, err := Load(env(nil), Options{})
+	if err != nil || cfg.NATSURL != "" || cfg.NATSPublishTimeout != 5*time.Second {
+		t.Fatalf("NATS defaults = %q %v, %v", cfg.NATSURL, cfg.NATSPublishTimeout, err)
+	}
+	cfg, err = Load(env(map[string]string{
+		"EACP_NATS_URL": "nats://relay:n4ts-canary@nats:4222", "EACP_NATS_PUBLISH_TIMEOUT": "2s",
+	}), Options{})
+	if err != nil || cfg.NATSURL != "nats://relay:n4ts-canary@nats:4222" || cfg.NATSPublishTimeout != 2*time.Second {
+		t.Fatalf("NATS config = %+v, %v", cfg, err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("x", "config", cfg)
+	if strings.Contains(buf.String(), "n4ts-canary") || !strings.Contains(buf.String(), "nats:4222") {
+		t.Fatalf("log value = %s", buf.String())
+	}
+	for name, vars := range map[string]string{
+		"loopback in production": "nats://127.0.0.1:4222",
+		"tls in production":      "tls://nats.internal:4222",
+	} {
+		if _, err := Load(env(map[string]string{"EACP_ENV": "production", "EACP_NATS_URL": vars}), Options{}); err != nil {
+			t.Errorf("%s: rejected: %v", name, err)
+		}
+	}
+	for name, vars := range map[string]map[string]string{
+		"plain nats in production": {"EACP_ENV": "production", "EACP_NATS_URL": "nats://nats:4222"},
+		"plain nats in staging":    {"EACP_ENV": "staging", "EACP_NATS_URL": "nats://nats:4222"},
+		"other scheme":             {"EACP_NATS_URL": "http://nats:4222"},
+		"no host":                  {"EACP_NATS_URL": "nats://"},
+		"several servers":          {"EACP_NATS_URL": "nats://a:4222,nats://b:4222"},
+		"ca without tls":           {"EACP_NATS_URL": "nats://nats:4222", "EACP_NATS_CA_FILE": "/pki/ca.pem"},
+		"ca without url":           {"EACP_NATS_CA_FILE": "/pki/ca.pem"},
+		"zero publish timeout":     {"EACP_NATS_URL": "nats://nats:4222", "EACP_NATS_PUBLISH_TIMEOUT": "0s"},
+	} {
+		if _, err := Load(env(vars), Options{}); err == nil {
+			t.Errorf("%s: accepted %v", name, vars)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-# EACP local environment (Slice A, and the Slice B AGT sidecar PDP).
+# EACP local environment (Slice A, and Slice B: the AGT sidecar PDP and NATS).
 #
 # Network topology enforces the control-plane boundary (ADR-001 §3, §3a):
 #
@@ -6,6 +6,7 @@
 #   core   : controlplane-api + execution-worker + postgres
 #   erp    : execution-worker + fakeerp               (only the worker reaches the ERP)
 #   pdp    : controlplane-api + agt-pdp               (only the API asks the PDP; mutual TLS)
+#   bus    : controlplane-api + execution-worker + nats (work hints and events; no agent)
 #
 # Governance decisions come from the Microsoft AGT/ACS sidecar PDP (ADR-002
 # §8). pdp-pki writes a DEVELOPMENT-ONLY mutual-TLS PKI into the pdp_pki
@@ -16,6 +17,11 @@
 # fakeerp and holds no ERP credential. The connector-secret manifest is
 # mounted into execution-worker only; Fake ERP receives just its verifier
 # token. Every other service refuses EACP_CONNECTOR_SECRETS_FILE.
+#
+# NATS JetStream carries signals only (ADR-014): the API's outbox relay
+# publishes work hints and dashboard events, and a hint wakes the worker's
+# PostgreSQL claim loop. Each role has its own NATS user; the worker's cannot
+# publish. With NATS stopped, everything still works (workers poll).
 # Credentials below are local-development defaults only.
 
 name: eacp
@@ -68,6 +74,7 @@ services:
       EACP_AGT_PDP_CA_FILE: /pki/ca.pem
       EACP_AGT_PDP_CERT_FILE: /pki/client.pem
       EACP_AGT_PDP_KEY_FILE: /pki/client-key.pem
+      EACP_NATS_URL: nats://relay:relay_dev@nats:4222
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -75,7 +82,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       pdp-pki: { condition: service_completed_successfully }
-    networks: [agents, core, pdp]
+    networks: [agents, core, pdp, bus]
 
   # Development-only mutual-TLS PKI for the PDP link (kept if present).
   pdp-pki:
@@ -115,10 +122,27 @@ services:
       EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
       EACP_WORKER_ID: execution-worker-1
       EACP_CONNECTOR_SECRETS_FILE: /run/secrets/connector_secrets
+      EACP_NATS_URL: nats://worker:worker_dev@nats:4222
     secrets: [connector_secrets, fakeerp_token]
     depends_on:
       migrate: { condition: service_completed_successfully }
-    networks: [core, erp]
+    networks: [core, erp, bus]
+
+  # NATS JetStream for work hints and dashboard events (ADR-014). Not a
+  # dependency of any service: they start, and stay correct, without it.
+  nats:
+    image: nats:2.15.0-alpine
+    command: ["nats-server", "--config", "/etc/nats/nats.conf"]
+    restart: on-failure
+    volumes:
+      - ./deployments/docker/nats/nats.conf:/etc/nats/nats.conf:ro
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [bus]
 
   fakeerp:
     build: { context: ., dockerfile: deployments/docker/Dockerfile }
@@ -147,11 +171,14 @@ networks:
     internal: true # no egress to the outside world either
   pdp:
     internal: true # the PDP needs no egress; ACS remote bundles are not used
+  bus:
+    internal: true # NATS needs no egress
 
 volumes:
   pgdata: {}
   fakeerp_data: {}
   pdp_pki: {}
+  nats_data: {}
 
 secrets:
   connector_secrets:

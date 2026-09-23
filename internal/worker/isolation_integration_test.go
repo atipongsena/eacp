@@ -13,6 +13,7 @@ import (
 	"eacp/internal/action"
 	"eacp/internal/approval"
 	"eacp/internal/identity"
+	"eacp/internal/messaging"
 	"eacp/internal/registry"
 	"eacp/internal/storage"
 	"eacp/internal/storage/pgtest"
@@ -20,7 +21,7 @@ import (
 
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, execution, reconciliation, operator resolution,
-// journal and outbox), neither tenant B nor a session without a tenant sees
+// journal, outbox and inbox), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -51,6 +52,15 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 		Outcome: "succeeded", Reason: "ERP back office shows the PO", Evidence: "ERP search",
 		ExternalReference: "PO-" + hidden.ID.String()}); err != nil {
 		t.Fatal(err)
+	}
+
+	// A work hint recorded by the hint consumer's inbox (ADR-014 §5).
+	inbox, err := messaging.NewInbox(v.f.App, messaging.WorkConsumer, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh, err := inbox.Record(ctx, v.f.Tenant, uuid.New()); err != nil || !fresh {
+		t.Fatalf("inbox record = %v, %v", fresh, err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member

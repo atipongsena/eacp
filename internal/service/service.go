@@ -74,7 +74,7 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: config: %w", name, err)
 	}
-	secrets := []string{dsnPassword(cfg.DatabaseURL)}
+	secrets := []string{dsnPassword(cfg.DatabaseURL), dsnPassword(cfg.NATSURL)}
 	log := logging.New(out, cfg.LogLevel, cfg.LogFormat, secrets...).With("service", name)
 
 	shutdownTelemetry, err := telemetry.Setup(ctx, telemetry.Options{

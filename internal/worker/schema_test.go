@@ -337,7 +337,7 @@ func TestRetriesFollowTheContract(t *testing.T) {
 	wantCode(t, s.f.ExecAgent(s.agent.Version, `UPDATE eacp.actions SET state = 'FAILED', state_reason = 'x'
 		WHERE id = $1`, idem), "42501")
 	must(t, s.f.ExecSystem("sweeper", requeue, idem))
-	if n := s.count(t, `SELECT count(*) FROM eacp.outbox_events WHERE aggregate_id = $1`, idem); n != 2 {
+	if n := s.count(t, `SELECT count(*) FROM eacp.outbox_events WHERE aggregate_id = $1 AND topic = 'action.queued'`, idem); n != 2 {
 		t.Fatalf("outbox rows = %d, want 2 (release and requeue)", n)
 	}
 	// The next claim is generation 2; generation 1 is stale everywhere.

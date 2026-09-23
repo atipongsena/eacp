@@ -179,10 +179,13 @@ func TestSliceADemo(t *testing.T) {
 	d.until(waiting, "SUCCEEDED")
 	d.onePO(waiting)
 
-	d.step("12. Reconstruct the high-value purchase from its action_id")
+	d.step("12. NATS goes down: purchases still execute by polling, and the outbox drains afterwards")
+	d.natsOutage()
+
+	d.step("13. Reconstruct the high-value purchase from its action_id")
 	d.evidence(high)
 
-	d.step("13. Search for the ERP credential in API responses, logs and the database")
+	d.step("14. Search for the ERP credential in API responses, logs and the database")
 	d.secretScan()
 
 	d.step("Slice A demo complete")
@@ -417,6 +420,49 @@ func firstLine(s string) string {
 	return line
 }
 
+// sql runs a query as the PostgreSQL superuser in the demo database and
+// returns its single value.
+func (d *demo) sql(query string) string {
+	d.t.Helper()
+	return strings.TrimSpace(d.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "eacp", "-tAc", query))
+}
+
+// natsOutage shows ADR-014 §1: NATS carries hints and events only. Before
+// the outage the relay has published the demo's outbox; with NATS stopped a
+// purchase still executes exactly once (the worker polls PostgreSQL) and its
+// outbox rows wait; after a restart the relay publishes them.
+func (d *demo) natsOutage() {
+	d.t.Helper()
+	const pending = `SELECT count(*) FROM eacp.outbox_events WHERE published_at IS NULL`
+	d.waitSQL(pending, "0")
+	d.logf("NATS up: %s outbox rows published as work hints and dashboard events",
+		d.sql(`SELECT count(*) FROM eacp.outbox_events WHERE published_at IS NOT NULL`))
+	d.compose("stop", "nats")
+	id := d.submit("nats-down-1", "purchase", "erp.create_po", map[string]any{"amount": 120})
+	d.until(id, "SUCCEEDED")
+	d.onePO(id)
+	waiting := d.sql(pending)
+	if waiting == "0" {
+		d.t.Fatal("outbox rows were marked published while NATS was down")
+	}
+	d.logf("NATS down: %s executed by polling; %s outbox rows wait", id[:8], waiting)
+	d.compose("start", "nats")
+	d.waitSQL(pending, "0")
+	d.logf("NATS restarted: the relay published every waiting row")
+}
+
+// waitSQL waits until query returns want.
+func (d *demo) waitSQL(query, want string) {
+	d.t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for got := d.sql(query); got != want; got = d.sql(query) {
+		if time.Now().After(deadline) {
+			d.t.Fatalf("%s = %s, want %s", query, got, want)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 // submit submits an action as the agent and returns its id.
 func (d *demo) submit(idem, operation, tool string, payload map[string]any) string {
 	d.t.Helper()
@@ -627,7 +673,7 @@ func (d *demo) secretScan() {
 		d.t.Fatal("the ERP credential appears in an API response")
 	}
 	d.logf("%d API responses: no credential", len(d.responses))
-	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "migrate", "postgres", "agt-pdp")
+	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "migrate", "postgres", "agt-pdp", "nats")
 	if strings.Contains(logs, d.token) {
 		d.t.Fatal("the ERP credential appears in a service log")
 	}

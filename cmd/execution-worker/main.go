@@ -8,15 +8,22 @@
 // Connector credentials are loaded here and nowhere else (ADR-001 §3):
 // only this service accepts EACP_CONNECTOR_SECRETS_FILE, and their values
 // are redacted from its logs. The HTTP connector is registered.
+//
+// With EACP_NATS_URL set, a work hint (ADR-014) wakes the claim loop at once;
+// the hint grants nothing, and polling stays on as the backstop.
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/nats-io/nats.go/jetstream"
+
 	"eacp/internal/config"
 	"eacp/internal/connector"
+	"eacp/internal/messaging"
 	"eacp/internal/service"
 	"eacp/internal/worker"
 )
@@ -41,10 +48,14 @@ func main() {
 				}
 				id = host
 			}
+			wake, err := startHints(d)
+			if err != nil {
+				return err
+			}
 			connectors := map[string]worker.Connector{"http": connector.NewHTTP()}
 			w, err := worker.New(d.DB, worker.Options{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
-				PollInterval: d.Config.WorkerPollInterval, Secrets: secrets, Connectors: connectors, Log: d.Log,
+				PollInterval: d.Config.WorkerPollInterval, Wake: wake, Secrets: secrets, Connectors: connectors, Log: d.Log,
 			})
 			if err != nil {
 				return err
@@ -62,4 +73,32 @@ func main() {
 			d.Background(r.Run)
 			return nil
 		})
+}
+
+// startHints runs the work-hint consumer when EACP_NATS_URL is set and
+// returns its wake-up channel (nil otherwise: the worker only polls).
+func startHints(d *service.Deps) (<-chan struct{}, error) {
+	if d.Config.NATSURL == "" {
+		return nil, nil
+	}
+	nc, err := messaging.Connect(d.Config.NATSURL, d.Config.NATSCAFile, "execution-worker hints", d.Log)
+	if err != nil {
+		return nil, err
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+	hints, err := messaging.NewHints(d.DB, js, messaging.HintOptions{Log: d.Log})
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+	d.Background(func(ctx context.Context) {
+		defer nc.Close()
+		hints.Run(ctx)
+	})
+	d.Log.Info("work hints on", "nats", config.RedactURL(d.Config.NATSURL))
+	return hints.Wake(), nil
 }

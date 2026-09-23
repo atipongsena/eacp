@@ -8,6 +8,8 @@ It follows the §111 script and checks each claim, so it is also a test (`test/d
 
 Since Phase 9 the stack takes its governance decisions from the **Microsoft AGT/ACS sidecar PDP** (`agt-pdp`, ADR-002 §8), reached over mutual TLS. Every decision in the demo is evaluated by the pinned AGT 5.0.0 policy layer, the ACS 0.3.1b1 engine and OPA 1.20.2.
 
+Since Phase 10 the API relays the transactional outbox to **NATS JetStream** (ADR-014). Work hints wake the worker, and action events feed the dashboard stream. PostgreSQL remains the only authority.
+
 ## Run it
 
 Requirements: Docker with Compose v2.24 or later, Go and Python 3.
@@ -44,8 +46,9 @@ Everything goes through the public API with keys that each person generated for 
 | 9 | The ERP commits, then the call times out | Reconciled from evidence, not guessed (inv. 5) |
 | 10 | Delayed visibility under `BEST_EFFORT`: three "not found" lookups, no retry. Operator otto resolves with evidence | "Not found" is not proof (inv. 6, 13); human resolution |
 | 11 | Stop the AGT sidecar. Two purchases answer 503 `governance_unavailable` and stay `RECEIVED`. One is cancelled without the PDP. Restart the sidecar; the sweeper evaluates the other, which executes | PDP outage fails closed, and never blocks cancellation (inv. 18, ADR-002 §6) |
-| 12 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain. Each decision names `microsoft-agt`, the pinned AGT/ACS/OPA versions and the matched rule | Evidence reconstruction (inv. 10, 17) |
-| 13 | Search every API response, every service log (including the sidecar's) and a database dump for the ERP credential | Not found anywhere (inv. 11) |
+| 12 | NATS stays up while the relay publishes every outbox row as work hints and dashboard events. Then stop NATS: a purchase still executes, exactly once, because the worker polls PostgreSQL, and its outbox rows wait. Restart NATS; the relay publishes them | NATS carries hints only; correctness does not depend on it (ADR-014, §60) |
+| 13 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain. Each decision names `microsoft-agt`, the pinned AGT/ACS/OPA versions and the matched rule | Evidence reconstruction (inv. 10, 17) |
+| 14 | Search every API response, every service log (including the sidecar's and NATS's) and a database dump for the ERP credential | Not found anywhere (inv. 11) |
 
 ## Output
 
