@@ -3522,6 +3522,8 @@ must never oversubscribe hard budget
 
 # 86. Phase 12 — Fair Scheduler (Slice B)
 
+> **Status (2026-09-24): complete.** Normative detail: [ADR-011](adr/ADR-011-scheduler-fairness.md) Rev 1.0. PostgreSQL orders claims by tenant/team weighted turns, pinned contract priority with aging, and connector capacity. The worker refreshes the hint after each claim; T14 remains authoritative. The 10,000:100:100 benchmark served the two small teams 10 claims each in the first 30, at 1.40 seconds per 30 claims on the development machine (`-race`, one worker).
+
 Implement:
 
 ```text

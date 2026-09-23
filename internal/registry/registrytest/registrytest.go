@@ -43,13 +43,13 @@ var cast = []struct {
 	{"ci", "service", []string{"auditor"}},
 }
 
-// Fixture is a migrated database whose tenant A has been bootstrapped by the
-// schema owner (the break-glass path) with the cast above.
+// Fixture is a migrated database whose selected tenant has been bootstrapped
+// by the schema owner (the break-glass path) with the cast above.
 type Fixture struct {
 	DB     pgtest.DB
 	App    *pgxpool.Pool // application role
 	Owner  *pgxpool.Pool // schema owner
-	Tenant uuid.UUID     // tenant A
+	Tenant uuid.UUID
 	P      map[string]uuid.UUID
 }
 
@@ -61,12 +61,26 @@ func New(t testing.TB) *Fixture {
 		DB: db, App: pgtest.Pool(t, db.AppDSN), Owner: pgtest.Pool(t, db.OwnerDSN),
 		Tenant: uuid.MustParse(pgtest.TenantA), P: map[string]uuid.UUID{},
 	}
+	f.bootstrap(t)
+	return f
+}
+
+// ForTenant bootstraps another tenant in the same database for cross-tenant tests.
+func (f *Fixture) ForTenant(t testing.TB, tenant string) *Fixture {
+	t.Helper()
+	other := &Fixture{DB: f.DB, App: f.App, Owner: f.Owner, Tenant: uuid.MustParse(tenant), P: map[string]uuid.UUID{}}
+	other.bootstrap(t)
+	return other
+}
+
+func (f *Fixture) bootstrap(t testing.TB) {
+	t.Helper()
 	ctx := context.Background()
-	err := storage.InTenantTx(ctx, f.Owner, pgtest.TenantA, func(tx pgx.Tx) error {
+	err := storage.InTenantTx(ctx, f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
 		for _, c := range cast {
 			var subject *string
 			if c.kind == "human" {
-				s := c.name + "@tenant-a.test"
+				s := c.name + "@" + f.subjectDomain()
 				subject = &s
 			}
 			var id uuid.UUID
@@ -90,13 +104,22 @@ func New(t testing.TB) *Fixture {
 	if err != nil {
 		t.Fatalf("registrytest: bootstrap: %v", err)
 	}
-	return f
 }
 
-// Exec runs sql as the application role in tenant A with the named actor
+func (f *Fixture) subjectDomain() string {
+	if f.Tenant.String() == pgtest.TenantA {
+		return "tenant-a.test"
+	}
+	if f.Tenant.String() == pgtest.TenantB {
+		return "tenant-b.test"
+	}
+	return f.Tenant.String() + ".test"
+}
+
+// Exec runs sql as the application role in the fixture tenant with the named actor
 // ("" for none).
 func (f *Fixture) Exec(actor, sql string, args ...any) error {
-	return f.ExecIn(pgtest.TenantA, actor, sql, args...)
+	return f.ExecIn(f.Tenant.String(), actor, sql, args...)
 }
 
 // ExecIn is Exec in the given tenant.
@@ -111,7 +134,7 @@ func (f *Fixture) ExecIn(tenant, actor, sql string, args ...any) error {
 	})
 }
 
-// ID runs an INSERT ... RETURNING id as the application role in tenant A and
+// ID runs an INSERT ... RETURNING id as the application role in the fixture tenant and
 // fails the test on error.
 func (f *Fixture) ID(t testing.TB, actor, sql string, args ...any) uuid.UUID {
 	t.Helper()
@@ -126,7 +149,7 @@ func (f *Fixture) ID(t testing.TB, actor, sql string, args ...any) uuid.UUID {
 func (f *Fixture) TryID(actor, sql string, args ...any) (uuid.UUID, error) {
 	ctx := context.Background()
 	var id uuid.UUID
-	err := storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+	err := storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := f.setActor(ctx, tx, actor); err != nil {
 			return err
 		}
@@ -135,11 +158,11 @@ func (f *Fixture) TryID(actor, sql string, args ...any) (uuid.UUID, error) {
 	return id, err
 }
 
-// ExecAgent runs sql as the application role in tenant A with the agent
+// ExecAgent runs sql as the application role in the fixture tenant with the agent
 // version as the transaction's actor (an authenticated agent key).
 func (f *Fixture) ExecAgent(version uuid.UUID, sql string, args ...any) error {
 	ctx := context.Background()
-	return storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+	return storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetAgent(ctx, tx, version); err != nil {
 			return err
 		}
@@ -162,7 +185,7 @@ func (f *Fixture) AgentID(t testing.TB, version uuid.UUID, sql string, args ...a
 func (f *Fixture) TryAgentID(version uuid.UUID, sql string, args ...any) (uuid.UUID, error) {
 	ctx := context.Background()
 	var id uuid.UUID
-	err := storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+	err := storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetAgent(ctx, tx, version); err != nil {
 			return err
 		}
@@ -171,10 +194,10 @@ func (f *Fixture) TryAgentID(version uuid.UUID, sql string, args ...any) (uuid.U
 	return id, err
 }
 
-// ExecSystem runs sql in tenant A as the named system component.
+// ExecSystem runs sql in the fixture tenant as the named system component.
 func (f *Fixture) ExecSystem(component, sql string, args ...any) error {
 	ctx := context.Background()
-	return storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+	return storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetSystem(ctx, tx, component); err != nil {
 			return err
 		}
@@ -200,7 +223,7 @@ const ReceivedActionSQL = `INSERT INTO eacp.actions
 // human subject (a cast name) and tool reference ("connector.tool").
 func (f *Fixture) ReceivedAction(t testing.TB, version uuid.UUID, subject, tool string) uuid.UUID {
 	t.Helper()
-	return f.AgentID(t, version, ReceivedActionSQL, version, uuid.NewString(), subject+"@tenant-a.test", tool)
+	return f.AgentID(t, version, ReceivedActionSQL, version, uuid.NewString(), subject+"@"+f.subjectDomain(), tool)
 }
 
 // EscalationEvidenceSQL records escalate evidence for action $1 under
@@ -381,7 +404,7 @@ func (f *Fixture) QueuedAction(t testing.TB, version uuid.UUID, subject, tool st
 		t.Fatalf("registrytest: authorize: %v", err)
 	}
 	ctx := context.Background()
-	err := storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+	err := storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetAgent(ctx, tx, version); err != nil {
 			return err
 		}
@@ -398,11 +421,11 @@ func (f *Fixture) QueuedAction(t testing.TB, version uuid.UUID, subject, tool st
 	return id
 }
 
-// ExecWorker runs sql in tenant A as execution worker worker at lease
+// ExecWorker runs sql in the fixture tenant as execution worker worker at lease
 // generation gen.
 func (f *Fixture) ExecWorker(worker string, gen int64, sql string, args ...any) error {
 	ctx := context.Background()
-	return storage.InTenantTx(ctx, f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+	return storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetWorker(ctx, tx, worker, gen); err != nil {
 			return err
 		}

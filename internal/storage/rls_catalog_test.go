@@ -68,6 +68,8 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"actions owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connectors owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"outbox_events owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"scheduler_team_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"scheduler_tenant_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"tenants tenant_isolation PERMISSIVE ALL {public} (id = eacp.current_tenant_id())",
 		"tool_contracts owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"tools owner_scan PERMISSIVE SELECT {eacp_owner} true",

@@ -349,6 +349,39 @@ func TestGroupsAndMemberships(t *testing.T) {
 	}
 }
 
+func TestSchedulerSettingsUseRegistryRolesAndBounds(t *testing.T) {
+	e := newEnv(t)
+	g := must[uuid.UUID](t)(e.svc.CreateGroupWeighted(e.ctx, e.as("alice"), "priority-team", "Priority", 3))
+	var weight int
+	noErr(t, storage.InTenantTx(e.ctx, e.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(e.ctx, `SELECT schedule_weight FROM eacp.groups WHERE id = $1`, g).Scan(&weight)
+	}))
+	if weight != 3 {
+		t.Fatalf("group weight = %d, want 3", weight)
+	}
+	wantState(t, e.f.Exec("alice", `UPDATE eacp.groups SET schedule_weight = 10 WHERE id = $1`, g), sqlForbidden)
+	_, err := e.svc.CreateGroupWeighted(e.ctx, e.as("alice"), "too-heavy", "Too heavy", 11)
+	wantErr(t, err, registry.ErrInvalid)
+	_, err = e.svc.CreateGroupWeighted(e.ctx, e.as("erin"), "unauthorized", "Unauthorized", 2)
+	wantErr(t, err, registry.ErrForbidden)
+	w := e.wire(t)
+	c := readContract
+	c.SchedulePriority = 7
+	id := must[uuid.UUID](t)(e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c))
+	var priority int
+	noErr(t, storage.InTenantTx(e.ctx, e.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(e.ctx, `SELECT schedule_priority FROM eacp.tool_contracts WHERE id = $1`, id).Scan(&priority)
+	}))
+	if priority != 7 {
+		t.Fatalf("contract priority = %d, want 7", priority)
+	}
+	wantState(t, e.f.Exec("erin", `UPDATE eacp.tool_contracts SET schedule_priority = 9 WHERE id = $1`, id), sqlForbidden)
+	wantState(t, e.f.Exec("erin", `UPDATE eacp.tool_contracts SET max_inflight = NULL WHERE id = $1`, id), sqlForbidden)
+	c.SchedulePriority = 10
+	_, err = e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c)
+	wantErr(t, err, registry.ErrInvalid)
+}
+
 func TestListingsAreTenantScoped(t *testing.T) {
 	e := newEnv(t)
 	e.wire(t)

@@ -44,6 +44,7 @@ type Contract struct {
 	TimeoutMS                 int      `json:"timeout_ms,omitempty"`
 	ConcurrencyGroup          string   `json:"concurrency_group,omitempty"`
 	MaxInflight               int      `json:"max_inflight,omitempty"`
+	SchedulePriority          int      `json:"schedule_priority,omitempty"`
 	DataSensitivity           string   `json:"data_sensitivity,omitempty"`
 
 	// Cost (ADR-012 §1). Without CostUnit the tool is not budgeted. A call
@@ -119,15 +120,15 @@ func (s *Service) ProposeContract(ctx context.Context, a Actor, toolID uuid.UUID
 			INSERT INTO eacp.tool_contracts
 			    (tenant_id, tool_id, side_effects, idempotency_mode, idempotency_key_field, correlation_field,
 			     reconciliation_lookup, reconciliation_consistency, proof_standard, no_effect_errors,
-			     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity,
+			     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity, schedule_priority,
 			     cost_unit, cost_fixed, cost_amount_field, cost_unit_field)
 			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			        $15, COALESCE($16::numeric, 0), $17, $18)
+			        $15, $16, COALESCE($17::numeric, 0), $18, $19)
 			RETURNING id`,
 			toolID, c.SideEffects, c.IdempotencyMode, nullStr(c.IdempotencyKeyField), nullStr(c.CorrelationField),
 			c.ReconciliationLookup, c.ReconciliationConsistency, c.ProofStandard, noEffect,
 			c.MaxAttempts, nullInt(c.TimeoutMS), nullStr(c.ConcurrencyGroup), nullInt(c.MaxInflight),
-			nullStr(c.DataSensitivity), nullStr(c.CostUnit), nullStr(string(c.CostFixed)),
+			nullStr(c.DataSensitivity), c.SchedulePriority, nullStr(c.CostUnit), nullStr(string(c.CostFixed)),
 			nullStr(c.CostAmountField), nullStr(c.CostUnitField)).Scan(&id)
 		return err
 	})

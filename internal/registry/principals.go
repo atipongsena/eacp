@@ -81,10 +81,15 @@ func (s *Service) RevokeRole(ctx context.Context, a Actor, grantID uuid.UUID, re
 
 // CreateGroup adds a group.
 func (s *Service) CreateGroup(ctx context.Context, a Actor, name, displayName string) (uuid.UUID, error) {
+	return s.CreateGroupWeighted(ctx, a, name, displayName, 1)
+}
+
+// CreateGroupWeighted adds a group with its scheduler claim quantum.
+func (s *Service) CreateGroupWeighted(ctx context.Context, a Actor, name, displayName string, weight int) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO eacp.groups (tenant_id, name, display_name)
-			VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, name, displayName).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO eacp.groups (tenant_id, name, display_name, schedule_weight)
+			VALUES (eacp.current_tenant_id(), $1, $2, $3) RETURNING id`, name, displayName, weight).Scan(&id)
 		return err
 	})
 	return id, err

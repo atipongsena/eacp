@@ -6,6 +6,8 @@ Phase 10 (Slice B) adds NATS JetStream for work hints and dashboard events (ADR-
 
 Phase 11 (Slice B) adds hard budget reservation (ADR-012). It maps the first [B] invariant, 3, and its tests join invariants 8 and 17.
 
+Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
+
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
 
 `test/invariants` checks the map mechanically. It reads the invariants and their tags from MASTER_PLAN §103, requires a section here for each [A] invariant, allows one for a [B] invariant once its phase has landed, requires each section's tag to match §103, and requires that every test named in a section exists in the named package. `go test -race ./...` with `EACP_TEST_ADMIN_DSN` runs them all. The `test/security` tests also need `EACP_COMPOSE_TEST=1` and the compose stack, and `test/demo` needs `EACP_DEMO=1` (see [DEMO.md](DEMO.md)).

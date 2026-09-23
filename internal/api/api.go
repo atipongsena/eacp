@@ -327,11 +327,15 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request, c identity.
 	var in struct {
 		Name        string `json:"name"`
 		DisplayName string `json:"display_name"`
+		Weight      int    `json:"schedule_weight,omitempty"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	id, err := s.reg.CreateGroup(r.Context(), actor(c), in.Name, in.DisplayName)
+	if in.Weight == 0 {
+		in.Weight = 1
+	}
+	id, err := s.reg.CreateGroupWeighted(r.Context(), actor(c), in.Name, in.DisplayName, in.Weight)
 	return created(w, idBody{id}, err)
 }
 

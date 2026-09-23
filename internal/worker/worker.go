@@ -98,21 +98,33 @@ func (w *Worker) Store() *Store { return w.store }
 
 // claim leases up to n claimable actions.
 func (w *Worker) claim(ctx context.Context, n int) ([]Lease, error) {
-	cands, err := w.store.Claimable(ctx, w.protocols, w.o.Secrets.Bindings(), n*2)
-	if err != nil {
-		return nil, err
-	}
 	var leases []Lease
-	for _, c := range cands {
-		if len(leases) == n {
+	attempted := make(map[Candidate]bool)
+	for len(leases) < n {
+		cands, err := w.store.Claimable(ctx, w.protocols, w.o.Secrets.Bindings(), 100)
+		if err != nil {
+			return leases, err
+		}
+		var next Candidate
+		found := false
+		for _, c := range cands {
+			if !attempted[c] {
+				next, found = c, true
+				break
+			}
+		}
+		if !found {
 			break
 		}
-		l, ok, err := w.store.Claim(ctx, c, w.o.Lease)
+		l, ok, err := w.store.Claim(ctx, next, w.o.Lease)
 		if err != nil {
 			return leases, err
 		}
 		if ok {
 			leases = append(leases, l)
+			clear(attempted) // The successful claim advanced the database turn.
+		} else {
+			attempted[next] = true
 		}
 	}
 	return leases, nil

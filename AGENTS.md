@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014) and 11 (Budget Reservation, ADR-012) complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Phase 12 (Fair Scheduler) has not started.
+Current status: **Slice A complete, Phases 1–8; Slice B Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014), 11 (Budget Reservation, ADR-012) and 12 (Fair Scheduler, ADR-011) complete** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Phase 13 (Backpressure, Bulkheads, Circuit Breakers & Retry Budgets) has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 

@@ -10,6 +10,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 9 adds the Microsoft AGT/ACS sidecar PDP ([ADR-002](docs/adr/ADR-002-agt-integration-sidecar-pdp.md) Rev 2.4).
 - Phase 10 adds NATS JetStream work hints and dashboard events ([ADR-014](docs/adr/ADR-014-postgresql-authority-nats-signals.md)).
 - Phase 11 adds hard budget reservation ([ADR-012](docs/adr/ADR-012-budget-reservation.md)).
+- Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -43,7 +44,7 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | ADR-004 pre-dispatch state machine (T1–T13, T15) enforced by PostgreSQL triggers for raw SQL too | `migrations/00005_actions.sql`, `internal/action/schema_test.go` (mutation-checked) |
 | Atomic release boundary: fresh revalidation, one-time grant consumption checked at commit, pinned policy and contract, journal and outbox in one transaction | `internal/action` release tests (parallel releases, activation races, injected failures) |
 | Sweeper: outage recovery, release after approval, expiry; cancel that never consults the PDP | `internal/action/sweeper.go`; `POST /v1/actions/{id}/cancel` |
-| Worker claim (`FOR UPDATE SKIP LOCKED`, FIFO), heartbeats and lease generations; PostgreSQL rejects any write by a stale worker | `migrations/00006_execution.sql`, `internal/worker/schema_test.go` (mutation-checked) |
+| Worker claim (`FOR UPDATE SKIP LOCKED`, fair order from Phase 12), heartbeats and lease generations; PostgreSQL rejects any write by a stale worker | `migrations/00006_execution.sql`, `migrations/00012_scheduler.sql`, `internal/worker/schema_test.go` (mutation-checked) |
 | Fenced dispatch intent before any call, with drift re-check (T16a/T16b) and an attempt row per dispatch; fenced results and late-result evidence | `internal/worker` (lease race, stale worker never dispatches twice) |
 | Lease reclaim, retries by contract, cancel requests while executing | `internal/action/sweeper.go`, `internal/action/execution_test.go` |
 | Worker connector credentials are tenant-namespaced and host-bound; agents receive none | `internal/worker/secrets.go`, `test/security` |
@@ -87,6 +88,14 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | The action's own state change settles its reservation: success commits, no effect releases, an unknown outcome holds it until reconciled or resolved, and expiry at `not_after` (the TTL) releases it. Settling never locks the account. | `TestSettlementFollowsTheOutcome`, `TestAnExpiredReleaseGivesItsBudgetBack`, `TestSettlementNeverWaitsForTheAccount` |
 | Account trees with escrow: a child's limit is carved from its parent, so a reservation locks only its leaf. Lowering a limit takes one admin; raising it takes two. | `TestEscrowBoundsChildrenByTheirParent`, `TestRaisingALimitIsTwoPersonAndLoweringIsNot`, `TestReleasesSettlementsAndLimitChangesDoNotDeadlock` |
 | Budget API: `POST /v1/budgets`, `GET /v1/budgets[/{id}]`, `POST /v1/budgets/{id}/limit`, `POST /v1/budget-limit-changes/{id}/approve\|reject`. Action evidence shows the reservation. | `internal/api/budget.go`, `TestBudgetsThroughTheAPI` |
+
+## Slice B (Phase 12): fair scheduler
+
+| Capability | Evidence |
+|---|---|
+| PostgreSQL chooses tenant/team weighted turns; teams pin their group weight and contract priority at release, with aging and deadline promotion within a team. NATS remains a wake-up hint. | [ADR-011](docs/adr/ADR-011-scheduler-fairness.md), `TestSchedulerServesTenantWithSmallerBacklog`, `TestSchedulerUsesPinnedTeamWeight`, `TestSchedulerPriorityAndAging` |
+| T14 serializes and enforces `max_inflight` for a connector or named group, including raw SQL, concurrent claims and stale transaction snapshots. | `TestConnectorCapacityIsEnforcedForRawClaims`, `TestConnectorCapacitySerializesConcurrentClaims`, `TestConnectorCapacityRejectsStaleRepeatableReadClaim`, `TestNamedCapacityGroupSpansConnectorsAndStateIsTenantIsolated` |
+| The 10,000:100:100 benchmark gives each small team 10 of the first 30 claims; the measured 30-claim run was about 1.4 seconds with `-race` on the development machine. | `BenchmarkSchedulerFairness` |
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

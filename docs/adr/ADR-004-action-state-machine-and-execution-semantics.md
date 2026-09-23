@@ -214,6 +214,8 @@ Slice A Phase 5 implements T14 and T16–T27, and cancel requests in `EXECUTING`
 
 **Claim (T14).** A narrow `SECURITY DEFINER` function (`eacp.claimable_actions`) lists the oldest `QUEUED` actions across tenants, in the order they entered `QUEUED`. It returns only actions whose connector protocol the worker implements, and whose `(tenant, secret_ref, endpoint host)` it holds a credential for. So a worker never claims an action it can't execute, and nothing loops at the head of the queue. The list is a hint. The worker then claims each action in its own tenant transaction with `FOR UPDATE SKIP LOCKED` and a state CAS. The guard requires `lease_generation + 1`, the claiming worker's id and generation, and a lease of at most 10 minutes.
 
+**Phase 12 amendment (ADR-011).** The claim hint now orders eligible work by PostgreSQL tenant/team turns and priority aging, and omits capacity-saturated groups. T14 enforces connector capacity under a transaction advisory lock and advances scheduler state before the audit append. The worker requests a fresh hint after each successful claim. The other T14 fencing rules above still apply.
+
 **Heartbeat.** A heartbeat extends a live lease only (`OLD.leased_until > now()`), because an expired lease belongs to the sweeper. It changes nothing but the lease, and it is neither a transition nor journaled. It returns the cancel request. The worker heartbeats every lease/3 while a call is in flight, and cancels the call if the lease is lost or a cancel is requested.
 
 **Dispatch intent (T16).** T16 is its own committed transaction before any external call, with registry rows read `FOR SHARE`. The database requires all of:

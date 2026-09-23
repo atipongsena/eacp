@@ -75,10 +75,9 @@ func (s *Store) inTx(ctx context.Context, tenant uuid.UUID, gen int64, fn func(p
 	}
 }
 
-// Claimable lists up to limit of the oldest QUEUED actions this worker can
-// execute: a protocol it implements and a credential it holds for the
-// connector's tenant, secret reference and endpoint host (a hint; Claim
-// decides).
+// Claimable lists up to limit eligible QUEUED actions in PostgreSQL fair
+// order. The protocol, credential and capacity checks are hints; Claim
+// rechecks the authoritative state under the action lock.
 func (s *Store) Claimable(ctx context.Context, protocols []string, bindings []Binding, limit int) ([]Candidate, error) {
 	if len(protocols) == 0 || len(bindings) == 0 {
 		return nil, nil
@@ -100,7 +99,8 @@ func (s *Store) Claimable(ctx context.Context, protocols []string, bindings []Bi
 }
 
 // Claim leases c for lease (T14, FOR UPDATE SKIP LOCKED). ok is false when
-// another worker holds the row or it is no longer QUEUED.
+// another worker holds the row, it is no longer QUEUED, or its connector
+// capacity is occupied.
 func (s *Store) Claim(ctx context.Context, c Candidate, lease time.Duration) (l Lease, ok bool, err error) {
 	err = storage.InTenantTx(ctx, s.pool, c.TenantID.String(), func(tx pgx.Tx) error {
 		var state string
@@ -127,6 +127,10 @@ func (s *Store) Claim(ctx context.Context, c Candidate, lease time.Duration) (l 
 		l = Lease{TenantID: c.TenantID, ActionID: c.ActionID, Generation: gen + 1}
 		return nil
 	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "53300" {
+		return Lease{}, false, nil
+	}
 	if err != nil || !ok {
 		return Lease{}, false, err
 	}
