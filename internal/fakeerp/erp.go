@@ -67,15 +67,9 @@ func New(token, dataPath string) (http.Handler, error) {
 	if err := f.Sync(); err != nil {
 		return nil, fmt.Errorf("fakeerp: sync operation log: %w", err)
 	}
-	dir, err := os.Open(filepath.Dir(dataPath))
-	if err != nil {
-		return nil, fmt.Errorf("fakeerp: open data directory: %w", err)
+	if err := syncDir(filepath.Dir(dataPath)); err != nil {
+		return nil, err
 	}
-	if err := dir.Sync(); err != nil {
-		dir.Close()
-		return nil, fmt.Errorf("fakeerp: sync data directory: %w", err)
-	}
-	dir.Close()
 	e := &ERP{token: token, path: dataPath, records: map[string][]record{}}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
