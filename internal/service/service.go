@@ -1,0 +1,175 @@
+// Package service holds the startup sequence shared by every EACP binary:
+// configuration, redacting logger, telemetry, database pool with safety
+// checks, health probes and graceful HTTP serving.
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"eacp/internal/config"
+	"eacp/internal/health"
+	"eacp/internal/httpserver"
+	"eacp/internal/logging"
+	"eacp/internal/storage"
+	"eacp/internal/telemetry"
+	"eacp/migrations"
+)
+
+// readinessTimeout bounds each /readyz evaluation.
+const readinessTimeout = 2 * time.Second
+
+// Deps are the initialised dependencies of a running service.
+type Deps struct {
+	Name   string
+	Config config.Config
+	Log    *slog.Logger
+	// DB is nil for services started without RequireDatabase.
+	DB *pgxpool.Pool
+}
+
+// Start initialises a service. It fails closed: invalid configuration, an
+// unreachable database, a database role able to bypass Row-Level Security,
+// or a schema older than this binary all abort startup. The returned stop
+// function releases resources.
+func Start(ctx context.Context, name string, getenv func(string) string, opts config.Options, out io.Writer) (*Deps, func(), error) {
+	cfg, err := config.Load(getenv, opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: config: %w", name, err)
+	}
+	log := logging.New(out, cfg.LogLevel, cfg.LogFormat, dsnPassword(cfg.DatabaseURL)).With("service", name)
+
+	shutdownTelemetry, err := telemetry.Setup(ctx, telemetry.Options{
+		ServiceName: name, Environment: cfg.Environment,
+		Exporter: cfg.OTelExporter, Endpoint: cfg.OTelEndpoint,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: telemetry: %w", name, err)
+	}
+	stopTelemetry := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(ctx); err != nil {
+			log.Warn("telemetry shutdown", "err", err)
+		}
+	}
+
+	deps := &Deps{Name: name, Config: cfg, Log: log}
+	if cfg.DatabaseURL != "" {
+		pool, err := storage.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			stopTelemetry()
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if err := storage.CheckRoleSafety(ctx, pool); err != nil {
+			pool.Close()
+			stopTelemetry()
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if err := storage.CheckSchemaVersion(ctx, pool, migrations.Latest()); err != nil {
+			pool.Close()
+			stopTelemetry()
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		deps.DB = pool
+	}
+
+	log.Info("service started", "config", cfg)
+	stop := func() {
+		if deps.DB != nil {
+			deps.DB.Close()
+		}
+		stopTelemetry()
+	}
+	return deps, stop, nil
+}
+
+// Handler registers /healthz and /readyz on mux and returns it wrapped with
+// OpenTelemetry HTTP instrumentation.
+func (d *Deps) Handler(mux *http.ServeMux) http.Handler {
+	health.Register(mux, d.Log, readinessTimeout, d.readinessChecks()...)
+	return otelhttp.NewHandler(mux, d.Name)
+}
+
+func (d *Deps) readinessChecks() []health.Check {
+	if d.DB == nil {
+		return nil
+	}
+	return []health.Check{
+		{Name: "database", Fn: d.DB.Ping},
+		{Name: "role_safety", Fn: func(ctx context.Context) error { return storage.CheckRoleSafety(ctx, d.DB) }},
+		{Name: "schema_version", Fn: func(ctx context.Context) error {
+			return storage.CheckSchemaVersion(ctx, d.DB, migrations.Latest())
+		}},
+	}
+}
+
+// Serve listens on the configured address and serves h until ctx is
+// cancelled, then shuts down gracefully within the configured timeout.
+func (d *Deps) Serve(ctx context.Context, h http.Handler) error {
+	ln, err := net.Listen("tcp", d.Config.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("%s: listen: %w", d.Name, err)
+	}
+	d.Log.Info("http listening", "addr", ln.Addr().String())
+	srv := &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ErrorLog:          slog.NewLogLogger(d.Log.Handler(), slog.LevelWarn),
+	}
+	err = httpserver.Serve(ctx, srv, ln, d.Config.ShutdownTimeout)
+	if err == nil {
+		d.Log.Info("http stopped cleanly")
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		d.Log.Warn("http shutdown timed out; remaining connections closed")
+	}
+	return err
+}
+
+// dsnPassword extracts the password from a URL-form DSN so the logger can
+// redact it wherever it appears.
+func dsnPassword(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.User == nil {
+		return ""
+	}
+	p, _ := u.User.Password()
+	return p
+}
+
+// Main runs a probe-serving service process until SIGINT/SIGTERM and exits
+// non-zero on startup or serving failure. It is the whole main() of the
+// Phase 1 binaries; later phases register their own routes on the mux.
+func Main(name string, opts config.Options, register func(*Deps, *http.ServeMux)) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	deps, cleanup, err := Start(ctx, name, os.Getenv, opts, os.Stdout)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	mux := http.NewServeMux()
+	if register != nil {
+		register(deps, mux)
+	}
+	err = deps.Serve(ctx, deps.Handler(mux))
+	cleanup()
+	if err != nil {
+		deps.Log.Error("serve", "err", err)
+		os.Exit(1)
+	}
+}

@@ -1,0 +1,96 @@
+# EACP local environment (Slice A).
+#
+# Network topology enforces the control-plane boundary (ADR-001 §3, §3a):
+#
+#   agents : agent runtimes + controlplane-api        (agents can reach only the API)
+#   core   : controlplane-api + execution-worker + postgres
+#   erp    : execution-worker + fakeerp               (only the worker reaches the ERP)
+#
+# The "agent" service stands in for an agent runtime. It has no route to
+# fakeerp and holds no ERP credential.
+#
+# Credentials below are local-development defaults only.
+
+name: eacp
+
+x-eacp-env: &eacp-env
+  EACP_ENV: development
+  EACP_LOG_FORMAT: json
+  EACP_OTEL_EXPORTER: none
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      EACP_OWNER_PASSWORD: eacp_owner_dev
+      EACP_APP_PASSWORD: eacp_app_dev
+    ports:
+      - "127.0.0.1:55432:5432" # host access for integration tests (EACP_TEST_ADMIN_DSN)
+    volumes:
+      - ./deployments/docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eacp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [core]
+
+  migrate:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/eacpctl", "migrate", "up"]
+    environment:
+      <<: *eacp-env
+      EACP_DATABASE_URL: postgres://eacp_owner:eacp_owner_dev@postgres:5432/eacp?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [core]
+
+  controlplane-api:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/controlplane-api"]
+    environment:
+      <<: *eacp-env
+      EACP_HTTP_ADDR: ":8080"
+      EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [agents, core]
+
+  execution-worker:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/execution-worker"]
+    environment:
+      <<: *eacp-env
+      EACP_HTTP_ADDR: ":8081"
+      EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [core, erp]
+
+  fakeerp:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/fakeerp"]
+    environment:
+      <<: *eacp-env
+      EACP_HTTP_ADDR: ":8090"
+    networks: [erp]
+
+  # Stand-in agent runtime used by the network-isolation test.
+  agent:
+    image: busybox:1.37
+    command: ["sleep", "infinity"]
+    networks: [agents]
+
+networks:
+  agents: {}
+  core: {}
+  erp:
+    internal: true # no egress to the outside world either
+
+volumes:
+  pgdata: {}

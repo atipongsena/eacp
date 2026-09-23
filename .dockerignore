@@ -1,0 +1,7 @@
+.git
+.codegraph
+graphify-out
+docs
+research
+*.md
+!go.mod
