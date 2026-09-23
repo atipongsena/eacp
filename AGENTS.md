@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A, Phase 1 (Platform Foundation) complete.** Phase 2 has not started.
+Current status: **Slice A, Phases 1–2 complete** (Platform Foundation; Registry, Identity & Capability per ADR-003). Phase 3 has not started.
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -22,6 +22,8 @@ Current status: **Slice A, Phase 1 (Platform Foundation) complete.** Phase 2 has
 - Every tenant-scoped table follows the RLS convention in `migrations/00001_foundation.sql`.
 - Services must use the `eacp_app` role. They refuse to start with a role that can bypass RLS.
 - Agents never receive enterprise credentials (ADR-001). Connector secrets live only in the execution worker.
+- Registry rules live in PostgreSQL triggers (ADR-003 §8). Every privileged write runs in a transaction with `storage.SetActor`; the triggers take the actor from there and fill every `*_by`/`*_at` column. Test each rule with raw SQL as `eacp_app` (see `internal/registry/schema_test.go`), not only through Go.
+- Append the audit event in the **same** transaction as the change, as its last statement (`registry.Service.change` does this).
 
 ## Commands
 
@@ -49,7 +51,13 @@ internal/telemetry   OpenTelemetry + W3C propagation
 internal/health      /healthz, /readyz
 internal/httpserver  graceful shutdown
 internal/service     shared startup (fail closed)
-internal/storage     pgx pool, InTenantTx, role and schema checks, migrations
+internal/storage     pgx pool, InTenantTx, SetActor, role and schema checks, migrations
+internal/audit       hash-chained, append-only audit journal (Append, Verify)
+internal/identity    API keys (bring your own key) and Authenticate
+internal/registry    principals, roles, groups, credentials, agents, versions,
+                     allowlists, connectors, tools, contracts; CheckCapability
+internal/registry/registrytest  bootstrapped fixture for tests
+internal/api         HTTP API (/v1/...) for the registry and agent runtimes
 migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests
 deployments/docker   Dockerfile, postgres bootstrap

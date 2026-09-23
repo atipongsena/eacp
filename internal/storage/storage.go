@@ -32,11 +32,12 @@ func Open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// CheckRoleSafety fails if the connection can bypass Row-Level Security,
-// now or later: the session user or current user is a superuser or has
-// BYPASSRLS, or either is a member of any such role (and could SET ROLE to
-// it). Services call it at startup and refuse to run, because such a
-// connection would silently disable tenant isolation.
+// CheckRoleSafety fails if the connection can bypass Row-Level Security or
+// the registry triggers, now or later: the session user or current user is a
+// superuser, has BYPASSRLS, owns the eacp schema (and so could ALTER its
+// tables), or is a member of any such role (and could SET ROLE to it).
+// Services call it at startup and refuse to run, because such a connection
+// would silently disable tenant isolation and the database-enforced rules.
 func CheckRoleSafety(ctx context.Context, pool *pgxpool.Pool) error {
 	var sessionUser, currentUser string
 	var unsafe []string
@@ -46,7 +47,8 @@ func CheckRoleSafety(ctx context.Context, pool *pgxpool.Pool) error {
 		                FILTER (WHERE r.rolname IS NOT NULL), '{}')
 		FROM (SELECT 1) AS one
 		LEFT JOIN pg_roles r
-		  ON (r.rolsuper OR r.rolbypassrls)
+		  ON (r.rolsuper OR r.rolbypassrls
+		      OR r.oid = (SELECT nspowner FROM pg_namespace WHERE nspname = 'eacp'))
 		 AND (pg_has_role(session_user, r.oid, 'MEMBER')
 		   OR pg_has_role(current_user, r.oid, 'MEMBER'))
 		GROUP BY session_user, current_user`,
@@ -87,6 +89,24 @@ func InTenantTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn fun
 		return fmt.Errorf("storage: invalid tenant id %q", tenantID)
 	}
 	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, id.String()); err != nil {
+			return fmt.Errorf("storage: set tenant context: %w", err)
+		}
+		return fn(tx)
+	})
+}
+
+// InTenantReadTx is InTenantTx with a read-only REPEATABLE READ transaction:
+// every statement in fn sees the same snapshot. Use it for checks that read
+// several related rows and must not see a half-committed picture (for
+// example audit.Verify).
+func InTenantReadTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn func(pgx.Tx) error) error {
+	id, err := uuid.Parse(tenantID)
+	if err != nil || id == uuid.Nil {
+		return fmt.Errorf("storage: invalid tenant id %q", tenantID)
+	}
+	opts := pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
+	return pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, id.String()); err != nil {
 			return fmt.Errorf("storage: set tenant context: %w", err)
 		}
@@ -142,6 +162,20 @@ func withProvider(ctx context.Context, dsn string, fn func(*goose.Provider) erro
 	}
 	if err := fn(p); err != nil {
 		return fmt.Errorf("storage: migrate: %w", err)
+	}
+	return nil
+}
+
+// SetActor records the principal performing the transaction's changes. It is
+// transaction-local, like the tenant context. Registry triggers read it
+// (eacp.current_actor_id()) to attribute and authorise every change, instead
+// of trusting *_by columns written by the client (ADR-003 §8).
+func SetActor(ctx context.Context, tx pgx.Tx, actorID uuid.UUID) error {
+	if actorID == uuid.Nil {
+		return fmt.Errorf("storage: nil actor id")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.actor_id', $1, true)`, actorID.String()); err != nil {
+		return fmt.Errorf("storage: set actor: %w", err)
 	}
 	return nil
 }

@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"eacp/internal/storage/pgtest"
+	"eacp/migrations"
 )
 
 func runWith(t *testing.T, env map[string]string, args ...string) (string, error) {
@@ -75,7 +77,8 @@ func TestMigrateUpThenStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate status: %v", err)
 	}
-	if !strings.Contains(out, "current=1") || !strings.Contains(out, "latest=1") {
+	want := fmt.Sprintf("current=%d latest=%d", migrations.Latest(), migrations.Latest())
+	if !strings.Contains(out, want) {
 		t.Fatalf("status output = %q", out)
 	}
 }

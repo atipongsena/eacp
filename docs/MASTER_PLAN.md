@@ -3272,6 +3272,15 @@ agent inspect
 connector register
 ```
 
+**Status (2026-09-23): delivered.** The normative detail is in [ADR-003](adr/ADR-003-agent-registry-identity-and-capability.md) (Rev 1.1), which is stricter than this section in several places:
+
+- An owner is required in **every** environment, not only production.
+- Two-person activation applies to allowlists, contracts and agent versions.
+- Role grants and credential registration are two-person too.
+- Keys are bring-your-own-key and bound to one agent version.
+- Contracts are fingerprinted, and a tool with no idempotency can't be retried automatically.
+- The audit journal lands in this phase, not Phase 4.
+
 ---
 
 # 77. Phase 3 — Governance Interface, Local Provider & Approval Store (Slice A)

@@ -147,6 +147,45 @@ func TestRoleSafetyRejectsMembershipInBypassRole(t *testing.T) {
 	}
 }
 
+// The schema owner can ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or
+// disable the registry triggers, so services must never run as the owner or
+// as any role that can become it.
+func TestRoleSafetyRejectsSchemaOwnerAndItsMembers(t *testing.T) {
+	db := migratedDB(t)
+	ctx := context.Background()
+	if err := storage.CheckRoleSafety(ctx, appPool(t, db.OwnerDSN, 1)); err == nil {
+		t.Fatal("schema owner passed the role safety check")
+	}
+
+	admin, err := pgx.Connect(ctx, db.AdminDSN)
+	if err != nil {
+		t.Fatalf("connect admin: %v", err)
+	}
+	defer admin.Close(ctx)
+	member := db.Name + "_owner_member"
+	for _, stmt := range []string{
+		"CREATE ROLE " + member + " LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'member_pw'",
+		"GRANT " + pgtest.OwnerRole + " TO " + member,
+	} {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), db.AdminDSN)
+		if err != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		_, _ = c.Exec(context.Background(), "DROP ROLE IF EXISTS "+member)
+	})
+	u, _ := url.Parse(db.AppDSN)
+	u.User = url.UserPassword(member, "member_pw")
+	if err := storage.CheckRoleSafety(ctx, appPool(t, u.String(), 1)); err == nil {
+		t.Fatal("member of the schema owner role passed the safety check")
+	}
+}
+
 // A superuser session that SET ROLEs to eacp_app looks safe by current_user
 // but can RESET ROLE at any time; session_user must be checked too.
 func TestRoleSafetyRejectsSuperuserSessionUsingSetRole(t *testing.T) {

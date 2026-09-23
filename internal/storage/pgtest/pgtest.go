@@ -15,6 +15,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"eacp/internal/storage"
 )
 
 // Role names. Roles are cluster-wide, so tests share them with the local
@@ -140,4 +143,42 @@ func randomSuffix(t testing.TB) string {
 		t.Fatalf("pgtest: random: %v", err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// Seeded tenant ids used by Migrated.
+const (
+	TenantA = "0b6f0c3e-4a8e-4d7a-9a51-0000000000a1"
+	TenantB = "0b6f0c3e-4a8e-4d7a-9a51-0000000000b2"
+)
+
+// Migrated returns a fresh database with every migration applied (as the
+// schema owner) and tenants TenantA and TenantB seeded by the superuser.
+func Migrated(t testing.TB) DB {
+	t.Helper()
+	db := New(t)
+	ctx := context.Background()
+	if err := storage.MigrateUp(ctx, db.OwnerDSN); err != nil {
+		t.Fatalf("pgtest: migrate: %v", err)
+	}
+	admin, err := pgx.Connect(ctx, db.AdminDSN)
+	if err != nil {
+		t.Fatalf("pgtest: connect admin: %v", err)
+	}
+	defer admin.Close(ctx)
+	if _, err := admin.Exec(ctx, `INSERT INTO eacp.tenants (id, slug, display_name) VALUES
+		($1, 'tenant-a', 'Tenant A'), ($2, 'tenant-b', 'Tenant B')`, TenantA, TenantB); err != nil {
+		t.Fatalf("pgtest: seed tenants: %v", err)
+	}
+	return db
+}
+
+// Pool opens a pool on dsn that is closed when t finishes.
+func Pool(t testing.TB, dsn string) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("pgtest: pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
 }

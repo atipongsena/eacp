@@ -6,7 +6,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A · Phase 1 (Platform Foundation) is complete. There's no Action API yet.
+> **Status: early development.** Slice A · Phases 1–2 are complete: platform foundation, plus registry, identity and capability. There's no Action API yet (Phase 4).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -15,7 +15,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 
 This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-001-product-boundary-and-enforcement-point.md).
 
-## What exists today (Phase 1)
+## What exists today (Phases 1–2)
 
 | Capability | Evidence |
 |---|---|
@@ -28,12 +28,27 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | OpenTelemetry tracing with W3C propagation | `internal/telemetry` tests |
 | Graceful shutdown | `internal/httpserver` tests |
 | Network isolation: the agent can't reach the ERP or the DB | `test/security` (mutation-checked) |
+| Registry: principals, two-person role grants, groups, agents, versions, allowlists, connectors, tools, contracts ([ADR-003](docs/adr/ADR-003-agent-registry-identity-and-capability.md)) | `internal/registry` (schema tests run raw SQL as the app role; triggers mutation-checked) |
+| Two-person rules enforced by PostgreSQL: grants, credentials, allowlist/contract/version activation, quarantine release | `internal/registry/schema_test.go` |
+| API keys: bring your own key, hash-only, bound to a principal or one agent version, 90-day maximum | `internal/identity` |
+| Capability check: tool must be in the ACTIVE version's allowlist with an active, unrevoked, fingerprint-matching contract | `registry.CheckCapability`, `POST /v1/agent/capability-check` |
+| Hash-chained, append-only audit journal written in the same transaction as each change | `internal/audit` (tamper tests) |
 
 ## Quick start
 
 ```bash
 docker compose up -d --build
 curl localhost:8080/readyz
+```
+
+Bootstrap a tenant (each admin generates their own key; only the hash is registered):
+
+```bash
+export EACP_DATABASE_URL="postgres://eacp_owner:eacp_owner_dev@127.0.0.1:55432/eacp?sslmode=disable"
+T=$(uuidgen)
+eacpctl key generate --kind principal --tenant $T      # run once per admin, keep the key
+eacpctl tenant create --id $T --slug acme --name Acme   --admin name=alice,subject=alice@acme.test,credential=<id>,hash=<hex>   --admin name=bob,subject=bob@acme.test,credential=<id>,hash=<hex>
+EACP_API_KEY=<alice's key> eacpctl api GET /v1/me
 ```
 
 Tests:

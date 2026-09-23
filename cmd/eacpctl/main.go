@@ -1,13 +1,25 @@
 // Command eacpctl is the EACP operator CLI.
 //
-// Phase 1 provides schema migrations only:
+// Schema (EACP_DATABASE_URL must be the schema owner's DSN):
 //
-//	eacpctl migrate up        apply pending migrations (as the schema owner)
+//	eacpctl migrate up        apply pending migrations
 //	eacpctl migrate status    print current and latest versions
 //	eacpctl migrate down-all --yes-destroy-all-data
 //	                          roll back everything; requires EACP_ENV=development|test
 //
-// EACP_DATABASE_URL must be the schema owner's DSN.
+// Bootstrap (schema owner DSN; the break-glass trust root, ADR-003):
+//
+//	eacpctl key generate --kind agent|principal --tenant <uuid>
+//	eacpctl tenant create --slug <slug> --name <name> [--id <uuid>]
+//	        --admin name=<n>,subject=<s>,credential=<uuid>,hash=<hex>   (at least two)
+//
+// Registry, through the API (EACP_API_URL, EACP_API_KEY):
+//
+//	eacpctl agent register --name --display-name --env --risk (--owner-principal|--owner-group) <uuid>
+//	eacpctl agent list
+//	eacpctl agent inspect <id|name>
+//	eacpctl connector register --name --endpoint --secret-ref [--protocol http]
+//	eacpctl api <METHOD> <PATH> [JSON]      any other API call
 package main
 
 import (
@@ -18,14 +30,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-
-	"eacp/internal/storage"
 )
 
-const (
-	usage       = "usage: eacpctl migrate up|status|down-all --yes-destroy-all-data"
-	confirmFlag = "--yes-destroy-all-data"
-)
+const usage = `usage:
+  eacpctl migrate up|status|down-all --yes-destroy-all-data
+  eacpctl key generate --kind agent|principal --tenant <uuid>
+  eacpctl tenant create --slug <slug> --name <name> --admin <spec> --admin <spec>
+  eacpctl agent register|list|inspect ...
+  eacpctl connector register ...
+  eacpctl api <METHOD> <PATH> [JSON]`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -37,48 +50,22 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
-	if len(args) < 2 || len(args) > 3 || args[0] != "migrate" {
+	if len(args) == 0 {
 		return errors.New(usage)
 	}
-	dsn := getenv("EACP_DATABASE_URL")
-	if dsn == "" {
-		return errors.New("EACP_DATABASE_URL: required (schema owner DSN)")
-	}
-
-	if args[1] != "down-all" && len(args) != 2 {
-		return errors.New(usage)
-	}
-
-	switch args[1] {
-	case "up":
-		if err := storage.MigrateUp(ctx, dsn); err != nil {
-			return err
-		}
-		fmt.Fprintln(out, "migrations applied")
-		return nil
-	case "status":
-		current, latest, err := storage.MigrationStatus(ctx, dsn)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "current=%d latest=%d\n", current, latest)
-		return nil
-	case "down-all":
-		// Destructive: requires an explicit non-production environment AND an
-		// explicit flag. An unset EACP_ENV is refused (fail closed).
-		switch env := getenv("EACP_ENV"); env {
-		case "development", "test":
-		default:
-			return fmt.Errorf("down-all refused in EACP_ENV=%q: it destroys all data; only development or test are allowed", env)
-		}
-		if len(args) != 3 || args[2] != confirmFlag {
-			return fmt.Errorf("down-all destroys all data; re-run with %s", confirmFlag)
-		}
-		if err := storage.MigrateDownAll(ctx, dsn); err != nil {
-			return err
-		}
-		fmt.Fprintln(out, "all migrations rolled back")
-		return nil
+	switch args[0] {
+	case "migrate":
+		return runMigrate(ctx, args[1:], getenv, out)
+	case "key":
+		return runKey(args[1:], out)
+	case "tenant":
+		return runTenant(ctx, args[1:], getenv, out)
+	case "agent":
+		return runAgent(ctx, args[1:], getenv, out)
+	case "connector":
+		return runConnector(ctx, args[1:], getenv, out)
+	case "api":
+		return runAPI(ctx, args[1:], getenv, out)
 	default:
 		return errors.New(usage)
 	}
