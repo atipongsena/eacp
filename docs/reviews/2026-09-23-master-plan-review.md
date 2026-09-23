@@ -3,7 +3,8 @@
 - **Reviewed document:** `docs/MASTER_PLAN.md` (originally `EACP_Master Development Plan.md`) (revision 2026-09-23)
 - **Review date:** 2026-09-23
 - **Reviewers:** Claude Code (primary), Codex (cross-review; see §5)
-- **Status:** Proposed. **Nothing in the master plan has been changed yet.** Each proposed edit below needs a decision from the owner.
+- **Status:** Applied. The owner accepted the recommendations on 2026-09-23. They are incorporated in `docs/MASTER_PLAN.md` **Revision 2** and in ADR-001, ADR-002, ADR-004 and ADR-005.
+- **Note:** §N references in this review point to **Revision 1** section content. Phase sections §75–§97 were renumbered in Rev 2.
 
 Section references like **§15** point to the numbered sections of the master plan.
 
