@@ -1,6 +1,6 @@
 # EACP Master Plan — Critical Review
 
-- **Reviewed document:** `EACP_Master Development Plan.md` (revision 2026-09-23)
+- **Reviewed document:** `docs/MASTER_PLAN.md` (originally `EACP_Master Development Plan.md`) (revision 2026-09-23)
 - **Review date:** 2026-09-23
 - **Reviewers:** Claude Code (primary), Codex (cross-review; see §5)
 - **Status:** Proposed. **Nothing in the master plan has been changed yet.** Each proposed edit below needs a decision from the owner.
