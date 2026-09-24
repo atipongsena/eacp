@@ -16,6 +16,7 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 | [ADR-016](ADR-016-distributed-kill-switch.md) | PostgreSQL Authority for Distributed Execution Kills | Accepted (Rev 1.0) | Phase 16 |
 | [ADR-022](ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) | Backpressure, Bulkheads, Circuit Breakers and Retry Budgets | Accepted (Rev 1.0) | Phase 13 |
 | [ADR-023](ADR-023-mcp-registry-and-tool-fingerprint.md) | MCP Registry and Tool Fingerprint | Accepted (Rev 1.0) | Phase 14 |
+| [ADR-024](ADR-024-fleet-operations.md) | Fleet Operations over the Registry Lifecycle | Accepted (Rev 1.0) | Phase 17 |
 | ADR-006 … ADR-021 (others, except 011, 012, 014, 015 and 016) | See MASTER_PLAN §74 | Not started | |
 
 ADR-007 to ADR-010 and ADR-013 must conform to ADR-004.

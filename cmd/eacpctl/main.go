@@ -33,6 +33,13 @@
 //	eacpctl dependency blast-radius model|system <name>
 //	eacpctl kill activate|resume tenant|team|agent|agent_version|action|connector|tool <uuid> --reason <text> [--code <AGT reason>]
 //	eacpctl kill list
+//	eacpctl fleet status|list [--environment E] [--risk R] [--owner-group UUID] [--health H] [--window 24h]
+//	eacpctl fleet operation <operation-id>
+//	eacpctl fleet pause|quarantine [--agent NAME]... [--environment E] [--risk R] [--owner-group UUID]
+//	                               [--tool CONNECTOR.TOOL] [--all] --reason <text> [--dry-run]
+//	eacpctl fleet resume|release <operation-id> --reason <text> [--dry-run]
+//	eacpctl fleet rollback <agent> [--to <version-id>] --reason <text> [--dry-run]
+//	                          atomic lifecycle changes across agents (ADR-024)
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -71,6 +78,7 @@ const usage = `usage:
   eacpctl dependency blast-radius <kind> <id|name>
   eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <AGT reason>]
   eacpctl kill list
+  eacpctl fleet status|list|operation|pause|resume|quarantine|release|rollback ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
@@ -107,6 +115,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runDependency(ctx, args[1:], getenv, out)
 	case "kill":
 		return runKill(ctx, args[1:], getenv, out)
+	case "fleet":
+		return runFleet(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
 	case "pdp-dev-certs":

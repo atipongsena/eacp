@@ -16,6 +16,7 @@ import (
 	"eacp/internal/approval"
 	"eacp/internal/connector/mcp"
 	"eacp/internal/connector/mcp/mcptest"
+	"eacp/internal/fleet"
 	"eacp/internal/identity"
 	"eacp/internal/messaging"
 	"eacp/internal/registry"
@@ -26,7 +27,7 @@ import (
 
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, budget, execution, reconciliation, operator
-// resolution, journal, outbox and inbox, MCP discovery), neither tenant B nor a session without a tenant sees
+// resolution, journal, outbox and inbox, MCP discovery, kills, fleet operations), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -116,6 +117,12 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	// Phase 16: a kill creates both scoped state and the tenant epoch. Use
 	// an already finished action so the flow above remains deterministic.
 	if err := v.f.Exec("otto", `SELECT eacp.set_kill('action', $1, true, 'isolation fixture')`, found.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Phase 17: a fleet operation on an agent the flow does not use.
+	spare := v.f.ActiveAgent(t, "spare")
+	if _, err := fleet.New(v.f.App).Apply(ctx, registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["otto"]},
+		fleet.Request{Kind: "pause", Selector: fleet.Selector{AgentIDs: []uuid.UUID{spare.Agent}}, Reason: "isolation fixture"}); err != nil {
 		t.Fatal(err)
 	}
 

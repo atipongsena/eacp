@@ -13,7 +13,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 
-Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)).
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -136,6 +136,23 @@ The report counts recent **actions**, not workflow runs; workflow identity is no
 Operators use `POST /v1/killswitch` with `{"scope":"agent_version","target_id":"<uuid>","killed":true,"reason_code":"security_incident","reason":"<incident note>"}`. `reason_code` defaults to `operator_request` and accepts the four [AGT reason codes](docs/adr/ADR-016-distributed-kill-switch.md). A different operator resumes the scope with `killed:false`. Operators and auditors list states with `GET /v1/killswitch`. The CLI provides `eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <reason-code>]` and `eacpctl kill list`.
 
 The enforceable scopes are `tenant`, `team`, `agent`, `agent_version`, `action`, `connector` and `tool`. PostgreSQL rejects a killed scope at claim and dispatch intent; workers check again before the external call and during it. NATS only wakes that check. A kill during execution records `UNKNOWN_OUTCOME` for reconciliation because cancellation does not undo an external effect. `global`, `run` and `model` are rejected until EACP has platform operator authority and authenticated run/model action bindings; see ADR-016.
+
+## Slice C (Phase 17): fleet operations
+
+`GET /v1/fleet/health` is the fleet dashboard, and `GET /v1/fleet/agents` lists agents. Both take `environment`, `risk_class`, `owner_group_id`, `health` and `window` filters. Each agent shows its active version, owner status, matching kills, allowlisted tools the database would not execute, open circuits, and open and recent actions. The resulting health is `ok`, `degraded` or `contained`, with reasons. This is an observation only: it never grants or blocks anything.
+
+`POST /v1/fleet/operations` applies one operation atomically: every version changes, or none does. A dry run returns the plan without changing anything:
+
+```json
+{"kind":"pause","selector":{"environment":"production","tool":"erp.post"},"reason":"ERP incident 42","dry_run":true}
+```
+
+- `pause` suspends the active version. Queued and new actions are then denied; use a kill (Phase 16) to hold work instead.
+- `quarantine` quarantines every live version of the selected agents.
+- `resume` and `release` undo exactly the versions a given `source_operation_id` changed.
+- `rollback` activates an older `SUSPENDED` version of one agent.
+
+Operators may pause and quarantine. Only a `registry_approver` may resume, release or roll back, under the same separation of duties as a single activation. The CLI is `eacpctl fleet status|list|operation|pause|quarantine|resume|release|rollback`.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

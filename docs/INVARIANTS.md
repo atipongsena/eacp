@@ -14,6 +14,8 @@ Phase 15 (Slice C) adds tenant-scoped dependency evidence and conservative blast
 
 Phase 16 (Slice C) adds PostgreSQL-authoritative scoped execution kills (ADR-016). Raw T14/T16 checks, in-flight cancellation and ambiguous outcome evidence join invariants 1, 8, 12, 17 and 18. `internal/worker/kill_test.go` also checks monotonic epochs, two-person clear and tenant isolation; `internal/messaging/relay_test.go` checks the transactional signal.
 
+Phase 17 (Slice C) adds fleet operations and the fleet view (ADR-024). An operation is a set of ADR-003 lifecycle transitions that PostgreSQL makes atomically under the version guard. Its tests join invariants 8, 17 and 19. `internal/fleet/schema_test.go` also checks every rule in raw SQL; `internal/fleet/fleet_test.go` checks selection, dry runs, atomicity, rollback and the observed health reasons.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -114,6 +116,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestScannerScansOnlyServersItHoldsSecretsFor — the cross-tenant scan hint yields only servers whose tenant-bound secret the worker holds
 - `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — a dependency cannot refer across tenants; its table follows RLS
 - `internal/worker` TestKillRejectsDirectWriteAndForeignTarget — the kill API rejects a foreign target and direct table writes
+- `internal/fleet` TestFleetOperationsAreTenantScoped — a fleet operation selects, changes and shows only its tenant's agents
+- `internal/fleet` TestFleetTargetMustBeATenantVersion — a raw target naming another tenant's version is refused
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -200,6 +204,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/registry` TestScanActivityIsJournaled — every scan, recorded definition, rescan request and quarantine is journaled with its actor and reason
 - `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — dependency evidence insertion and revocation are journaled with the editor actor
 - `internal/worker` TestKillAndResumeAreJournaledWithActorAndReason — both operator changes are audited with reason and emitted to the outbox
+- `internal/fleet` TestPauseTargetRecordsDatabaseStateAndIsJournaled — each transition and the operation (actor, reason, targets) are journaled, the operation last
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 
@@ -225,3 +230,5 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestDispatchIntentRefusesDriftAndRevocation — rechecked at the dispatch intent
 - `internal/api` TestAgentKeysCannotUseOperatorRoutesAndViceVersa — agent and operator keys are separate
 - `internal/registry` TestToolQuarantineRules — a quarantined tool is denied (`tool_quarantined`) in Go and in PostgreSQL
+- `internal/fleet` TestFleetResumeKeepsVersionSeparationOfDuties — a fleet resume cannot grant what a single activation could not
+- `internal/worker` TestFleetPauseDeniesQueuedAndNewWork — a paused version's queued and new actions are denied; nothing reaches the connector

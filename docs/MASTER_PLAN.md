@@ -3615,6 +3615,8 @@ kill_epoch fenced check (§40)
 
 # 91. Phase 17 — Fleet Operations (Slice C)
 
+> **Status (2026-09-25): delivered.** Normative detail: [ADR-024](adr/ADR-024-fleet-operations.md) Rev 1.0. Pause, resume, quarantine, release and rollback are ADR-003 lifecycle transitions that PostgreSQL applies atomically: inserting a target row makes its transition under the version guard. So a fleet operation cannot grant what a single transition could not. Resume and release undo only what their source operation changed. A rollback activates an older `SUSPENDED` version of one agent. Every operation records its targets and their database-read `from` state, and it is journaled at commit. Selection is explicit (`all` is required for the whole tenant), a dry run returns the plan, and an operation changes at most 500 versions. The fleet list and health (`GET /v1/fleet/agents|health`, `eacpctl fleet status|list`) are read-only observations: active version, owner status, matching kills, capability drift, open circuits, and open and recent actions. They never decide. Canary and upgrade-with-evaluation stay with ADR-018; kill remains ADR-016.
+
 Build:
 
 ```text

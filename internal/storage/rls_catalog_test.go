@@ -71,6 +71,10 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname IN ('kill_states', 'kill_tenant_epochs') ORDER BY relname`); !slices.Equal(got, []string{"kill_states", "kill_tenant_epochs"}) {
 		t.Errorf("reviewed kill tables missing: %v", got)
 	}
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname IN ('fleet_operation_targets', 'fleet_operations') ORDER BY relname`); !slices.Equal(got, []string{"fleet_operation_targets", "fleet_operations"}) {
+		t.Errorf("reviewed fleet tables missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
 	// 00005-00007, 00010, 00012, 00013, 00014).
