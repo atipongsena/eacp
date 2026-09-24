@@ -1,5 +1,5 @@
-// Package demo runs the Slice A demo script (MASTER_PLAN §111) against a
-// running demo stack: see docs/DEMO.md and scripts/demo.sh.
+// Package demo runs the Slice A and Slice C demo scripts (MASTER_PLAN §111)
+// against a running demo stack: see docs/DEMO.md and scripts/demo.sh.
 package demo
 
 import (
@@ -24,12 +24,18 @@ import (
 	"eacp/internal/identity"
 )
 
-// tenant is the demo tenant: the local connector-secrets manifest binds the
-// Fake ERP credential to it (deployments/docker/secrets).
-const tenant = "00000000-0000-4000-8000-0000000000d1"
+// The demo tenants: the local connector-secrets manifest binds the Fake ERP
+// credential to both, and the Fake MCP credential to Slice C's
+// (deployments/docker/secrets). Each demo has its own tenant, so they can
+// run on the same stack in either order.
+const (
+	tenantA = "00000000-0000-4000-8000-0000000000d1"
+	tenantC = "00000000-0000-4000-8000-0000000000c3"
+)
 
 type demo struct {
 	t       *testing.T
+	tenant  string
 	root    string
 	project string
 	api     string
@@ -38,11 +44,13 @@ type demo struct {
 	mu        sync.Mutex
 	responses []string // every API response body, for the secret scan
 	keys      map[string]string
+	reader    string // who reads actions: the submitting agent by default
 	ids       map[string]string
 	contracts map[string]map[string]any
 }
 
-func TestSliceADemo(t *testing.T) {
+// newDemo connects to the demo stack for tenant.
+func newDemo(t *testing.T, tenant string) *demo {
 	if os.Getenv("EACP_DEMO") != "1" {
 		t.Skip("set EACP_DEMO=1 and run scripts/demo.sh (docs/DEMO.md)")
 	}
@@ -54,10 +62,15 @@ func TestSliceADemo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run deployments/docker/secrets/prepare_fakeerp_token.py first: %v", err)
 	}
-	d := &demo{t: t, root: root, project: env("EACP_DEMO_PROJECT", "eacp-demo"),
+	d := &demo{t: t, tenant: tenant, root: root, project: env("EACP_DEMO_PROJECT", "eacp-demo"),
 		api: env("EACP_DEMO_API", "http://127.0.0.1:18080"), token: strings.TrimSpace(string(token)),
 		keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
 	d.ready()
+	return d
+}
+
+func TestSliceADemo(t *testing.T) {
+	d := newDemo(t, tenantA)
 
 	d.step("0. Bootstrap tenant Acme with two admins (eacpctl, break-glass owner path)")
 	d.bootstrap()
@@ -303,7 +316,7 @@ func (d *demo) must(want int, who, method, path string, body any) map[string]any
 func (d *demo) newKey(who string, kind identity.Kind) (credential uuid.UUID, hash string) {
 	d.t.Helper()
 	credential = uuid.New()
-	key, h, err := identity.NewKey(kind, uuid.MustParse(tenant), credential)
+	key, h, err := identity.NewKey(kind, uuid.MustParse(d.tenant), credential)
 	if err != nil {
 		d.t.Fatal(err)
 	}
@@ -314,37 +327,10 @@ func (d *demo) newKey(who string, kind identity.Kind) (credential uuid.UUID, has
 }
 
 func (d *demo) bootstrap() {
-	var admins []string
-	for _, name := range []string{"alice", "bob"} {
-		cred, hash := d.newKey(name, identity.KindPrincipal)
-		admins = append(admins, "--admin",
-			fmt.Sprintf("name=%s,subject=%s@acme.test,credential=%s,hash=%s", name, name, cred, hash))
-	}
-	out, err := d.composeErr(append([]string{"run", "--rm", "migrate", "/eacpctl", "tenant", "create",
-		"--id", tenant, "--slug", "acme", "--name", "Acme"}, admins...)...)
-	if err != nil {
-		d.t.Fatalf("eacpctl tenant create: %v\n%s\nThe demo needs a fresh stack: run scripts/demo.sh.", err, out)
-	}
-	me := d.must(200, "alice", "GET", "/v1/me", nil)
-	d.logf("tenant %s: alice and bob are admins %v", tenant, me["roles"])
-
-	// Each person generates their own key; one admin proposes, the other approves.
-	cast := []struct{ name, role string }{
+	d.tenantWithCast("acme", "Acme", []member{
 		{"erin", "registry_editor"}, {"rita", "registry_approver"}, {"ravi", "registry_approver"},
 		{"otto", "operator"}, {"amy", "approver"}, {"ben", "approver"}, {"carol", "approver"}, {"audra", "auditor"},
-	}
-	for _, c := range cast {
-		p := d.must(201, "alice", "POST", "/v1/principals", map[string]any{"kind": "human", "name": c.name,
-			"subject": c.name + "@acme.test", "display_name": strings.ToUpper(c.name[:1]) + c.name[1:]})
-		id := p["id"].(string)
-		d.ids[c.name] = id
-		g := d.must(201, "alice", "POST", "/v1/role-grants", map[string]any{"principal_id": id, "role": c.role})
-		d.must(204, "bob", "POST", "/v1/role-grants/"+g["id"].(string)+"/approve", nil)
-		cred, hash := d.newKey(c.name, identity.KindPrincipal)
-		d.must(201, "alice", "POST", "/v1/credentials", map[string]any{"id": cred, "kind": identity.KindPrincipal,
-			"principal_id": id, "hash": hash, "expires_in_days": 1})
-		d.must(204, "bob", "POST", "/v1/credentials/"+cred.String()+"/approve", nil)
-	}
+	})
 	d.logf("people: erin (registry editor), rita and ravi (registry approvers), otto (operator), " +
 		"amy, ben and carol (approvers), audra (auditor); every grant and key approved by a second admin")
 
@@ -356,6 +342,39 @@ func (d *demo) bootstrap() {
 		{"id": "routine", "match": {"target": "erp"}, "verdict": "allow", "reason": "routine purchase"}]}`)})
 	d.must(204, "bob", "POST", "/v1/policies/"+policy["id"].(string)+"/activate", map[string]any{"reason": "reviewed"})
 	d.logf("policy v%v active: high-value purchases escalate to two approvers", policy["version"])
+}
+
+type member struct{ name, role string }
+
+// tenantWithCast creates d's tenant with admins alice and bob (eacpctl, the
+// owner's break-glass path). Then, for each member, alice proposes the
+// person, their role and the key they generated themselves; bob approves.
+func (d *demo) tenantWithCast(slug, name string, cast []member) {
+	var admins []string
+	for _, n := range []string{"alice", "bob"} {
+		cred, hash := d.newKey(n, identity.KindPrincipal)
+		admins = append(admins, "--admin",
+			fmt.Sprintf("name=%s,subject=%s@%s.test,credential=%s,hash=%s", n, n, slug, cred, hash))
+	}
+	out, err := d.composeErr(append([]string{"run", "--rm", "migrate", "/eacpctl", "tenant", "create",
+		"--id", d.tenant, "--slug", slug, "--name", name}, admins...)...)
+	if err != nil {
+		d.t.Fatalf("eacpctl tenant create: %v\n%s\nThe demo needs a fresh stack: run scripts/demo.sh.", err, out)
+	}
+	me := d.must(200, "alice", "GET", "/v1/me", nil)
+	d.logf("tenant %s (%s): alice and bob are admins %v", d.tenant, name, me["roles"])
+	for _, c := range cast {
+		p := d.must(201, "alice", "POST", "/v1/principals", map[string]any{"kind": "human", "name": c.name,
+			"subject": c.name + "@" + slug + ".test", "display_name": strings.ToUpper(c.name[:1]) + c.name[1:]})
+		id := p["id"].(string)
+		d.ids[c.name] = id
+		g := d.must(201, "alice", "POST", "/v1/role-grants", map[string]any{"principal_id": id, "role": c.role})
+		d.must(204, "bob", "POST", "/v1/role-grants/"+g["id"].(string)+"/approve", nil)
+		cred, hash := d.newKey(c.name, identity.KindPrincipal)
+		d.must(201, "alice", "POST", "/v1/credentials", map[string]any{"id": cred, "kind": identity.KindPrincipal,
+			"principal_id": id, "hash": hash, "expires_in_days": 1})
+		d.must(204, "bob", "POST", "/v1/credentials/"+cred.String()+"/approve", nil)
+	}
 }
 
 func (d *demo) register() {
@@ -572,7 +591,11 @@ func (d *demo) unavailable(idem string, payload map[string]any) string {
 
 func (d *demo) action(id string) map[string]any {
 	d.t.Helper()
-	code, body := d.call("agent", "GET", "/v1/actions/"+id, nil)
+	reader := d.reader
+	if reader == "" {
+		reader = "agent"
+	}
+	code, body := d.call(reader, "GET", "/v1/actions/"+id, nil)
 	if code != 200 && code != 202 {
 		d.t.Fatalf("GET action %s = %d %v", id, code, body)
 	}
@@ -747,21 +770,29 @@ func (d *demo) name(id string) string {
 
 func (d *demo) secretScan() {
 	d.t.Helper()
+	secrets := map[string]string{"the ERP credential": d.token}
+	if mcp, err := os.ReadFile(filepath.Join(d.root, "deployments", "docker", "secrets", "fakemcp-token.dev")); err == nil {
+		secrets["the MCP credential"] = strings.TrimSpace(string(mcp))
+	} else {
+		d.t.Fatalf("reading the MCP credential: %v", err)
+	}
+	find := func(where, text string) {
+		for name, secret := range secrets {
+			if strings.Contains(text, secret) {
+				d.t.Fatalf("%s appears in %s", name, where)
+			}
+		}
+	}
 	d.mu.Lock()
 	responses := strings.Join(d.responses, "\n")
 	d.mu.Unlock()
-	if strings.Contains(responses, d.token) {
-		d.t.Fatal("the ERP credential appears in an API response")
-	}
+	find("an API response", responses)
 	d.logf("%d API responses: no credential", len(d.responses))
-	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "migrate", "postgres", "agt-pdp", "nats")
-	if strings.Contains(logs, d.token) {
-		d.t.Fatal("the ERP credential appears in a service log")
-	}
+	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "fakemcp", "migrate",
+		"postgres", "agt-pdp", "nats")
+	find("a service log", logs)
 	d.logf("%d lines of service logs: no credential", strings.Count(logs, "\n"))
 	dump := d.compose("exec", "-T", "postgres", "pg_dump", "-U", "postgres", "--data-only", "eacp")
-	if strings.Contains(dump, d.token) {
-		d.t.Fatal("the ERP credential appears in the database")
-	}
+	find("the database", dump)
 	d.logf("database dump of %d bytes: no credential", len(dump))
 }

@@ -4,7 +4,7 @@
 #
 #   agents : agent runtimes + controlplane-api        (agents can reach only the API)
 #   core   : controlplane-api + execution-worker + postgres
-#   erp    : execution-worker + fakeerp               (only the worker reaches the ERP)
+#   erp    : execution-worker + fakeerp + fakemcp     (only the worker reaches the ERP and the MCP server)
 #   pdp    : controlplane-api + agt-pdp               (only the API asks the PDP; mutual TLS)
 #   bus    : controlplane-api + execution-worker + nats (work hints and events; no agent)
 #
@@ -158,6 +158,23 @@ services:
       - fakeerp_data:/tmp
     networks: [erp]
 
+  # The Slice C demo's MCP server (docs/DEMO.md). Only the worker reaches it,
+  # with the token from its connector-secret manifest; the server holds just
+  # its verifier. Its tools are read from /data/tools.json when present.
+  fakemcp:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/fakemcp"]
+    restart: on-failure
+    environment:
+      <<: *eacp-env
+      EACP_HTTP_ADDR: ":8091"
+      EACP_FAKEMCP_TOKEN_FILE: /run/secrets/fakemcp_token
+      EACP_FAKEMCP_TOOLS_FILE: /data/tools.json
+    secrets: [fakemcp_token]
+    volumes:
+      - fakemcp_data:/data
+    networks: [erp]
+
   # Stand-in agent runtime used by the network-isolation test.
   agent:
     image: busybox:1.37
@@ -177,6 +194,7 @@ networks:
 volumes:
   pgdata: {}
   fakeerp_data: {}
+  fakemcp_data: {}
   pdp_pki: {}
   nats_data: {}
 
@@ -185,3 +203,5 @@ secrets:
     file: ./deployments/docker/secrets/connector-secrets.dev.json # local-development only
   fakeerp_token:
     file: ./deployments/docker/secrets/fakeerp-token.dev # generated locally; never committed
+  fakemcp_token:
+    file: ./deployments/docker/secrets/fakemcp-token.dev # generated locally; never committed

@@ -43,6 +43,15 @@ func TestAgentCannotReachFakeERP(t *testing.T) {
 	}
 }
 
+// ADR-001 §3/§3a: nor to the MCP server of the Slice C demo.
+func TestAgentCannotReachFakeMCP(t *testing.T) {
+	requireCompose(t)
+	out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", "http://fakemcp:8091/healthz")
+	if err == nil {
+		t.Fatalf("agent reached fakemcp directly: %q", out)
+	}
+}
+
 // Positive control for the nc probe: the same invocation must succeed against
 // a port the agent is allowed to reach.
 func TestAgentNcProbeWorks(t *testing.T) {
@@ -72,6 +81,16 @@ func TestERPNetworkCanReachFakeERP(t *testing.T) {
 	}
 }
 
+// Positive control for the MCP server, on the same worker-only network.
+func TestERPNetworkCanReachFakeMCP(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_erp", "busybox:1.37",
+		"wget", "-q", "-T", "3", "-O", "-", "http://fakemcp:8091/healthz").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), `"ok"`) {
+		t.Fatalf("erp network could not reach fakemcp (err=%v out=%q)", err, out)
+	}
+}
+
 // inspect returns a running compose service's environment and mount targets.
 func inspect(t *testing.T, service string) (env, mounts string) {
 	t.Helper()
@@ -96,17 +115,17 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 	if !strings.Contains(env, "EACP_CONNECTOR_SECRETS_FILE=") || !strings.Contains(mounts, "/run/secrets/connector_secrets") {
 		t.Fatalf("worker has no connector secrets (env=%s mounts=%s); the negative checks would be meaningless", env, mounts)
 	}
-	for _, service := range []string{"controlplane-api", "fakeerp", "agent", "postgres"} {
+	for _, service := range []string{"controlplane-api", "fakeerp", "fakemcp", "agent", "postgres"} {
 		env, mounts := inspect(t, service)
 		if strings.Contains(env, "CONNECTOR_SECRETS") || strings.Contains(mounts, "connector_secrets") {
 			t.Errorf("%s holds connector secrets (env=%s mounts=%s)", service, env, mounts)
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":1`) {
+	if err != nil || !strings.Contains(string(logs), `"bindings":3`) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
-	if strings.Contains(string(logs), "dev-only-fakeerp-token") {
+	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") {
 		t.Fatal("worker logged a connector secret")
 	}
 }
@@ -121,11 +140,35 @@ func TestFakeERPCredentialMountsAreLimitedToWorkerAndERP(t *testing.T) {
 			t.Errorf("%s has no ERP credential mount: %s", service, mounts)
 		}
 	}
-	for _, service := range []string{"controlplane-api", "agent", "postgres"} {
+	for _, service := range []string{"controlplane-api", "agent", "postgres", "fakemcp"} {
 		_, mounts := inspect(t, service)
 		if strings.Contains(mounts, "fakeerp_token") {
 			t.Errorf("%s has the ERP credential mount: %s", service, mounts)
 		}
+	}
+}
+
+// The MCP server's verifier is mounted into the MCP server only; the worker
+// holds the token through its connector-secret manifest.
+func TestFakeMCPCredentialMountIsLimitedToTheServer(t *testing.T) {
+	requireCompose(t)
+	if _, mounts := inspect(t, "fakemcp"); !strings.Contains(mounts, "/run/secrets/fakemcp_token") {
+		t.Fatalf("fakemcp has no credential mount: %s", mounts)
+	}
+	for _, service := range []string{"controlplane-api", "execution-worker", "fakeerp", "agent", "postgres"} {
+		if _, mounts := inspect(t, service); strings.Contains(mounts, "fakemcp_token") {
+			t.Errorf("%s has the MCP verifier mount: %s", service, mounts)
+		}
+	}
+}
+
+// A caller on the worker network without the token cannot list the tools.
+func TestFakeMCPRejectsUnauthenticatedListing(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_erp", "busybox:1.37",
+		"wget", "-S", "-T", "3", "-O", "-", "--post-data={}", "http://fakemcp:8091/mcp").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "401 Unauthorized") {
+		t.Fatalf("unauthenticated MCP call was not rejected with 401 (err=%v out=%q)", err, out)
 	}
 }
 

@@ -1,4 +1,4 @@
-# Slice A demo (docs/DEMO.md): the stack of docker-compose.yml, run as its
+# Demo stack (docs/DEMO.md): the stack of docker-compose.yml, run as its
 # own compose project (eacp-demo) with its own volumes and host ports, so it
 # never touches a development stack. Use it only through scripts/demo.sh:
 #

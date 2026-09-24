@@ -13,7 +13,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 
-Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)). Phase 18 adds Agent FinOps: LLM cost ingest, chargeback, soft budgets, a spend dashboard and alerts ([ADR-025](docs/adr/ADR-025-agent-finops.md)).
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)). Phase 18 adds Agent FinOps: LLM cost ingest, chargeback, soft budgets, a spend dashboard and alerts ([ADR-025](docs/adr/ADR-025-agent-finops.md)). The [Slice C demo](docs/DEMO.md#slice-c-demo) triggers MCP drift, shows the blast radius, kills the affected agent version and shows the trace and audit evidence.
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -59,7 +59,7 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Tenant isolation: RLS catalog test with reviewed cross-tenant paths; every table swept after a full flow | `internal/storage/rls_catalog_test.go`, `internal/worker/isolation_integration_test.go` |
 | Chaos: connection storms under live loops, restarted services, killed worker, duplicate submissions; governance outages block no cancellation | `internal/worker/chaos_integration_test.go` |
 | Slice A invariant map, checked against MASTER_PLAN §103 | `docs/INVARIANTS.md`, `test/invariants` |
-| Slice A demo on an isolated stack (§111) | `scripts/demo.sh`, [docs/DEMO.md](docs/DEMO.md) |
+| Slice A and Slice C demos on an isolated stack (§111) | `scripts/demo.sh`, [docs/DEMO.md](docs/DEMO.md) |
 
 ## Slice B (Phase 9): the AGT sidecar PDP
 
@@ -178,7 +178,7 @@ curl localhost:8080/readyz
 
 The stack's governance decisions come from the AGT sidecar (`agt-pdp`). To use the in-process local provider instead, set `EACP_GOVERNANCE_PROVIDER=local` on `controlplane-api`.
 
-The preparation command copies the existing local-development ERP token into a Git-ignored file for the Fake ERP secret mount. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
+The preparation command copies the existing local-development ERP and MCP tokens into Git-ignored files for the Fake ERP and Fake MCP secret mounts. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
 
 Bootstrap a tenant (each admin generates their own key; only the hash is registered):
 

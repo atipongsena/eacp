@@ -4344,6 +4344,8 @@ Kill affected Agent version
 Show trace + audit evidence
 ```
 
+Status: the Slice C demo runs as `TestSliceCDemo` (`scripts/demo.sh`, `docs/DEMO.md`) with a fake MCP server (`cmd/fakemcp`).
+
 ---
 
 # 112. Open-Source Ready Definition

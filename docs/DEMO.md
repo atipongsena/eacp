@@ -1,4 +1,8 @@
-# Slice A demo
+# Slice A and Slice C demos
+
+Two demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme) and Slice C (tenant Globex, [below](#slice-c-demo)).
+
+## Slice A demo
 
 The demo proves the Slice A goal statement (MASTER_PLAN §110) against a running stack:
 
@@ -21,16 +25,16 @@ scripts/demo.sh
 ```
 
 The script:
-1. prepares the local Fake ERP credential;
+1. prepares the local Fake ERP and Fake MCP credentials;
 2. starts a **fresh, isolated** stack as the compose project `eacp-demo` (API on `127.0.0.1:18080`, PostgreSQL on `127.0.0.1:55433`, with its own volumes);
-3. runs the demo;
+3. runs both demos (`DEMO=A` or `DEMO=C` runs one);
 4. removes the demo stack and its volumes.
 
-A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The run takes about a minute after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
+A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The two demos take about two minutes after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
 
 `deployments/demo/compose.demo.yml` shortens two timings so the failure scenarios finish quickly: a 10-second worker lease, and three reconciliation lookups before a human is asked.
 
-## What it shows
+### What it shows
 
 Everything goes through the public API with keys that each person generated for themselves. Only the tenant's two first admins are bootstrapped, by `eacpctl tenant create` on the owner's break-glass path. The agent's requests come from the agent's key. The ERP is checked independently, through its own audit log on the ERP network.
 
@@ -51,9 +55,9 @@ Everything goes through the public API with keys that each person generated for 
 | 12 | NATS stays up while the relay publishes every outbox row as work hints and dashboard events. Then stop NATS: a purchase still executes, exactly once, because the worker polls PostgreSQL, and its outbox rows wait. Restart NATS; the relay publishes them | NATS carries hints only; correctness does not depend on it (ADR-014, §60) |
 | 13 | `create_po` gets a costed contract version (the payload's amount in THB; erin proposes, rita activates). Alice gives procurement-bot a 3 700 THB budget; she cannot approve her own raise, so bob does. The agent submits 100 purchases of 100 THB at once | Exactly 37 execute, one PO each; 63 are `DENIED budget_exceeded` and never reach the ERP; the account ends at its limit (inv. 3, ADR-012) |
 | 14 | Auditor audra reconstructs the high-value purchase from its `action_id`: governance, both votes, the grant, the attempt, every journaled move, and a verified hash chain. Each decision names `microsoft-agt`, the pinned AGT/ACS/OPA versions and the matched rule | Evidence reconstruction (inv. 10, 17) |
-| 15 | Search every API response, every service log (including the sidecar's and NATS's) and a database dump for the ERP credential | Not found anywhere (inv. 11) |
+| 15 | Search every API response, every service log (including the sidecar's and NATS's) and a database dump for the ERP and MCP credentials | Not found anywhere (inv. 11) |
 
-## Output
+### Output
 
 The narrative is printed by `go test -v`. For example:
 
@@ -68,6 +72,32 @@ The narrative is printed by `go test -v`. For example:
     reconciliation checks: [found]
 ```
 
+## Slice C demo
+
+`TestSliceCDemo` follows the §111 Slice C script: trigger MCP drift, show the blast radius, kill the affected agent version, show trace and audit evidence. It adds one service to the stack, `fakemcp`: a stateless MCP server (modern revision `2026-07-28`, Streamable HTTP) on the worker-only `erp` network. Its bearer token is held by the worker's connector-secret manifest; the server holds only a verifier. It lists its tools from `/data/tools.json`. The demo replaces that file with `docker compose cp` to play a vendor release.
+
+| Step | What happens | What it proves |
+|---|---|---|
+| C0 | `eacpctl tenant create` for Globex with admins alice and bob; every person, grant and key is approved by the second admin; a policy allows routine ERP work | Two-person administration, in a second tenant on the same stack |
+| C1 | Erin registers the MCP connector `sap-mcp`. Declaring a tool by hand is refused (409). The worker's scanner discovers `get_po`: definition #1, risk `initial`, read-only, with a fingerprint computed by PostgreSQL | Tools are discovered, never declared (ADR-023) |
+| C2 | Erin certifies `get_po` as `READ_ONLY`, pinned to definition #1, and rita activates it. `po-assistant` (team procurement) may call `erp.create_po` and `sap-mcp.get_po`; `invoice-bot` (team finance) only `erp.create_po`. A routine purchase executes | One PO in the ERP |
+| C3 | The server now lists `get_po` with a new description, an `approve` argument and `destructiveHint: true`. Operator otto requests a rescan. Definition #2 is `high` risk; the contract no longer matches the fingerprint and the tool is quarantined. po-assistant's lookup is `DENIED tool_quarantined` | MCP drift is detected and contained before governance (ADR-023 §6–7) |
+| C4 | Blast radius of `sap-mcp`: po-assistant is confirmed, team procurement is affected, invoice-bot is not; coverage `observed_only` | Blast radius from capability edges (ADR-015) |
+| C5 | Otto kills po-assistant's version (`security_incident`). Its next purchase uses `erp.create_po`, which did not drift: it stays `QUEUED`, is never attempted and reaches no ERP. invoice-bot keeps working. Otto cannot clear their own kill (403). The held action is cancelled | Kill fencing in PostgreSQL, two-person clear, cancellation never blocked (ADR-016) |
+| C6 | The held action and its outbox events carry the agent's W3C trace context. The journal since the drift shows the rescan request, the quarantine (`tools.update` by the scanner), the new definition, the scan, the denied lookup, the kill and the cancellation. Auditor audra verifies the tenant's hash chain | Trace and audit evidence |
+| C7 | Search every API response, every service log (including `fakemcp`'s) and a database dump for the ERP and MCP credentials | Not found anywhere |
+
+```text
+=== C3. Trigger MCP drift: the server now advertises a different get_po
+    fakemcp now lists get_po with a new description, an "approve" argument and destructiveHint: true
+    otto requests a rescan: "vendor released sap-mcp 2.1"
+    definition #2: risk high, changed [annotations description inputSchema], destructive true
+    get_po: contract no longer matches its fingerprint; quarantined (definition 2 changed: annotations, description, inputSchema); executable false
+    po-assistant asks for sap-mcp.get_po: DENIED tool_quarantined, before governance
+```
+
+No worker calls an MCP tool yet (`tools/call` needs its own ADR). The quarantine therefore shows up as a denial at submission. The kill is shown on an ERP purchase, which is the path a worker can dispatch.
+
 ## Scope
 
-The demo credentials, the tenant id and the Fake ERP token are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).
+The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).
