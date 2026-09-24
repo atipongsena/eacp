@@ -17,6 +17,13 @@ func natsSession(user, password, subject string) (string, error) {
 	return string(out), err
 }
 
+func natsSubscribeSession(user, password, subject string) (string, error) {
+	script := fmt.Sprintf(`{ printf 'CONNECT {"user":"%s","pass":"%s","verbose":true,"pedantic":false}\r\nSUB %s 1\r\nPING\r\n'; sleep 2; } | nc -w 3 nats 4222`,
+		user, password, subject)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_bus", "busybox:1.37", "sh", "-c", script).CombinedOutput()
+	return string(out), err
+}
+
 // Positive control: the relay credential may publish work hints, so the
 // negative test below fails for the permission and not for a broken probe.
 // ($JS.API.INFO is a harmless subject the relay may publish on.)
@@ -37,6 +44,18 @@ func TestWorkerCredentialCannotPublishHintsOrEvents(t *testing.T) {
 		if err != nil || !strings.Contains(out, "Permissions Violation for Publish") {
 			t.Errorf("worker publishing on %s (err=%v): %s", subject, err, out)
 		}
+	}
+}
+
+func TestWorkerMaySubscribeOnlyToKillEvents(t *testing.T) {
+	requireCompose(t)
+	allowed, err := natsSubscribeSession("worker", "worker_dev", "eacp.events.*.kill.changed")
+	if err != nil || !strings.Contains(allowed, "PONG") || strings.Contains(allowed, "Permissions Violation") {
+		t.Fatalf("worker kill subscription (err=%v): %s", err, allowed)
+	}
+	denied, err := natsSubscribeSession("worker", "worker_dev", "eacp.events.>")
+	if err != nil || !strings.Contains(denied, "Permissions Violation for Subscription") {
+		t.Fatalf("worker broad events subscription (err=%v): %s", err, denied)
 	}
 }
 

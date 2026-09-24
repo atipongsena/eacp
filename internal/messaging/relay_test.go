@@ -70,6 +70,38 @@ func TestRelayPublishesEachRowOnceWithItsIDAndTraceparent(t *testing.T) {
 	}
 }
 
+func TestKillChangeIsATransactionalBroadcastSignal(t *testing.T) {
+	v := newEnv(t)
+	a := v.submit()
+	ctx := context.Background()
+	if err := storage.InTenantTx(ctx, v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		if err := storage.SetActor(ctx, tx, v.f.P["otto"]); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `SELECT eacp.set_kill('action', $1, true, 'incident')`, a.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := v.count(`SELECT count(*) FROM eacp.outbox_events WHERE topic = 'kill.changed'`); n != 1 {
+		t.Fatalf("kill outbox rows = %d", n)
+	}
+	v.runRelay(v.relay(v.js))
+	stream, err := v.js.Stream(ctx, messaging.EventStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := stream.GetLastMsgForSubject(ctx, "eacp.events."+pgtest.TenantA+".kill.changed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(msg.Data, &body); err != nil || body["scope"] != "action" ||
+		body["target_id"] != a.ID.String() || body["epoch"] != float64(1) || len(body) != 3 {
+		t.Fatalf("kill signal = %s, err = %v", msg.Data, err)
+	}
+}
+
 func (v *env) outboxID(action uuid.UUID, topic string) uuid.UUID {
 	v.t.Helper()
 	ctx := context.Background()

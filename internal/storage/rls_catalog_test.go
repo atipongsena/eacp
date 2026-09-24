@@ -67,6 +67,10 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname = 'dependency_edges'`); !slices.Equal(got, []string{"dependency_edges"}) {
 		t.Errorf("reviewed dependency table missing: %v", got)
 	}
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname IN ('kill_states', 'kill_tenant_epochs') ORDER BY relname`); !slices.Equal(got, []string{"kill_states", "kill_tenant_epochs"}) {
+		t.Errorf("reviewed kill tables missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
 	// 00005-00007, 00010, 00012, 00013, 00014).
@@ -74,6 +78,8 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"actions owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connector_circuits owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connectors owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"kill_states owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"kill_tenant_epochs owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"mcp_servers owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"outbox_events owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"scheduler_team_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -102,6 +108,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.outbox_pending(text[],integer)",
 		"eacp.outbox_prunable(integer)",
 		"eacp.reconcilable_actions(text[],jsonb,integer)",
+		"eacp.set_kill(text,uuid,boolean,text,text)",
 		"eacp.tenants_with_open_actions(uuid,integer)",
 	}
 	if got := strs(`SELECT p.oid::regprocedure::text FROM pg_proc p

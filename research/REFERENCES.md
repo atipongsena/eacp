@@ -73,6 +73,10 @@ image in compose.
 
   A publish outside its permissions gets `-ERR 'Permissions Violation for Publish to "<subject>"'`.
 
+## Phase 16 kill semantics checked against upstream (2026-09-24)
+
+Microsoft's [Go kill-switch source at commit `98a7773`](https://github.com/microsoft/agent-governance-toolkit/blob/98a777328af9ad4dc76bc76803071cf5a615811b/agent-governance-golang/packages/agentmesh/kill_switch.go) defines scoped `Activate` and `Clear`, an event history, scopes `global`, `agent`, `capability`, and reason codes `policy_violation`, `security_incident`, `operator_request`, `error_budget_exhausted`. EACP uses those reason-code strings and maps agent/capability to registry agent/tool IDs. It does not import this Go module or use its process-local registry as execution authority; the pinned `agt-policies` sidecar remains the governance PDP (ADR-002, ADR-016). This source check does not change any dependency pin.
+
 ## Phase 9 spike — AGT / ACS Python API (2026-09-24)
 
 ### Pinned artifacts

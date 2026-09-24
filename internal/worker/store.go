@@ -221,6 +221,7 @@ const (
 	Denied      Decision = "denied"       // T16b: revoked before dispatch
 	Expired     Decision = "expired"      // T18: not_after passed
 	CircuitOpen Decision = "circuit_open" // T17: the connector's circuit is open
+	Killed      Decision = "killed"       // T17: a kill scope withheld dispatch
 )
 
 // Dispatch is a recorded dispatch intent.
@@ -254,6 +255,15 @@ func (s *Store) Intent(ctx context.Context, l Lease, leaseAfterCall time.Duratio
 		if state != "LEASED" || gen != l.Generation {
 			return ErrLeaseLost
 		}
+		// Serialize even an absent kill row with set_kill. The action row is
+		// already locked; this same advisory lock is taken by the T16 trigger.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('eacp.kill:' || eacp.current_tenant_id()::text, 0))`); err != nil {
+			return err
+		}
+		var killed bool
+		if err := tx.QueryRow(ctx, `SELECT eacp.action_killed(a) FROM eacp.actions a WHERE id = $1`, l.ActionID).Scan(&killed); err != nil {
+			return err
+		}
 		move := func(sql string, args ...any) error {
 			_, err := tx.Exec(ctx, sql, append([]any{l.ActionID}, args...)...)
 			return fenced(err)
@@ -268,6 +278,9 @@ func (s *Store) Intent(ctx context.Context, l Lease, leaseAfterCall time.Duratio
 		case drift != nil:
 			decision = Denied
 			return move(`UPDATE eacp.actions SET state = 'DENIED', state_reason = $2 WHERE id = $1`, *drift)
+		case killed:
+			decision = Killed
+			return move(`UPDATE eacp.actions SET state = 'QUEUED', state_reason = 'kill scope active' WHERE id = $1`)
 		case circuit != nil:
 			decision = CircuitOpen
 			return move(`UPDATE eacp.actions SET state = 'QUEUED', state_reason = 'connector circuit open' WHERE id = $1`)
@@ -283,6 +296,22 @@ func (s *Store) Intent(ctx context.Context, l Lease, leaseAfterCall time.Duratio
 			WHERE action_id = $1 AND lease_generation = $2`, l.ActionID, l.Generation).Scan(&d.Attempt)
 	})
 	return decision, d, err
+}
+
+// CheckKill is the post-intent, pre-call check. An epoch change is treated
+// conservatively even if an operator already resumed the scope.
+func (s *Store) CheckKill(ctx context.Context, l Lease) (bool, error) {
+	var killed bool
+	err := s.inTx(ctx, l.TenantID, 0, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT eacp.action_killed(a) OR a.dispatch_kill_epoch <
+			COALESCE((SELECT epoch FROM eacp.kill_tenant_epochs WHERE tenant_id = a.tenant_id), 0)
+			FROM eacp.actions a WHERE a.id = $1 AND a.state = 'EXECUTING' AND a.lease_generation = $2`,
+			l.ActionID, l.Generation).Scan(&killed)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, ErrLeaseLost
+	}
+	return killed, err
 }
 
 // Deny denies a leased action before dispatch (T16b) for a reason the
@@ -310,10 +339,13 @@ func (s *Store) Release(ctx context.Context, l Lease, reason string) error {
 // ErrLeaseLost: the sweeper owns it now.
 func (s *Store) Heartbeat(ctx context.Context, l Lease, lease time.Duration) (cancelRequested bool, err error) {
 	err = s.inTx(ctx, l.TenantID, l.Generation, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `UPDATE eacp.actions
+		err := tx.QueryRow(ctx, `UPDATE eacp.actions a
 			SET leased_until = greatest(leased_until, now() + make_interval(secs => $2))
 			WHERE id = $1 AND lease_generation = $3 AND state IN ('LEASED', 'EXECUTING')
-			RETURNING cancel_requested_at IS NOT NULL`, l.ActionID, lease.Seconds(), l.Generation).Scan(&cancelRequested)
+			RETURNING cancel_requested_at IS NOT NULL OR eacp.action_killed(a) OR
+			  (a.state = 'EXECUTING' AND a.dispatch_kill_epoch < COALESCE(
+			   (SELECT epoch FROM eacp.kill_tenant_epochs WHERE tenant_id = a.tenant_id), 0))`,
+			l.ActionID, lease.Seconds(), l.Generation).Scan(&cancelRequested)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrLeaseLost
 		}
@@ -337,7 +369,7 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 	err := s.inTx(ctx, l.TenantID, l.Generation, func(tx pgx.Tx) error {
 		var state string
 		var gen int64
-		var budgetLeft, cancelled, alive, readOnly bool
+		var budgetLeft, cancelled, alive, readOnly, killChanged bool
 		err := tx.QueryRow(ctx, `SELECT a.state, a.lease_generation, a.cancel_requested_at IS NOT NULL,
 			a.not_after > now(), k.side_effects = ARRAY['READ_ONLY'] AND k.revoked_at IS NULL
 			FROM eacp.actions a
@@ -345,6 +377,19 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 			WHERE a.id = $1 FOR UPDATE OF a`, l.ActionID).Scan(&state, &gen, &cancelled, &alive, &readOnly)
 		if err != nil {
 			return err
+		}
+		// Lock after the action row, as T16 does. A concurrent kill that
+		// commits first must be visible before a result is classified.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('eacp.kill:' || eacp.current_tenant_id()::text, 0))`); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT eacp.action_killed(a) OR a.dispatch_kill_epoch < COALESCE(
+			(SELECT epoch FROM eacp.kill_tenant_epochs WHERE tenant_id = a.tenant_id), 0)
+			FROM eacp.actions a WHERE a.id = $1`, l.ActionID).Scan(&killChanged); err != nil {
+			return err
+		}
+		if killChanged {
+			r = Result{Outcome: Ambiguous, ErrorClass: "kill_interrupted"}
 		}
 		if err := tx.QueryRow(ctx, `UPDATE eacp.action_attempts
 			SET outcome = $3, external_reference = NULLIF($4, ''), error_class = NULLIF($5, '')
@@ -362,9 +407,11 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 			WHERE a.id = $1`, l.ActionID).Scan(&budgetLeft); err != nil {
 			return err
 		}
-		retry := budgetLeft && !cancelled && alive
+		retry := budgetLeft && !cancelled && !killChanged && alive
 		var reason string
 		switch {
+		case killChanged:
+			c.State, reason = "UNKNOWN_OUTCOME", "kill during execution"
 		case r.Outcome == Succeeded:
 			c.State, reason = "SUCCEEDED", "succeeded"
 		case r.Outcome == NoEffect && retry:

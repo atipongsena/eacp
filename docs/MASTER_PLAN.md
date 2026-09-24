@@ -3599,6 +3599,8 @@ Rev 2: edge มี source, freshness และ confidence
 
 # 90. Phase 16 — Distributed Kill Switch (Slice C)
 
+> **Status (2026-09-24): delivered for seven scopes.** Normative detail: [ADR-016](adr/ADR-016-distributed-kill-switch.md) Rev 1.0. PostgreSQL holds each kill scope's state and epoch plus a tenant epoch; `eacp.set_kill` requires an operator, a tenant-local target and one of AGT's four reason codes, and a second operator must resume. T14/T16 check the scopes under a tenant advisory lock, so a kill committed before the dispatch intent means no external call. The worker re-checks before the call and polls during it; a `kill.changed` outbox signal over NATS only wakes that check. An epoch change during execution records `UNKNOWN_OUTCOME` for reconciliation. Enforced scopes: tenant, team (the pinned owner group), agent, agent version, action, connector and tool. `global`, `run` and `model` are rejected until authoritative platform identity and action bindings exist.
+
 Integrate:
 
 ```text

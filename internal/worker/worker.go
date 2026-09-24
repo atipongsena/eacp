@@ -41,6 +41,9 @@ type Options struct {
 	BreakerCooldown time.Duration
 	// PollInterval is the idle wait between claims (default 500ms).
 	PollInterval time.Duration
+	// KillPollInterval checks PostgreSQL during an external call even when
+	// NATS drops a kill signal (default 1s).
+	KillPollInterval time.Duration
 	// Wake, when set, ends an idle wait early: a NATS work hint (ADR-014)
 	// makes the loop claim at once. A wake-up only triggers the ordinary
 	// fenced claim through PostgreSQL; polling continues as the backstop.
@@ -73,6 +76,8 @@ type Worker struct {
 
 	mu       sync.Mutex
 	inflight map[Skip]int // leased actions per tenant and capacity group
+	killMu   sync.Mutex
+	killWake chan struct{}
 }
 
 // New returns a Worker over pool (the application role).
@@ -107,13 +112,16 @@ func New(pool *pgxpool.Pool, o Options) (*Worker, error) {
 	if o.PollInterval <= 0 {
 		o.PollInterval = 500 * time.Millisecond
 	}
+	if o.KillPollInterval <= 0 {
+		o.KillPollInterval = time.Second
+	}
 	if o.Backoff == nil {
 		o.Backoff = jitteredBackoff
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	w := &Worker{store: NewStore(pool, o.ID), o: o, inflight: map[Skip]int{},
+	w := &Worker{store: NewStore(pool, o.ID), o: o, inflight: map[Skip]int{}, killWake: make(chan struct{}),
 		breaker: newBreaker(o.BreakerFailures, o.BreakerCooldown, time.Now)}
 	for p := range o.Connectors {
 		w.protocols = append(w.protocols, p)
@@ -124,6 +132,21 @@ func New(pool *pgxpool.Pool, o Options) (*Worker, error) {
 
 // Store returns the worker's fenced store.
 func (w *Worker) Store() *Store { return w.store }
+
+// NotifyKill wakes every in-flight call's database check. A message alone
+// never cancels a call; PostgreSQL remains the only authority.
+func (w *Worker) NotifyKill() {
+	w.killMu.Lock()
+	close(w.killWake)
+	w.killWake = make(chan struct{})
+	w.killMu.Unlock()
+}
+
+func (w *Worker) killSignal() <-chan struct{} {
+	w.killMu.Lock()
+	defer w.killMu.Unlock()
+	return w.killWake
+}
 
 // skipList is what the claim hint must leave out for this worker: capacity
 // groups whose bulkhead is full and connectors whose breaker is open.
@@ -322,6 +345,16 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	if w.o.AfterIntent != nil {
 		w.o.AfterIntent(exec, l)
 	}
+	killed, err := w.store.CheckKill(exec, l)
+	if err != nil || killed {
+		// An intent committed, so absence of a call is still recorded as an
+		// ambiguous attempt. Reconciliation, not this worker, proves effect.
+		if _, completeErr := w.store.Complete(exec, l,
+			Result{Outcome: Ambiguous, ErrorClass: "kill_before_call"}, 0); completeErr != nil {
+			log.WarnContext(exec, "cannot record withheld call", "err", completeErr)
+		}
+		return
+	}
 
 	callCtx, cancel := context.WithTimeout(exec, d.Timeout)
 	var cancelled atomic.Bool // set when the worker itself cancels the call
@@ -363,21 +396,31 @@ func (w *Worker) release(ctx context.Context, l Lease, log *slog.Logger, reason 
 	}
 }
 
-// heartbeat extends the lease every Lease/3 until stopped. A lost lease or
-// a cancellation request cancels the in-flight call.
+// heartbeat extends the lease every Lease/3 and reads the kill state every
+// KillPollInterval (or on a kill signal) until stopped. A lost lease, a
+// cancellation request or a kill cancels the in-flight call.
 func (w *Worker) heartbeat(ctx context.Context, l Lease, cancelCall context.CancelFunc, log *slog.Logger) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		t := time.NewTicker(w.o.Lease / 3)
+		kt := time.NewTicker(w.o.KillPollInterval)
 		defer t.Stop()
+		defer kt.Stop()
 		for {
+			var cancelRequested bool
+			var err error
 			select {
 			case <-done:
 				return
 			case <-t.C:
+				cancelRequested, err = w.store.Heartbeat(ctx, l, w.o.Lease)
+			case <-kt.C:
+				// The frequent kill check only reads; the lease has its own tick.
+				cancelRequested, err = w.store.CheckKill(ctx, l)
+			case <-w.killSignal():
+				cancelRequested, err = w.store.CheckKill(ctx, l)
 			}
-			cancelRequested, err := w.store.Heartbeat(ctx, l, w.o.Lease)
 			switch {
 			case errors.Is(err, ErrLeaseLost):
 				log.WarnContext(ctx, "lease lost during the call; cancelling it")

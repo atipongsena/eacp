@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
 	"eacp/internal/config"
@@ -49,7 +50,7 @@ func main() {
 				}
 				id = host
 			}
-			wake, err := startHints(d)
+			wake, nc, err := startHints(d)
 			if err != nil {
 				return err
 			}
@@ -62,6 +63,13 @@ func main() {
 			})
 			if err != nil {
 				return err
+			}
+			if nc != nil {
+				// This is a broadcast latency hint. Each in-flight call reads
+				// PostgreSQL before deciding whether to cancel.
+				if _, err := nc.Subscribe("eacp.events.*.kill.changed", func(*nats.Msg) { w.NotifyKill() }); err != nil {
+					return err
+				}
 			}
 			r, err := worker.NewReconciler(d.DB, worker.ReconcilerOptions{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
@@ -88,28 +96,28 @@ func main() {
 
 // startHints runs the work-hint consumer when EACP_NATS_URL is set and
 // returns its wake-up channel (nil otherwise: the worker only polls).
-func startHints(d *service.Deps) (<-chan struct{}, error) {
+func startHints(d *service.Deps) (<-chan struct{}, *nats.Conn, error) {
 	if d.Config.NATSURL == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	nc, err := messaging.Connect(d.Config.NATSURL, d.Config.NATSCAFile, "execution-worker hints", d.Log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	js, err := jetstream.New(nc)
 	if err != nil {
 		nc.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	hints, err := messaging.NewHints(d.DB, js, messaging.HintOptions{Log: d.Log})
 	if err != nil {
 		nc.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	d.Background(func(ctx context.Context) {
 		defer nc.Close()
 		hints.Run(ctx)
 	})
 	d.Log.Info("work hints on", "nats", config.RedactURL(d.Config.NATSURL))
-	return hints.Wake(), nil
+	return hints.Wake(), nc, nil
 }

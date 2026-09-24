@@ -13,7 +13,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 
-Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)).
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -130,6 +130,12 @@ Executing MCP tools (`tools/call`) is not part of Phase 14: no worker serves pro
 | Operators and auditors query `GET /v1/dependencies/blast-radius?kind=mcp&id=<uuid>` or `eacpctl dependency blast-radius mcp <uuid>`. Editors record with `POST /v1/dependencies` and revoke with `POST /v1/dependencies/{id}/revoke`. For model/system targets, use `name=<tenant-local-name>` in place of `id`. | `TestDependencyAPIRecordsAndReportsBlastRadius`, `TestDependencyBlastRadiusCommand` |
 
 The report counts recent **actions**, not workflow runs; workflow identity is not yet in the registry. Graph evidence does not change execution authorization or trigger containment.
+
+## Slice C (Phase 16): distributed execution kills
+
+Operators use `POST /v1/killswitch` with `{"scope":"agent_version","target_id":"<uuid>","killed":true,"reason_code":"security_incident","reason":"<incident note>"}`. `reason_code` defaults to `operator_request` and accepts the four [AGT reason codes](docs/adr/ADR-016-distributed-kill-switch.md). A different operator resumes the scope with `killed:false`. Operators and auditors list states with `GET /v1/killswitch`. The CLI provides `eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <reason-code>]` and `eacpctl kill list`.
+
+The enforceable scopes are `tenant`, `team`, `agent`, `agent_version`, `action`, `connector` and `tool`. PostgreSQL rejects a killed scope at claim and dispatch intent; workers check again before the external call and during it. NATS only wakes that check. A kill during execution records `UNKNOWN_OUTCOME` for reconciliation because cancellation does not undo an external effect. `global`, `run` and `model` are rejected until EACP has platform operator authority and authenticated run/model action bindings; see ADR-016.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

@@ -27,6 +27,7 @@ import (
 const (
 	TopicQueued     = "action.queued"
 	TopicTransition = "action.transition"
+	TopicKill       = "kill.changed"
 
 	WorkStream   = "EACP_WORK"
 	EventStream  = "EACP_EVENTS"
@@ -45,10 +46,11 @@ const (
 var streams = map[string]string{
 	TopicQueued:     "eacp.work.",
 	TopicTransition: "eacp.events.",
+	TopicKill:       "eacp.events.",
 }
 
 // Topics lists the topics the relay publishes.
-func Topics() []string { return []string{TopicQueued, TopicTransition} }
+func Topics() []string { return []string{TopicQueued, TopicTransition, TopicKill} }
 
 // Subject returns the subject of topic for tenant, or false for a topic the
 // relay does not publish.

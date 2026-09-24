@@ -12,6 +12,8 @@ Phase 14 (Slice C) adds the MCP registry: discovery, database-computed tool fing
 
 Phase 15 (Slice C) adds tenant-scoped dependency evidence and conservative blast-radius queries (ADR-015). Its database guards, audit, RLS and read API join invariants 8 and 17. `internal/registry/dependency_test.go` also checks current allowlist paths, delegation cycles, and widened possible impact for stale or unknown evidence.
 
+Phase 16 (Slice C) adds PostgreSQL-authoritative scoped execution kills (ADR-016). Raw T14/T16 checks, in-flight cancellation and ambiguous outcome evidence join invariants 1, 8, 12, 17 and 18. `internal/worker/kill_test.go` also checks monotonic epochs, two-person clear and tenant isolation; `internal/messaging/relay_test.go` checks the transactional signal.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -29,6 +31,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestHeartbeatExtendsOnlyTheHoldersLiveLease — only the holder extends its lease
 - `internal/worker` TestStillUnknownBacksOffAndStaleReconcilersAreFenced — stale reconcilers are fenced out too
 - `internal/worker` TestStaleScannerCannotRecord — a scanner whose scan lease was taken over records nothing
+- `internal/worker` TestRawDispatchIntentIsDatabaseFencedByKill — raw T16 cannot commit an attempt under a killed scope
 - `internal/registry` TestScanLeaseFencesStaleScanners — the database fences scan records by worker, generation and expiry
 
 ## 2 [A] One-time approval cannot release two execution claims
@@ -110,6 +113,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — connector circuits are tenant rows under RLS
 - `internal/worker` TestScannerScansOnlyServersItHoldsSecretsFor — the cross-tenant scan hint yields only servers whose tenant-bound secret the worker holds
 - `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — a dependency cannot refer across tenants; its table follows RLS
+- `internal/worker` TestKillRejectsDirectWriteAndForeignTarget — the kill API rejects a foreign target and direct table writes
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -145,6 +149,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate — nothing else re-dispatches
 - `internal/worker` TestHumanResolutionIsSeparatedJournaledAndTwoPersonForRetry — a human retry needs two operators and keeps the key
 - `internal/worker` TestRestartedServicesFinishEveryPendingAction — an interrupted call is reconciled after a restart, not re-dispatched
+- `internal/worker` TestCompletionSerializesWithKillAndKeepsOutcomeUnknown — completion cannot turn a racing kill into a proven success
+- `internal/worker` TestKillResumedDuringCallStillLeavesOutcomeUnknown — a kill resumed during the call still leaves the outcome unknown
 
 ## 13 [A] "Not found" alone never authorizes the retry of an irreversible or non-idempotent action
 
@@ -193,6 +199,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — every circuit trip, disable and enable is journaled with its actor and reason
 - `internal/registry` TestScanActivityIsJournaled — every scan, recorded definition, rescan request and quarantine is journaled with its actor and reason
 - `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — dependency evidence insertion and revocation are journaled with the editor actor
+- `internal/worker` TestKillAndResumeAreJournaledWithActorAndReason — both operator changes are audited with reason and emitted to the outbox
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 
@@ -203,6 +210,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/action` TestReceivedActionCanBeCancelledByTheRequesterOrAnOperator — T5a in raw SQL
 - `internal/action` TestCancelWinsOverAnInFlightDecision — a cancel during a PDP call wins
 - `internal/worker` TestGovernanceOutageFailsClosedWithoutBlockingSafety — cancellation, reconciliation and containment during an outage
+- `internal/worker` TestKillDuringCallForcesUnknownOutcome — kill containment is database-authoritative and the call is reconciled as unknown
 - `integrations/governance/microsoftagt` TestFailuresAreTransientAndBadResponsesAreMalformed — every AGT sidecar failure, version mismatch or bad response is transient
 - `integrations/governance/microsoftagt` TestEngineWithTheAGTProvider — an AGT outage keeps the action RECEIVED, and cancel never calls the sidecar
 - `cmd/controlplane-api` TestGovernanceProviderSelection — an unreachable PDP does not stop the API from starting; a mismatched one does

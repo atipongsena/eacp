@@ -113,6 +113,11 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 		(tenant_id, from_kind, from_id, to_kind, to_id, source, confidence, observed_at, expires_at)
 		VALUES (eacp.current_tenant_id(), 'agent_version', $1, 'mcp', $2,
 		'deployment_manifest', 'high', now(), now() + interval '1 day') RETURNING id`, v.agent.Version, mcpID)
+	// Phase 16: a kill creates both scoped state and the tenant epoch. Use
+	// an already finished action so the flow above remains deterministic.
+	if err := v.f.Exec("otto", `SELECT eacp.set_kill('action', $1, true, 'isolation fixture')`, found.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	// Registry records the action flow does not touch: a group with a member
 	// and an approved principal key.
