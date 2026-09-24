@@ -94,7 +94,7 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	// An MCP server discovered by the scanner (ADR-023): scan state, a scan
 	// and a tool definition.
 	mcpServer := mcptest.New(t, mcptest.Modern, scanToken, scanGetPO)
-	v.f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
+	mcpID := v.f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
 		VALUES (eacp.current_tenant_id(), 'sap-mcp', 'mcp', $1, 'sap-mcp') RETURNING id`, mcpServer.URL())
 	mcpSecrets, err := worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"sap-mcp","host":%q,"value":%q}]}`,
 		v.f.Tenant, strings.TrimPrefix(mcpServer.Server.URL, "http://"), scanToken)))
@@ -108,6 +108,11 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	if n, err := scanner.RunOnce(ctx); n != 1 || err != nil {
 		t.Fatalf("mcp scan = %d, %v", n, err)
 	}
+	// Phase 15: the editor's observed dependency is also tenant-isolated.
+	v.f.ID(t, "erin", `INSERT INTO eacp.dependency_edges
+		(tenant_id, from_kind, from_id, to_kind, to_id, source, confidence, observed_at, expires_at)
+		VALUES (eacp.current_tenant_id(), 'agent_version', $1, 'mcp', $2,
+		'deployment_manifest', 'high', now(), now() + interval '1 day') RETURNING id`, v.agent.Version, mcpID)
 
 	// Registry records the action flow does not touch: a group with a member
 	// and an approved principal key.

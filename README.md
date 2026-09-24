@@ -13,7 +13,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 
-Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)).
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -120,6 +120,16 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Operators see tools, definition history and scans, request a rescan, and quarantine or release a tool. | `GET /v1/connectors/{id}/tools`, `GET /v1/connectors/{id}/mcp[/scans]`, `POST /v1/connectors/{id}/mcp/scan`, `GET /v1/tools/{id}[/definitions]`, `POST /v1/tools/{id}/quarantine\|release`; `eacpctl connector tools\|mcp\|scans\|scan`, `eacpctl tool` |
 
 Executing MCP tools (`tools/call`) is not part of Phase 14: no worker serves protocol `mcp`, so an action on an MCP tool is never dispatched.
+
+## Slice C (Phase 15): dependency graph and blast radius
+
+| Capability | Evidence |
+|---|---|
+| Active allowlists give Agent→Tool and Agent→MCP paths; tools belong to MCP servers. Editors record Agent→Model, Agent→MCP, Agent→Agent and Tool→System observations with source, expiry and confidence. The database guards and audits every write. | [ADR-015](docs/adr/ADR-015-dependency-graph.md), `TestDependencyWritesAreGuardedAndTenantScoped` |
+| PostgreSQL recursive CTEs return confirmed and possible affected agent versions. Stale and unknown evidence widens the possible set; coverage is explicitly `observed_only`. | `TestBlastRadiusTraversesRegistryAndDeclaredDependencies`, `TestBlastRadiusWidensForUnknownOrStaleEvidence` |
+| Operators and auditors query `GET /v1/dependencies/blast-radius?kind=mcp&id=<uuid>` or `eacpctl dependency blast-radius mcp <uuid>`. Editors record with `POST /v1/dependencies` and revoke with `POST /v1/dependencies/{id}/revoke`. For model/system targets, use `name=<tenant-local-name>` in place of `id`. | `TestDependencyAPIRecordsAndReportsBlastRadius`, `TestDependencyBlastRadiusCommand` |
+
+The report counts recent **actions**, not workflow runs; workflow identity is not yet in the registry. Graph evidence does not change execution authorization or trigger containment.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

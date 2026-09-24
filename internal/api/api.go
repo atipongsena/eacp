@@ -122,6 +122,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 
 	s.registerBudget(mux)
 	s.registerMCP(mux)
+	s.registerDependency(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

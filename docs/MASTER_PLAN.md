@@ -3573,6 +3573,8 @@ quarantine
 
 # 89. Phase 15 — Dependency Graph & Blast Radius (Slice C)
 
+> **Status (2026-09-24): delivered.** Normative detail: [ADR-015](adr/ADR-015-dependency-graph.md) Rev 1.0. The registry's active allowlist and connector/tool rows provide current capability edges; tenant-scoped evidence records Agent→Model, Agent→MCP, Tool→System and Agent→Agent with source, expiry and confidence. PostgreSQL recursive CTEs return confirmed and possible agent versions. Stale, lower-confidence and unknown edges widen the possible set. Coverage remains `observed_only`: missing declarations do not prove absence. Operators can query the radius by API or `eacpctl`; the result includes affected owning groups, contract data classes and production action count over the last 24 hours. No workflow entity exists yet, so no workflow count is claimed.
+
 Store:
 
 ```text

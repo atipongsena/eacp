@@ -61,6 +61,12 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		ORDER BY 1`); len(got) != 0 {
 		t.Errorf("tables without the tenant_isolation policy: %v", got)
 	}
+	// Phase 15's dependency evidence uses the standard tenant policy and no
+	// cross-tenant exception. The checks above inspect it with every table.
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname = 'dependency_edges'`); !slices.Equal(got, []string{"dependency_edges"}) {
+		t.Errorf("reviewed dependency table missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
 	// 00005-00007, 00010, 00012, 00013, 00014).

@@ -10,6 +10,8 @@ Phase 13 (Slice B) adds backpressure, bulkheads, circuit breakers and retry budg
 
 Phase 14 (Slice C) adds the MCP registry: discovery, database-computed tool fingerprints, definition history, risk metadata, contract invalidation and quarantine (ADR-023). §103 tags no invariant [C]. Its tests join invariants 1, 7, 8, 17 and 19, and the full-flow isolation test now also covers the MCP tables. `internal/connector/mcp` checks the discovery client against the official MCP Go SDK (modern and legacy revisions, JSON and SSE).
 
+Phase 15 (Slice C) adds tenant-scoped dependency evidence and conservative blast-radius queries (ADR-015). Its database guards, audit, RLS and read API join invariants 8 and 17. `internal/registry/dependency_test.go` also checks current allowlist paths, delegation cycles, and widened possible impact for stale or unknown evidence.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -107,6 +109,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/budget` TestBudgetRowsAreTenantIsolated — budget accounts, reservations and limit changes are tenant rows under RLS
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — connector circuits are tenant rows under RLS
 - `internal/worker` TestScannerScansOnlyServersItHoldsSecretsFor — the cross-tenant scan hint yields only servers whose tenant-bound secret the worker holds
+- `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — a dependency cannot refer across tenants; its table follows RLS
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -189,6 +192,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/action` TestSettlementFollowsTheOutcome — a reservation and its settlement are journaled with their actors
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — every circuit trip, disable and enable is journaled with its actor and reason
 - `internal/registry` TestScanActivityIsJournaled — every scan, recorded definition, rescan request and quarantine is journaled with its actor and reason
+- `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — dependency evidence insertion and revocation are journaled with the editor actor
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 

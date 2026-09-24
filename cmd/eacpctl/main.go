@@ -29,6 +29,8 @@
 //	eacpctl tool get|definitions <tool-id>
 //	eacpctl tool quarantine|release <tool-id> --reason <text>
 //	                          block a tool, or lift its quarantine (a second registry approver)
+//	eacpctl dependency blast-radius mcp|tool|agent_version <uuid>
+//	eacpctl dependency blast-radius model|system <name>
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -64,6 +66,7 @@ const usage = `usage:
   eacpctl agent register|list|inspect ...
   eacpctl connector register|circuit|disable|enable|tools|mcp|scans|scan ...
   eacpctl tool get|definitions|quarantine|release ...
+  eacpctl dependency blast-radius <kind> <id|name>
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
@@ -96,6 +99,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runTool(ctx, args[1:], getenv, out)
 	case "action":
 		return runAction(ctx, args[1:], getenv, out)
+	case "dependency":
+		return runDependency(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
 	case "pdp-dev-certs":

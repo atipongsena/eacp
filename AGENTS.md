@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014), 11 (Budget Reservation, ADR-012), 12 (Fair Scheduler, ADR-011) and 13 (Backpressure, Bulkheads, Circuit Breakers & Retry Budgets, ADR-022)** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). **Slice C: Phase 14 (MCP Registry & Tool Fingerprint, ADR-023) is complete; Phase 15 (Dependency Graph & Blast Radius) has not started.**
+Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014), 11 (Budget Reservation, ADR-012), 12 (Fair Scheduler, ADR-011) and 13 (Backpressure, Bulkheads, Circuit Breakers & Retry Budgets, ADR-022)** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). **Slice C: Phase 14 (MCP Registry & Tool Fingerprint, ADR-023) and Phase 15 (Dependency Graph & Blast Radius, ADR-015) are complete; Phase 16 has not started.**
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -35,6 +35,7 @@ Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9 (AG
 - Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → connector circuit `FOR SHARE` (T16) → budget leaf → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
 - MCP tools are discovered, never declared (ADR-023). Only the execution worker's scanner talks to an MCP server, with the worker-held secret. A scan transaction binds `storage.SetScanner` (worker id and scan-lease generation) and writes only through `eacp.mcp_record_scan`; `eacp.actor_context()` rejects the scanner. PostgreSQL computes every fingerprint, digest and risk; never send them from Go. An MCP contract pins the tool's current `definition_id`. A high-risk change or a missing certified tool quarantines the tool; release is a second registry approver and never recertifies. No worker serves protocol `mcp` yet: do not add `tools/call` without an ADR.
 - Backpressure and breakers only withhold work (ADR-022). A connector's circuit row is created with the connector; only a worker opens it (at most 10 minutes, never earlier) and only an `operator` disables or enables it. T14 and T16 refuse an open circuit in PostgreSQL. Ask `eacp.retry_budget_exhausted` whether a retry is allowed; never compare `attempt_count` with `max_attempts` in Go.
+- Dependency edges are tenant-scoped, immutable observations with source, expiry and confidence (ADR-015); only a `registry_editor` records or revokes them. Existing allowlists and connector/tool rows supply the capability edges. Blast radius runs in a tenant read-only snapshot with recursive CTEs; stale or unknown evidence widens possible impact. Its `observed_only` coverage never proves an undeclared dependency absent. The graph never grants access or triggers containment.
 
 ## Commands
 
@@ -68,7 +69,7 @@ internal/storage     pgx pool, InTenantTx, SetActor, role and schema checks, mig
 internal/audit       hash-chained, append-only audit journal (Append, Verify)
 internal/identity    API keys (bring your own key) and Authenticate
 internal/registry    principals, roles, groups, credentials, agents, versions,
-                     allowlists, connectors, tools, contracts; CheckCapability
+                     allowlists, connectors, tools, contracts, dependency evidence and blast radius; CheckCapability
 internal/registry/registrytest  bootstrapped fixture for tests
 internal/governance  local PDP, JCS digests, policy versions and decision evidence
 internal/governance/conformance  the ADR-002 reference set loader and checker
