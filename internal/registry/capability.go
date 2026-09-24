@@ -16,6 +16,7 @@ const (
 	DenyVersionNotActive    Denial = "agent_version_not_active"
 	DenyUnknownTool         Denial = "unknown_tool"
 	DenyNotInAllowlist      Denial = "tool_not_in_allowlist"
+	DenyToolQuarantined     Denial = "tool_quarantined"
 	DenyNoContract          Denial = "no_active_contract"
 	DenyContractRevoked     Denial = "contract_revoked"
 	DenyFingerprintMismatch Denial = "contract_fingerprint_mismatch"
@@ -58,12 +59,13 @@ func CheckCapability(ctx context.Context, tx pgx.Tx, versionID uuid.UUID, toolRe
 	}
 	var g Grant
 	var contract *uuid.UUID
+	var quarantined bool
 	err = tx.QueryRow(ctx, `
-		SELECT t.id, t.active_contract_id
+		SELECT t.id, t.active_contract_id, t.quarantined_at IS NOT NULL
 		FROM eacp.tools t
 		JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id
 		WHERE c.name = $1 AND t.name = $2
-		FOR SHARE OF t`, conn, tool).Scan(&g.ToolID, &contract)
+		FOR SHARE OF t`, conn, tool).Scan(&g.ToolID, &contract, &quarantined)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Grant{}, DenyUnknownTool, nil
@@ -79,6 +81,9 @@ func CheckCapability(ctx context.Context, tx pgx.Tx, versionID uuid.UUID, toolRe
 	}
 	if !allowed {
 		return Grant{}, DenyNotInAllowlist, nil
+	}
+	if quarantined {
+		return Grant{}, DenyToolQuarantined, nil
 	}
 	if contract == nil {
 		return Grant{}, DenyNoContract, nil

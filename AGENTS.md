@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014), 11 (Budget Reservation, ADR-012), 12 (Fair Scheduler, ADR-011) and 13 (Backpressure, Bulkheads, Circuit Breakers & Retry Budgets, ADR-022)** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). Slice C (Phase 14, MCP Registry & Fingerprint) has not started.
+Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9 (AGT sidecar PDP, ADR-002 Rev 2.4), 10 (NATS JetStream signals, ADR-014), 11 (Budget Reservation, ADR-012), 12 (Fair Scheduler, ADR-011) and 13 (Backpressure, Bulkheads, Circuit Breakers & Retry Budgets, ADR-022)** (Platform Foundation; Registry, Identity & Capability; Governance & Approval per ADR-002/005; Action API & Atomic Boundary per ADR-004/005; Worker, Lease, Fencing & Dispatch Intent per ADR-004 Rev 2.3; Connector Framework & Fake ERP per ADR-004 Rev 2.4; UNKNOWN_OUTCOME, Reconciliation & Human Resolution per ADR-004 Rev 2.5; Hardening & Demo per ADR-004 Rev 2.6). **Slice C: Phase 14 (MCP Registry & Tool Fingerprint, ADR-023) is complete; Phase 15 (Dependency Graph & Blast Radius) has not started.**
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -33,6 +33,7 @@ Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9 (AG
 - NATS carries signals, never authority (ADR-014). A work hint only wakes the worker's claim loop, and polling stays on. Nothing may be claimed, executed or decided from a message. Outbox rows come only from the action triggers, and a message carries ids and states, never a reason, payload or secret. `outbox` and `inbox` are messaging actors: `storage.SetSystem` binds them, and `eacp.actor_context()` rejects them. A consumer with effects records `Nats-Msg-Id` in `eacp.inbox_messages` in the same transaction.
 - Hard budgets (ADR-012) are enforced in PostgreSQL. The release reserves with `eacp.budget_reserve` after the action, approval rows and registry are locked, and before any audited write or grant consumption; T10 of a budgeted action requires the reservation. Only the agent's leaf account is locked (child limits are escrowed from their parent). Settlement follows the action's state and never locks an account; the next reservation or limit change folds it. Account counters change only from the budget triggers. Raising a limit is two-person.
 - Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → connector circuit `FOR SHARE` (T16) → budget leaf → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
+- MCP tools are discovered, never declared (ADR-023). Only the execution worker's scanner talks to an MCP server, with the worker-held secret. A scan transaction binds `storage.SetScanner` (worker id and scan-lease generation) and writes only through `eacp.mcp_record_scan`; `eacp.actor_context()` rejects the scanner. PostgreSQL computes every fingerprint, digest and risk; never send them from Go. An MCP contract pins the tool's current `definition_id`. A high-risk change or a missing certified tool quarantines the tool; release is a second registry approver and never recertifies. No worker serves protocol `mcp` yet: do not add `tools/call` without an ADR.
 - Backpressure and breakers only withhold work (ADR-022). A connector's circuit row is created with the connector; only a worker opens it (at most 10 minutes, never earlier) and only an `operator` disables or enables it. T14 and T16 refuse an open circuit in PostgreSQL. Ask `eacp.retry_budget_exhausted` whether a retry is allowed; never compare `attempt_count` with `max_attempts` in Go.
 
 ## Commands
@@ -75,11 +76,12 @@ internal/approval    approval request, vote and one-time grant transactions
 internal/action      Action API engine: submission, evaluation, release boundary, cancel, sweeper,
                      operator resolution, evidence
 internal/worker      claim, heartbeat, fenced dispatch intent and results, host-bound secrets, worker loop,
-                     reconciler (lookup under the pinned proof standard)
+                     reconciler (lookup under the pinned proof standard), MCP scanner (fenced scan lease)
 internal/messaging   outbox relay and pruner, inbox, the worker's work-hint consumer (NATS JetStream)
 internal/messaging/natstest  embedded JetStream server for tests (never skips)
 internal/budget      budget accounts and limit changes (two-person raises, escrow)
 internal/connector   HTTP connector (execute, lookup)
+internal/connector/mcp  MCP discovery client (Streamable HTTP, modern and legacy revisions); mcptest fake server
 internal/fakeerp     credential-protected Fake ERP with a durable operation log
 internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions
 integrations/governance/microsoftagt  Go client of the AGT sidecar PDP (mTLS, version pins), dev PKI

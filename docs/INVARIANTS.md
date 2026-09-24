@@ -8,6 +8,8 @@ Phase 11 (Slice B) adds hard budget reservation (ADR-012). It maps the first [B]
 
 Phase 13 (Slice B) adds backpressure, bulkheads, circuit breakers and retry budgets (ADR-022). It maps the second [B] invariant, 9, and its tests join invariants 6, 8 and 17.
 
+Phase 14 (Slice C) adds the MCP registry: discovery, database-computed tool fingerprints, definition history, risk metadata, contract invalidation and quarantine (ADR-023). §103 tags no invariant [C]. Its tests join invariants 1, 7, 8, 17 and 19, and the full-flow isolation test now also covers the MCP tables. `internal/connector/mcp` checks the discovery client against the official MCP Go SDK (modern and legacy revisions, JSON and SSE).
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -24,6 +26,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate — a stale result is only late evidence
 - `internal/worker` TestHeartbeatExtendsOnlyTheHoldersLiveLease — only the holder extends its lease
 - `internal/worker` TestStillUnknownBacksOffAndStaleReconcilersAreFenced — stale reconcilers are fenced out too
+- `internal/worker` TestStaleScannerCannotRecord — a scanner whose scan lease was taken over records nothing
+- `internal/registry` TestScanLeaseFencesStaleScanners — the database fences scan records by worker, generation and expiry
 
 ## 2 [A] One-time approval cannot release two execution claims
 
@@ -83,6 +87,9 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/action` TestRegistryDriftBeforeReleaseDenies — registry drift denies at release
 - `internal/worker` TestDispatchIntentRefusesDriftAndRevocation — drift after release blocks the dispatch intent
 - `internal/worker` TestDriftBeforeDispatchNeverCalls — no external call after drift
+- `internal/action` TestMCPDefinitionDriftBeforeReleaseDenies — a changed MCP tool definition denies an approved action at release, and lifting the quarantine does not recertify it
+- `internal/registry` TestDefinitionChangesAreClassifiedAndInvalidateContracts — PostgreSQL classifies definition changes; a behavioural change quarantines the tool and its contract stops matching
+- `internal/worker` TestScannerDiscoversToolsAndQuarantinesDrift — a scan that sees a poisoned description quarantines the certified tool
 
 ## 8 [A] Tenant isolation cannot be bypassed
 
@@ -99,6 +106,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/messaging` TestDashboardEventsArrivePerTenant — dashboard events carry the tenant in the subject; another tenant's filter sees none
 - `internal/budget` TestBudgetRowsAreTenantIsolated — budget accounts, reservations and limit changes are tenant rows under RLS
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — connector circuits are tenant rows under RLS
+- `internal/worker` TestScannerScansOnlyServersItHoldsSecretsFor — the cross-tenant scan hint yields only servers whose tenant-bound secret the worker holds
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -180,6 +188,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/budget` TestRaisingALimitIsTwoPersonAndLoweringIsNot — every limit proposal, application and rejection is journaled
 - `internal/action` TestSettlementFollowsTheOutcome — a reservation and its settlement are journaled with their actors
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — every circuit trip, disable and enable is journaled with its actor and reason
+- `internal/registry` TestScanActivityIsJournaled — every scan, recorded definition, rescan request and quarantine is journaled with its actor and reason
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 
@@ -203,3 +212,4 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/registry` TestCheckCapabilityDeniesSuspendedRevokedAndDrifted — inactive versions and removed tools are denied
 - `internal/worker` TestDispatchIntentRefusesDriftAndRevocation — rechecked at the dispatch intent
 - `internal/api` TestAgentKeysCannotUseOperatorRoutesAndViceVersa — agent and operator keys are separate
+- `internal/registry` TestToolQuarantineRules — a quarantined tool is denied (`tool_quarantined`) in Go and in PostgreSQL

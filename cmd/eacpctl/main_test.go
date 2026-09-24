@@ -19,7 +19,7 @@ func runWith(t *testing.T, env map[string]string, args ...string) (string, error
 }
 
 func TestUsageErrors(t *testing.T) {
-	for _, args := range [][]string{nil, {"migrate"}, {"migrate", "sideways"}, {"agent"}} {
+	for _, args := range [][]string{nil, {"migrate"}, {"migrate", "sideways"}, {"agent"}, {"tool"}, {"tool", "get"}, {"tool", "get", "x", "y"}, {"tool", "release", "x"}, {"connector", "scan", "x"}} {
 		if _, err := runWith(t, map[string]string{"EACP_DATABASE_URL": "postgres://x@y/z"}, args...); err == nil {
 			t.Errorf("run(%v) succeeded, want usage error", args)
 		}

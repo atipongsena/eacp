@@ -434,6 +434,61 @@ func (f *Fixture) ExecWorker(worker string, gen int64, sql string, args ...any) 
 	})
 }
 
+// ExecScanner runs sql in the fixture tenant as MCP scanner scanner at scan
+// lease generation gen.
+func (f *Fixture) ExecScanner(scanner string, gen int64, sql string, args ...any) error {
+	ctx := context.Background()
+	return storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
+		if err := storage.SetScanner(ctx, tx, scanner, gen); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, sql, args...)
+		return err
+	})
+}
+
+// MCPConnector registers an MCP connector (by erin) and returns its id.
+func (f *Fixture) MCPConnector(t testing.TB, name string) uuid.UUID {
+	t.Helper()
+	return f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
+		VALUES (eacp.current_tenant_id(), $1, 'mcp', 'http://mcp.test:9000/mcp', $1) RETURNING id`, name)
+}
+
+// ScanClaimSQL takes the scan lease of MCP connector $1 for scanner $2
+// for one minute. Bind the scanner at the next lease generation.
+const ScanClaimSQL = `UPDATE eacp.mcp_servers SET lease_worker = $2, lease_until = now() + interval '1 minute',
+	lease_generation = lease_generation + 1 WHERE connector_id = $1`
+
+// ScanRecordSQL records scan result $2 (JSON) for MCP connector $1.
+const ScanRecordSQL = `SELECT eacp.mcp_record_scan($1, $2::jsonb)`
+
+// Scan claims connector's scan lease as scanner "scan-1" at the next
+// generation and records result (a JSON scan result) under it.
+func (f *Fixture) Scan(t testing.TB, connector uuid.UUID, result string) {
+	t.Helper()
+	gen := f.ScanGeneration(t, connector) + 1
+	if err := f.ExecScanner("scan-1", gen, ScanClaimSQL, connector, "scan-1"); err != nil {
+		t.Fatalf("registrytest: claim scan: %v", err)
+	}
+	if err := f.ExecScanner("scan-1", gen, ScanRecordSQL, connector, result); err != nil {
+		t.Fatalf("registrytest: record scan: %v", err)
+	}
+}
+
+// ScanGeneration returns the current scan lease generation of connector.
+func (f *Fixture) ScanGeneration(t testing.TB, connector uuid.UUID) int64 {
+	t.Helper()
+	var g int64
+	err := storage.InTenantTx(context.Background(), f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(),
+			`SELECT lease_generation FROM eacp.mcp_servers WHERE connector_id = $1`, connector).Scan(&g)
+	})
+	if err != nil {
+		t.Fatalf("registrytest: scan generation: %v", err)
+	}
+	return g
+}
+
 // Agent is an agent with one version.
 type Agent struct {
 	Agent, Version uuid.UUID

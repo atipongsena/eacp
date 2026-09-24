@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -197,5 +198,64 @@ func TestCommandsSurfaceHTTPErrors(t *testing.T) {
 	}
 	if _, err := runWith(t, keyFor("erin"), "agent", "register", "--name", "x2"); err == nil {
 		t.Fatal("missing owner accepted by the CLI")
+	}
+}
+
+func TestMCPCommands(t *testing.T) {
+	f, keyFor := apiEnv(t)
+	mcp := f.MCPConnector(t, "sap-mcp")
+	conn := mcp.String()
+	f.Scan(t, mcp, `{"outcome":"ok","protocol_version":"2026-07-28","interval_s":900,"rejected":[],
+		"tools":[{"remote_name":"get_po","definition":"{\"description\":\"Read\",\"inputSchema\":{\"type\":\"object\"},\"name\":\"get_po\"}","display":"{}"}]}`)
+	audra, otto := keyFor("audra"), keyFor("otto")
+	out, err := runWith(t, audra, "connector", "tools", conn)
+	if err != nil || !strings.Contains(out, `"remote_name": "get_po"`) {
+		t.Fatalf("connector tools: %v\n%s", err, out)
+	}
+	var tools struct {
+		Tools []struct {
+			ID string `json:"id"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(out), &tools); err != nil || len(tools.Tools) != 1 {
+		t.Fatalf("tools output: %v\n%s", err, out)
+	}
+	tool := tools.Tools[0].ID
+	out, err = runWith(t, audra, "connector", "mcp", conn)
+	if err != nil || !strings.Contains(out, `"outcome": "ok"`) {
+		t.Fatalf("connector mcp: %v\n%s", err, out)
+	}
+	out, err = runWith(t, audra, "connector", "scans", conn, "--limit", "5")
+	if err != nil || !strings.Contains(out, `"tools_added": 1`) {
+		t.Fatalf("connector scans: %v\n%s", err, out)
+	}
+	if _, err := runWith(t, otto, "connector", "scan", conn); err == nil {
+		t.Fatal("scan without a reason accepted by the CLI")
+	}
+	out, err = runWith(t, otto, "connector", "scan", conn, "--reason", "vendor release")
+	if err != nil || !strings.Contains(out, `"request_reason": "vendor release"`) {
+		t.Fatalf("connector scan: %v\n%s", err, out)
+	}
+	out, err = runWith(t, audra, "tool", "definitions", tool)
+	if err != nil || !strings.Contains(out, `"risk": "initial"`) {
+		t.Fatalf("tool definitions: %v\n%s", err, out)
+	}
+	if _, err := runWith(t, otto, "tool", "quarantine", tool); err == nil {
+		t.Fatal("quarantine without a reason accepted by the CLI")
+	}
+	out, err = runWith(t, otto, "tool", "quarantine", tool, "--reason", "incident 42")
+	if err != nil || !strings.Contains(out, `"quarantine_reason": "incident 42"`) {
+		t.Fatalf("tool quarantine: %v\n%s", err, out)
+	}
+	if _, err := runWith(t, otto, "tool", "release", tool, "--reason", "self"); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("release by an operator: %v, want HTTP 403", err)
+	}
+	out, err = runWith(t, keyFor("ravi"), "tool", "release", tool, "--reason", "reviewed")
+	if err != nil || strings.Contains(out, "quarantined_at") {
+		t.Fatalf("tool release: %v\n%s", err, out)
+	}
+	out, err = runWith(t, audra, "tool", "get", tool)
+	if err != nil || !strings.Contains(out, `"executable": false`) {
+		t.Fatalf("tool get: %v\n%s", err, out)
 	}
 }

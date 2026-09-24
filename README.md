@@ -12,6 +12,8 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 11 adds hard budget reservation ([ADR-012](docs/adr/ADR-012-budget-reservation.md)).
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
+
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -106,6 +108,18 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | No connector failure starves another pool (§103 invariant 9): a worker holds at most `EACP_WORKER_GROUP_CONCURRENCY` actions per capacity group, and `max_inflight` bounds the group across workers. | `TestConnectorFailureDoesNotStarveUnrelatedConnectors` |
 | A breaker per worker and connector opens after `EACP_WORKER_BREAKER_FAILURES` failures, probes once after its cooldown and doubles the cooldown on each consecutive trip. It also opens the connector's shared circuit, journaled; while that is open, PostgreSQL refuses the claim (T14) and the dispatch intent (T16). Operators disable and enable a connector (`eacpctl connector disable\|enable`). | `TestBreakerOpensProbesAndCloses`, `TestLocalBreakerHoldsWithoutTheSharedCircuit`, `TestOpenCircuitRefusesClaimAndDispatch`, `TestDisableSerializesWithAStaleDispatchIntent`, `TestCircuitChangesAreGuardedAndJournaled` |
 | Retries back off exponentially with jitter and stay within the contract's retry budget: attempts, `retry_max_elapsed_ms` since the first dispatch, and `retry_max_cost`. PostgreSQL answers the budget question for the worker, sweeper, reconciler and operator retries alike. | `TestDefaultBackoffIsJitteredWithinBounds`, `TestRetryBudgetBoundsElapsedTime`, `TestRetryBudgetBoundsRetryCost` |
+
+## Slice C (Phase 14): MCP registry and tool fingerprint
+
+| Capability | Evidence |
+|---|---|
+| An MCP server is a connector with protocol `mcp`; its tools are discovered, never declared. The execution worker's scanner lists them over Streamable HTTP (2026-07-28, falling back to the initialize-based 2025 revisions; JSON and SSE) with the worker-held, host-bound credential, every `EACP_MCP_SCAN_INTERVAL`, and bounds pages, tools and bytes. | [ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md) §1–§2, `internal/connector/mcp` (interop with the official MCP Go SDK), `TestScannerDiscoversToolsAndQuarantinesDrift` |
+| Scans are fenced by a scan lease (worker id, generation, expiry) in PostgreSQL; a stale scanner records nothing, and a failed scan changes no tool. | `TestScanLeaseFencesStaleScanners`, `TestStaleScannerCannotRecord`, `TestScannerRecordsFailuresWithoutChangingTools` |
+| PostgreSQL fingerprints each canonical (RFC 8785) definition, keeps the history, and classifies a change: display-only (`title`, `icons`) is low risk, anything else high. Server annotations are untrusted hints that can only tighten. | `TestScanRecordsDefinitionsWithDatabaseFingerprints`, `TestDefinitionChangesAreClassifiedAndInvalidateContracts`, `TestMCPContractRules` |
+| A contract pins the reviewed definition. A high-risk change, or a certified tool that disappears, quarantines the tool and its contract stops matching; an approved action is denied at release. Quarantine is containment (operator or registry approver); release needs a second registry approver and never recertifies. | `TestMCPDefinitionDriftBeforeReleaseDenies`, `TestMissingCertifiedToolIsQuarantined`, `TestToolQuarantineRules` |
+| Operators see tools, definition history and scans, request a rescan, and quarantine or release a tool. | `GET /v1/connectors/{id}/tools`, `GET /v1/connectors/{id}/mcp[/scans]`, `POST /v1/connectors/{id}/mcp/scan`, `GET /v1/tools/{id}[/definitions]`, `POST /v1/tools/{id}/quarantine\|release`; `eacpctl connector tools\|mcp\|scans\|scan`, `eacpctl tool` |
+
+Executing MCP tools (`tools/call`) is not part of Phase 14: no worker serves protocol `mcp`, so an action on an MCP tool is never dispatched.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

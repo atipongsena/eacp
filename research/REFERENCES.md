@@ -3,6 +3,31 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 14 — MCP specification and the official Go SDK (2026-09-24)
+
+Checked against the specification repository (`modelcontextprotocol/modelcontextprotocol`, `main`: `schema/2026-07-28/schema.ts` and `docs/specification/2026-07-28`, plus `2025-11-25` for the legacy transport), against the SDK module source (`go mod download`), and by running the SDK's server in `internal/connector/mcp/interop_test.go`.
+
+### Pinned artifacts
+
+- Specification revision **2026-07-28** (modern). Legacy revisions accepted: **2025-11-25**, **2025-06-18**, **2025-03-26**.
+- `github.com/modelcontextprotocol/go-sdk` **v1.8.0**, package `mcp`. Test code imports it (interop only); no EACP binary links it. It declares the same four revisions (`shared.go`: `protocolVersion20260728` … `protocolVersion20250326`).
+
+### Protocol facts used
+
+- **Modern requests are stateless.** Each request carries `params._meta` with `io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientCapabilities` and optionally `io.modelcontextprotocol/clientInfo`. `server/discover` returns the supported versions, capabilities and server info.
+- **Headers (Streamable HTTP).** `MCP-Protocol-Version` on every request, and `Mcp-Method` mirroring the JSON-RPC method on all requests. A mismatch is `400` with `HeaderMismatch`.
+- **Error codes.** `-32020` HeaderMismatch, `-32021` MissingRequiredClientCapability, `-32022` UnsupportedProtocolVersion. `-32020` to `-32099` are reserved for MCP.
+- **Legacy detection.** A server that predates 2026-07-28 answers a modern request with `400`, or `404`/`405` from an HTTP+SSE server. The client then uses `initialize`, keeps `Mcp-Session-Id`, sends `notifications/initialized` and ends the session with `DELETE`. 2025-06-18 did not define the `MCP-Protocol-Version` header, so servers of that revision may ignore it.
+- **Results.** `resultType` other than `complete` means the server needs more input. An absent `resultType` is `complete`.
+- **Tool definitions.** `inputSchema` is an object with `type: "object"`, and any JSON Schema 2020-12 keyword may appear. `title`, `icons` and `annotations.title` are display metadata. Annotation defaults: `readOnlyHint` false, `destructiveHint` true, `idempotentHint` false, `openWorldHint` true. The spec calls them hints, not guarantees.
+- **`x-mcp-header`.** A property may mirror an argument into an `Mcp-Param-{name}` header. The value must be a non-empty HTTP token (no control characters), case-insensitively unique within the `inputSchema`, and may only annotate an `integer`, `string` or `boolean` property (not `number`) reached from the root through `properties` keys alone (no `items`, composition, conditional keywords or `$ref`). A client on Streamable HTTP **must** exclude a tool that violates this from `tools/list`; EACP records it as rejected (`invalid_x_mcp_header`).
+
+### SDK API used (interop tests)
+
+- `mcp.NewServer(&mcp.Implementation{...}, &mcp.ServerOptions{SupportedProtocolVersions: ...})` and `server.AddTool(&mcp.Tool{...}, handler)`.
+- `mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server, &mcp.StreamableHTTPOptions{Stateless, JSONResponse})`. Stateless mode answers GET and DELETE with `405`.
+- **Observed:** the stateful handler does not serve 2026-07-28 (`server.go`: it does not keep modern session state on a transport that cannot surface it), so EACP falls back to `2025-11-25` there. The interop test pins this.
+
 ## Phase 10 — NATS JetStream Go client and server (2026-09-24)
 
 Checked against the module sources (`go mod download`) and by running the

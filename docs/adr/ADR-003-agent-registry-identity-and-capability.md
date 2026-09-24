@@ -1,6 +1,6 @@
 # ADR-003: Agent Registry, Identity and Capability Model
 
-- **Status:** Accepted (Rev 1.2). Rev 1.1 followed the Codex ADR review ([2026-09-23-adr003-review.md](../reviews/2026-09-23-adr003-review.md)); Rev 1.2 followed the Codex code review ([2026-09-23-phase2-code-review.md](../reviews/2026-09-23-phase2-code-review.md)).
+- **Status:** Accepted (Rev 1.3). Rev 1.3 (Phase 14) amends §4 for MCP tools under [ADR-023](ADR-023-mcp-registry-and-tool-fingerprint.md): discovered tools, the v2 fingerprint and quarantine. Rev 1.1 followed the Codex ADR review ([2026-09-23-adr003-review.md](../reviews/2026-09-23-adr003-review.md)); Rev 1.2 followed the Codex code review ([2026-09-23-phase2-code-review.md](../reviews/2026-09-23-phase2-code-review.md)).
 - **Date:** 2026-09-23
 - **Related:** MASTER_PLAN §7–§11, §31–§34, §57, §76 (Phase 2), §103 (inv. 11, 17, 19); ADR-001, ADR-004 (principles 6–7), ADR-005 (§4, §5, §5a), ADR-021
 - **Rule applied:** where an assumption is unresolved, choose the option that's most conservative for safety and correctness.
@@ -93,7 +93,7 @@ ADR-004 and ADR-005 impose requirements on these records:
 - A `connector` has a slug, protocol, endpoint and a **`secret_ref`**. That's a name the execution worker maps to a secret it holds. **No secret value is ever stored in the database or returned by the API** (ADR-001 §3).
   - **Secret refs are tenant-namespaced by construction.** The worker resolves `(action.tenant_id, secret_ref)`, never a bare ref. A tenant therefore can't name another tenant's secret, or a platform secret, whatever string it registers.
   - The worker's secret configuration also binds each secret to the endpoint host it may be sent to. Delivered in Phase 5 (`internal/worker.SecretStore`, ADR-004 Rev 2.3): the worker refuses to resolve a secret for any other `host:port`, or for an endpoint URL with userinfo.
-- **Connectors and tools are immutable** (no `UPDATE` grant). A new endpoint means a new connector, which has no contract and so can't execute until it's recertified.
+- **Connectors and tools are immutable** (no `UPDATE` grant). Rev 1.3: a tool's only updatable columns are its contract pointer, and, under ADR-023, its current definition (moved only when the scanner records one), `missing_since` and its quarantine fields. A new endpoint means a new connector, which has no contract and so can't execute until it's recertified.
 - A `tool` belongs to a connector.
 - A `tool_contract` is an **insert-only, versioned** operator declaration (MASTER_PLAN §31). Its fields are validated both in Go and by DB `CHECK` constraints:
   - `side_effects`: a non-empty subset of `READ_ONLY`, `REVERSIBLE_WRITE`, `IRREVERSIBLE_WRITE`, `EXTERNAL_COMMUNICATION`, `FINANCIAL`, `ADMINISTRATIVE`. `READ_ONLY` can't be combined with any other class.
@@ -104,10 +104,11 @@ ADR-004 and ADR-005 impose requirements on these records:
   - `credential_custody`: must equal `worker`, enforced by a `CHECK`.
   - `max_attempts` (at least 1). **Any tool that isn't `READ_ONLY` and has `idempotency_mode = none` must have `max_attempts = 1`** (DB `CHECK`). Even then, a retry is only ever the ADR-004 path, which needs a no-effect proof. An ambiguous outcome goes to `UNKNOWN_OUTCOME`, then `NEEDS_HUMAN_RESOLUTION`, never to an automatic retry.
   - Optional: `timeout_ms`, `concurrency_group`, `max_inflight` and `data_sensitivity` (§31). The scheduler uses them in Slice B.
-  - **Fingerprint.** On insert, the DB computes `fingerprint = sha256(protocol, endpoint, secret_ref, connector slug, tool slug)` and stores it. `CheckCapability` recomputes it from the current rows and denies on mismatch (`contract_fingerprint_mismatch`). The rows are immutable, so this is a backstop against owner-level edits. MCP schema fingerprints (§33) extend it in Slice C.
+  - **Fingerprint.** On insert, the DB computes `fingerprint = sha256(protocol, endpoint, secret_ref, connector slug, tool slug)` and stores it. `CheckCapability` recomputes it from the current rows and denies on mismatch (`contract_fingerprint_mismatch`). The rows are immutable, so this is a backstop against owner-level edits for HTTP tools.
+  - **Rev 1.3, MCP tools (ADR-023 §3).** An MCP tool's fingerprint (v2) also covers its MCP name and the database-computed digest of its current definition. A server-side change to the definition therefore changes the fingerprint, and the contract stops matching. A tool with no definition yet has no fingerprint. An MCP tool's contract pins the definition its proposer reviewed.
 - `tools.active_contract_id` is the pointer. Activation is **two-person**: the activator isn't the contract's author. Once set, the pointer can't be cleared; revoke the contract instead.
 - **Revocation** sets `revoked_at`, `revoked_by` and `revoke_reason` **once** and can never be undone (a trigger enforces this). Revocation is single-person (`registry_approver` or `operator`), because it only reduces capability.
-- A tool is **executable** only if its active contract exists, isn't revoked, and its fingerprint matches.
+- A tool is **executable** only if it isn't quarantined (Rev 1.3, denial `tool_quarantined`, checked after the allowlist), and its active contract exists, isn't revoked, and its fingerprint matches.
 
 ### 5. Credentials (authentication to EACP)
 

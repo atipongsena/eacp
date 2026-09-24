@@ -121,6 +121,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/actions/{id}/resolutions/{rid}/withdraw", p(operator, s.decideResolution(false)))
 
 	s.registerBudget(mux)
+	s.registerMCP(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

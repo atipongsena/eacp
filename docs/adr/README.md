@@ -6,13 +6,14 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 |---|---|---|---|
 | [ADR-001](ADR-001-product-boundary-and-enforcement-point.md) | Product Boundary and Enforcement Point | Accepted (Rev 2.1) | ✔ |
 | [ADR-002](ADR-002-agt-integration-sidecar-pdp.md) | AGT/ACS Integration via Sidecar PDP | Accepted (Rev 2.4) | ✔ |
-| [ADR-003](ADR-003-agent-registry-identity-and-capability.md) | Agent Registry, Identity and Capability Model | Accepted (Rev 1.1) | Phase 2 |
+| [ADR-003](ADR-003-agent-registry-identity-and-capability.md) | Agent Registry, Identity and Capability Model | Accepted (Rev 1.3) | Phase 2 |
 | [ADR-004](ADR-004-action-state-machine-and-execution-semantics.md) | Action State Machine and Execution Semantics | Accepted (Rev 2.3) | ✔ (hard gate) |
 | [ADR-005](ADR-005-approval-ownership-and-atomic-execution-boundary.md) | Approval Ownership and the Atomic Execution Boundary | Accepted (Rev 2.3) | ✔ |
 | [ADR-011](ADR-011-scheduler-fairness.md) | PostgreSQL Fair Scheduler | Accepted (Rev 1.0) | Phase 12 |
 | [ADR-012](ADR-012-budget-reservation.md) | Hard Budget Reservation | Accepted (Rev 1.0) | Phase 11 |
 | [ADR-014](ADR-014-postgresql-authority-nats-signals.md) | PostgreSQL as Execution Authority; NATS for Signals | Accepted (Rev 1.0) | Phase 10 |
 | [ADR-022](ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) | Backpressure, Bulkheads, Circuit Breakers and Retry Budgets | Accepted (Rev 1.0) | Phase 13 |
+| [ADR-023](ADR-023-mcp-registry-and-tool-fingerprint.md) | MCP Registry and Tool Fingerprint | Accepted (Rev 1.0) | Phase 14 |
 | ADR-006 … ADR-021 (others, except 011, 012 and 014) | See MASTER_PLAN §74 | Not started | |
 
 ADR-007 to ADR-010 and ADR-013 must conform to ADR-004.

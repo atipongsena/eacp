@@ -22,6 +22,13 @@
 //	eacpctl connector circuit <connector-id>
 //	eacpctl connector disable|enable <connector-id> --reason <text>
 //	                          stop or resume new dispatch to a connector (operators, ADR-022)
+//	eacpctl connector tools|mcp <connector-id>
+//	eacpctl connector scans <connector-id> [--limit N]
+//	eacpctl connector scan <connector-id> --reason <text>
+//	                          discovered tools, MCP scan state and history, rescan request (ADR-023)
+//	eacpctl tool get|definitions <tool-id>
+//	eacpctl tool quarantine|release <tool-id> --reason <text>
+//	                          block a tool, or lift its quarantine (a second registry approver)
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -55,7 +62,8 @@ const usage = `usage:
   eacpctl key generate --kind agent|principal --tenant <uuid>
   eacpctl tenant create --slug <slug> --name <name> --admin <spec> --admin <spec>
   eacpctl agent register|list|inspect ...
-  eacpctl connector register|circuit|disable|enable ...
+  eacpctl connector register|circuit|disable|enable|tools|mcp|scans|scan ...
+  eacpctl tool get|definitions|quarantine|release ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
@@ -84,6 +92,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runAgent(ctx, args[1:], getenv, out)
 	case "connector":
 		return runConnector(ctx, args[1:], getenv, out)
+	case "tool":
+		return runTool(ctx, args[1:], getenv, out)
 	case "action":
 		return runAction(ctx, args[1:], getenv, out)
 	case "api":

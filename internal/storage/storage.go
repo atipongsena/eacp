@@ -239,6 +239,23 @@ func SetReconciler(ctx context.Context, tx pgx.Tx, reconcilerID string, generati
 	return nil
 }
 
+// SetScanner records that MCP scanner scannerID (an execution worker),
+// holding (or claiming) scan lease generation generation, performs the
+// transaction's registry changes (migration 00014, ADR-023). PostgreSQL
+// refuses a record from a scanner that no longer holds that lease, and
+// eacp.actor_context() rejects the scanner, so it can never change an action.
+func SetScanner(ctx context.Context, tx pgx.Tx, scannerID string, generation int64) error {
+	if scannerID == "" || generation < 1 {
+		return fmt.Errorf("storage: scanner id and a positive lease generation are required")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.system_actor', 'scanner', true),
+		set_config('app.worker_id', $1, true), set_config('app.lease_generation', $2, true)`,
+		scannerID, strconv.FormatInt(generation, 10)); err != nil {
+		return fmt.Errorf("storage: set scanner: %w", err)
+	}
+	return nil
+}
+
 // SetTraceparent carries a W3C traceparent into the transaction so the
 // outbox trigger can attach it to events. An empty value is a no-op.
 func SetTraceparent(ctx context.Context, tx pgx.Tx, traceparent string) error {

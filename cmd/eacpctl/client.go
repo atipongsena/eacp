@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -113,7 +114,11 @@ func runAgent(ctx context.Context, args []string, getenv func(string) string, ou
 const connectorUsage = `usage:
   eacpctl connector register --name --endpoint --secret-ref [--protocol http]
   eacpctl connector circuit <connector-id>
-  eacpctl connector disable|enable <connector-id> --reason <text>   (operator, ADR-022 §3)`
+  eacpctl connector disable|enable <connector-id> --reason <text>   (operator, ADR-022 §3)
+  eacpctl connector tools <connector-id>
+  eacpctl connector mcp <connector-id>                        MCP scan state (ADR-023)
+  eacpctl connector scans <connector-id> [--limit N]
+  eacpctl connector scan <connector-id> --reason <text>       request a rescan (operator, registry_editor)`
 
 func runConnector(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
 	if len(args) == 0 {
@@ -140,6 +145,35 @@ func runConnector(ctx context.Context, args []string, getenv func(string) string
 		}
 		return call(ctx, getenv, out, "POST", "/v1/connectors/"+url.PathEscape(args[1])+"/circuit/"+args[0],
 			map[string]any{"reason": *reason})
+	case "tools", "mcp":
+		if len(args) != 2 {
+			return errors.New(connectorUsage)
+		}
+		return call(ctx, getenv, out, "GET", "/v1/connectors/"+url.PathEscape(args[1])+"/"+args[0], nil)
+	case "scans":
+		if len(args) < 2 {
+			return errors.New(connectorUsage)
+		}
+		fs := newFlags("connector scans")
+		limit := fs.Int("limit", 20, "scans to show (1-100)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New(connectorUsage)
+		}
+		return call(ctx, getenv, out, "GET",
+			"/v1/connectors/"+url.PathEscape(args[1])+"/mcp/scans?limit="+strconv.Itoa(*limit), nil)
+	case "scan":
+		if len(args) < 2 {
+			return errors.New(connectorUsage)
+		}
+		reason, err := reasonFlag("connector scan", args[2:])
+		if err != nil {
+			return errors.New(connectorUsage)
+		}
+		return call(ctx, getenv, out, "POST", "/v1/connectors/"+url.PathEscape(args[1])+"/mcp/scan",
+			map[string]any{"reason": reason})
 	default:
 		return errors.New(connectorUsage)
 	}
@@ -153,6 +187,45 @@ func runConnector(ctx context.Context, args []string, getenv func(string) string
 	}
 	return call(ctx, getenv, out, "POST", "/v1/connectors", map[string]any{
 		"name": *name, "protocol": *protocol, "endpoint": *endpoint, "secret_ref": *secretRef})
+}
+
+const toolUsage = `usage:
+  eacpctl tool get|definitions <tool-id>
+  eacpctl tool quarantine <tool-id> --reason <text>   (operator, registry_approver; ADR-023 §7)
+  eacpctl tool release <tool-id> --reason <text>      (a registry_approver other than the quarantiner)`
+
+func runTool(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
+	if len(args) < 2 {
+		return errors.New(toolUsage)
+	}
+	path := "/v1/tools/" + url.PathEscape(args[1])
+	switch {
+	case args[0] == "get" && len(args) == 2:
+		return call(ctx, getenv, out, "GET", path, nil)
+	case args[0] == "definitions" && len(args) == 2:
+		return call(ctx, getenv, out, "GET", path+"/definitions", nil)
+	case args[0] == "quarantine" || args[0] == "release":
+		reason, err := reasonFlag("tool "+args[0], args[2:])
+		if err != nil {
+			return errors.New(toolUsage)
+		}
+		return call(ctx, getenv, out, "POST", path+"/"+args[0], map[string]any{"reason": reason})
+	default:
+		return errors.New(toolUsage)
+	}
+}
+
+// reasonFlag parses a required --reason and nothing else.
+func reasonFlag(name string, args []string) (string, error) {
+	fs := newFlags(name)
+	reason := fs.String("reason", "", "why (journaled)")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if *reason == "" || fs.NArg() != 0 {
+		return "", errors.New("a --reason is required")
+	}
+	return *reason, nil
 }
 
 func runAPI(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {

@@ -167,18 +167,20 @@ func TestWorkerSettings(t *testing.T) {
 	}
 	if cfg.WorkerID != "" || cfg.WorkerLease != 30*time.Second || cfg.WorkerConcurrency != 4 ||
 		cfg.WorkerPollInterval != 500*time.Millisecond || cfg.ConnectorSecretsFile != "" ||
-		cfg.WorkerGroupConcurrency != 2 || cfg.WorkerBreakerFailures != 5 || cfg.WorkerBreakerCooldown != 30*time.Second {
+		cfg.WorkerGroupConcurrency != 2 || cfg.WorkerBreakerFailures != 5 || cfg.WorkerBreakerCooldown != 30*time.Second ||
+		cfg.MCPScanInterval != 15*time.Minute || cfg.MCPScanTimeout != 30*time.Second {
 		t.Fatalf("worker defaults = %+v", cfg)
 	}
 	cfg, err = Load(env(map[string]string{
 		"EACP_WORKER_ID": "worker-a", "EACP_WORKER_LEASE": "10s",
 		"EACP_WORKER_CONCURRENCY": "16", "EACP_WORKER_POLL_INTERVAL": "2s",
 		"EACP_WORKER_GROUP_CONCURRENCY": "3", "EACP_WORKER_BREAKER_FAILURES": "8",
-		"EACP_WORKER_BREAKER_COOLDOWN": "1m",
+		"EACP_WORKER_BREAKER_COOLDOWN": "1m", "EACP_MCP_SCAN_INTERVAL": "1h", "EACP_MCP_SCAN_TIMEOUT": "10s",
 	}), Options{AllowConnectorSecrets: true})
 	if err != nil || cfg.WorkerID != "worker-a" || cfg.WorkerLease != 10*time.Second ||
 		cfg.WorkerConcurrency != 16 || cfg.WorkerPollInterval != 2*time.Second ||
-		cfg.WorkerGroupConcurrency != 3 || cfg.WorkerBreakerFailures != 8 || cfg.WorkerBreakerCooldown != time.Minute {
+		cfg.WorkerGroupConcurrency != 3 || cfg.WorkerBreakerFailures != 8 || cfg.WorkerBreakerCooldown != time.Minute ||
+		cfg.MCPScanInterval != time.Hour || cfg.MCPScanTimeout != 10*time.Second {
 		t.Fatalf("worker overrides = %+v, %v", cfg, err)
 	}
 	// A one-slot worker cannot split its slot; the bulkhead is that slot.
@@ -198,6 +200,10 @@ func TestWorkerSettings(t *testing.T) {
 		"too many failures":  {"EACP_WORKER_BREAKER_FAILURES": "101"},
 		"short cooldown":     {"EACP_WORKER_BREAKER_COOLDOWN": "100ms"},
 		"long cooldown":      {"EACP_WORKER_BREAKER_COOLDOWN": "11m"},
+		"frequent scans":     {"EACP_MCP_SCAN_INTERVAL": "30s"},
+		"rare scans":         {"EACP_MCP_SCAN_INTERVAL": "25h"},
+		"short scan timeout": {"EACP_MCP_SCAN_TIMEOUT": "500ms"},
+		"long scan timeout":  {"EACP_MCP_SCAN_TIMEOUT": "6m"},
 	} {
 		if _, err := Load(env(vars), Options{AllowConnectorSecrets: true}); err == nil {
 			t.Errorf("%s: accepted %v", name, vars)

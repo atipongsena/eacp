@@ -3,6 +3,8 @@ package worker_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,16 +14,19 @@ import (
 
 	"eacp/internal/action"
 	"eacp/internal/approval"
+	"eacp/internal/connector/mcp"
+	"eacp/internal/connector/mcp/mcptest"
 	"eacp/internal/identity"
 	"eacp/internal/messaging"
 	"eacp/internal/registry"
 	"eacp/internal/storage"
 	"eacp/internal/storage/pgtest"
+	"eacp/internal/worker"
 )
 
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, budget, execution, reconciliation, operator
-// resolution, journal, outbox and inbox), neither tenant B nor a session without a tenant sees
+// resolution, journal, outbox and inbox, MCP discovery), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -84,6 +89,24 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	}
 	if fresh, err := inbox.Record(ctx, v.f.Tenant, uuid.New()); err != nil || !fresh {
 		t.Fatalf("inbox record = %v, %v", fresh, err)
+	}
+
+	// An MCP server discovered by the scanner (ADR-023): scan state, a scan
+	// and a tool definition.
+	mcpServer := mcptest.New(t, mcptest.Modern, scanToken, scanGetPO)
+	v.f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
+		VALUES (eacp.current_tenant_id(), 'sap-mcp', 'mcp', $1, 'sap-mcp') RETURNING id`, mcpServer.URL())
+	mcpSecrets, err := worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"sap-mcp","host":%q,"value":%q}]}`,
+		v.f.Tenant, strings.TrimPrefix(mcpServer.Server.URL, "http://"), scanToken)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner, err := worker.NewScanner(v.f.App, worker.ScannerOptions{ID: "scan-a", Secrets: mcpSecrets, Discoverer: mcp.New()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := scanner.RunOnce(ctx); n != 1 || err != nil {
+		t.Fatalf("mcp scan = %d, %v", n, err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member

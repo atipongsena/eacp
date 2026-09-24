@@ -33,6 +33,10 @@ type Connector struct {
 // Contract is an operator-declared connector contract (MASTER_PLAN §31,
 // ADR-003 §4). The database validates every field.
 type Contract struct {
+	// DefinitionID pins the reviewed definition of a discovered MCP tool; it
+	// must be the tool's current one (ADR-023 §6). HTTP tools pin none.
+	DefinitionID *uuid.UUID `json:"definition_id,omitempty"`
+
 	SideEffects               []string `json:"side_effects"`
 	IdempotencyMode           string   `json:"idempotency_mode"`
 	IdempotencyKeyField       string   `json:"idempotency_key_field,omitempty"`
@@ -131,16 +135,16 @@ func (s *Service) ProposeContract(ctx context.Context, a Actor, toolID uuid.UUID
 			     reconciliation_lookup, reconciliation_consistency, proof_standard, no_effect_errors,
 			     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity, schedule_priority,
 			     cost_unit, cost_fixed, cost_amount_field, cost_unit_field,
-			     max_queued, retry_max_elapsed_ms, retry_max_cost)
+			     max_queued, retry_max_elapsed_ms, retry_max_cost, definition_id)
 			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			        $15, $16, COALESCE($17::numeric, 0), $18, $19, $20, $21, $22::numeric)
+			        $15, $16, COALESCE($17::numeric, 0), $18, $19, $20, $21, $22::numeric, $23)
 			RETURNING id`,
 			toolID, c.SideEffects, c.IdempotencyMode, nullStr(c.IdempotencyKeyField), nullStr(c.CorrelationField),
 			c.ReconciliationLookup, c.ReconciliationConsistency, c.ProofStandard, noEffect,
 			c.MaxAttempts, nullInt(c.TimeoutMS), nullStr(c.ConcurrencyGroup), nullInt(c.MaxInflight),
 			nullStr(c.DataSensitivity), c.SchedulePriority, nullStr(c.CostUnit), nullStr(string(c.CostFixed)),
 			nullStr(c.CostAmountField), nullStr(c.CostUnitField),
-			nullInt(c.MaxQueued), nullInt(c.RetryMaxElapsedMS), nullStr(string(c.RetryMaxCost))).Scan(&id)
+			nullInt(c.MaxQueued), nullInt(c.RetryMaxElapsedMS), nullStr(string(c.RetryMaxCost)), c.DefinitionID).Scan(&id)
 		return err
 	})
 	return id, err

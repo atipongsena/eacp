@@ -23,6 +23,7 @@ import (
 
 	"eacp/internal/config"
 	"eacp/internal/connector"
+	"eacp/internal/connector/mcp"
 	"eacp/internal/messaging"
 	"eacp/internal/service"
 	"eacp/internal/worker"
@@ -70,9 +71,17 @@ func main() {
 			if err != nil {
 				return err
 			}
+			scanner, err := worker.NewScanner(d.DB, worker.ScannerOptions{
+				ID: id, Interval: d.Config.MCPScanInterval, Timeout: d.Config.MCPScanTimeout,
+				Secrets: secrets, Discoverer: mcp.New(), Log: d.Log,
+			})
+			if err != nil {
+				return err
+			}
 			d.Log.Info("worker ready", "worker_id", id, "bindings", len(secrets.Bindings()), "protocols", len(connectors))
 			d.Background(w.Run)
 			d.Background(r.Run)
+			d.Background(scanner.Run)
 			return nil
 		})
 }

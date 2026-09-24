@@ -3558,6 +3558,8 @@ retry budget
 
 # 88. Phase 14 — MCP Registry & Fingerprint (Slice C)
 
+> **Status (2026-09-24): complete.** Normative detail: [ADR-023](adr/ADR-023-mcp-registry-and-tool-fingerprint.md) Rev 1.0. An MCP server is a connector with protocol `mcp`, and its tools are discovered, never declared. The execution worker's scanner lists them over Streamable HTTP (2026-07-28, with a fallback to the initialize-based revisions) under a fenced scan lease. PostgreSQL fingerprints and classifies every definition (`initial`, `low` for display-only changes, `high` otherwise) and keeps its history. A contract pins the definition its proposer reviewed; a high-risk change, or a certified tool that disappears, quarantines the tool and its contract stops matching. Quarantine is containment (operator or registry approver), and release needs a second registry approver and never recertifies. Executing MCP tools (`tools/call`) is out of scope.
+
 ```text
 discovery
 fingerprint

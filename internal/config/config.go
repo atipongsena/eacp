@@ -87,6 +87,11 @@ type Config struct {
 	WorkerGroupConcurrency int
 	WorkerBreakerFailures  int
 	WorkerBreakerCooldown  time.Duration
+
+	// MCP scanner (ADR-023 §2): how often each MCP server's tools are
+	// listed and how long one discovery may take.
+	MCPScanInterval time.Duration
+	MCPScanTimeout  time.Duration
 }
 
 var (
@@ -234,6 +239,14 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 			errs = append(errs, errors.New("EACP_WORKER_BREAKER_COOLDOWN: must be at least 1s"))
 		}
 		cfg.WorkerPollInterval = duration("EACP_WORKER_POLL_INTERVAL", "500ms", time.Minute)
+		cfg.MCPScanInterval = duration("EACP_MCP_SCAN_INTERVAL", "15m", 24*time.Hour)
+		if cfg.MCPScanInterval > 0 && cfg.MCPScanInterval < time.Minute {
+			errs = append(errs, errors.New("EACP_MCP_SCAN_INTERVAL: must be at least 1m"))
+		}
+		cfg.MCPScanTimeout = duration("EACP_MCP_SCAN_TIMEOUT", "30s", 5*time.Minute)
+		if cfg.MCPScanTimeout > 0 && cfg.MCPScanTimeout < time.Second {
+			errs = append(errs, errors.New("EACP_MCP_SCAN_TIMEOUT: must be at least 1s"))
+		}
 		cfg.ConnectorSecretsFile = get("EACP_CONNECTOR_SECRETS_FILE", "")
 	} else if get("EACP_CONNECTOR_SECRETS_FILE", "") != "" {
 		errs = append(errs, errors.New("EACP_CONNECTOR_SECRETS_FILE: only the execution worker may hold connector credentials (ADR-001 §3)"))
@@ -277,6 +290,8 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("worker_breaker_failures", c.WorkerBreakerFailures),
 		slog.Duration("worker_breaker_cooldown", c.WorkerBreakerCooldown),
 		slog.Duration("worker_poll_interval", c.WorkerPollInterval),
+		slog.Duration("mcp_scan_interval", c.MCPScanInterval),
+		slog.Duration("mcp_scan_timeout", c.MCPScanTimeout),
 		slog.String("connector_secrets_file", c.ConnectorSecretsFile),
 	)
 }
