@@ -442,7 +442,7 @@ func TestClaimableActionsMatchProtocolCredentialAndOrder(t *testing.T) {
 	ctx := context.Background()
 	claimable := func(protocols []string, bindings string) []uuid.UUID {
 		var ids []uuid.UUID
-		rows, err := s.f.App.Query(ctx, `SELECT action_id FROM eacp.claimable_actions($1, $2::jsonb, 10)`, protocols, bindings)
+		rows, err := s.f.App.Query(ctx, `SELECT action_id FROM eacp.claimable_actions($1, $2::jsonb, 10, NULL)`, protocols, bindings)
 		must(t, err)
 		ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 		must(t, err)

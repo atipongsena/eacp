@@ -6,6 +6,8 @@ Phase 10 (Slice B) adds NATS JetStream for work hints and dashboard events (ADR-
 
 Phase 11 (Slice B) adds hard budget reservation (ADR-012). It maps the first [B] invariant, 3, and its tests join invariants 8 and 17.
 
+Phase 13 (Slice B) adds backpressure, bulkheads, circuit breakers and retry budgets (ADR-022). It maps the second [B] invariant, 9, and its tests join invariants 6, 8 and 17.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -71,6 +73,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestNegativeEvidenceNeedsAnAuthoritativeContract — the database refuses retry without authoritative proof
 - `internal/worker` TestDecideAppliesTheProofStandard — the reconciler's decision table
 - `internal/action` TestSweeperReclaimsLapsedLeases — only READ_ONLY actions are retried after lease loss
+- `internal/worker` TestRetryBudgetBoundsElapsedTime — no retry is granted or re-queued once the retry time budget has passed; the action fails instead
+- `internal/action` TestRetryBudgetBoundsRetryCost — the cost of retries bounds how many are dispatched
 
 ## 7 [A] Sensitive action governance is revalidated before execution
 
@@ -94,6 +98,17 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/messaging` TestInboxIsGuardedAndTenantIsolated — inbox records are tenant rows under RLS, written only by the inbox actor
 - `internal/messaging` TestDashboardEventsArrivePerTenant — dashboard events carry the tenant in the subject; another tenant's filter sees none
 - `internal/budget` TestBudgetRowsAreTenantIsolated — budget accounts, reservations and limit changes are tenant rows under RLS
+- `internal/worker` TestCircuitChangesAreGuardedAndJournaled — connector circuits are tenant rows under RLS
+
+## 9 [B] Connector failure cannot starve unrelated connector pools
+
+- `internal/worker` TestConnectorFailureDoesNotStarveUnrelatedConnectors — a hanging connector holds only its worker bulkhead while another connector's actions succeed; its failures open the breaker and the shared circuit, which also stops a second worker until an operator enables the connector
+- `internal/worker` TestLocalBreakerHoldsWithoutTheSharedCircuit — a worker's own breaker withholds claims and releases a held lease even after the shared circuit is cleared
+- `internal/worker` TestOpenCircuitRefusesClaimAndDispatch — an open or disabled circuit refuses T14 and T16 in raw SQL and hides only that connector from the claim hint
+- `internal/worker` TestDisableSerializesWithAStaleDispatchIntent — a dispatch intent holds the circuit row; none commits past a disable
+- `internal/worker` TestConnectorCapacitySerializesConcurrentClaims — a connector group's `max_inflight` is the cluster-wide bulkhead
+- `internal/action` TestAdmissionBoundsPendingAndConnectorQueues — a full connector queue refuses that connector (429, scope `connector`) and admits another; unreleased actions are bounded per tenant
+- `internal/worker` TestBreakerOpensProbesAndCloses — the breaker's states, single probe and escalating cooldown
 
 ## 10 [A] Audit and evidence references remain reconstructible end-to-end
 
@@ -164,6 +179,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestEvidenceReconstructsTheWholeActionFromItsID — tampering is reported by the evidence chain
 - `internal/budget` TestRaisingALimitIsTwoPersonAndLoweringIsNot — every limit proposal, application and rejection is journaled
 - `internal/action` TestSettlementFollowsTheOutcome — a reservation and its settlement are journaled with their actors
+- `internal/worker` TestCircuitChangesAreGuardedAndJournaled — every circuit trip, disable and enable is journaled with its actor and reason
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 

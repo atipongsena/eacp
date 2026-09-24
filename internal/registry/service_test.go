@@ -398,3 +398,45 @@ func TestListingsAreTenantScoped(t *testing.T) {
 		t.Fatalf("tenant B sees %d agents (err %v)", len(got), err)
 	}
 }
+
+func TestBackpressureSettingsAndConnectorCircuit(t *testing.T) {
+	e := newEnv(t)
+	w := e.wire(t)
+	c := createPOContract
+	c.MaxQueued, c.RetryMaxElapsedMS = 50, 60000
+	c.CostUnit, c.CostAmountField, c.RetryMaxCost = "THB", "amount", "1500.5"
+	id := must[uuid.UUID](t)(e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c))
+	var queued, elapsed int
+	var cost string
+	noErr(t, storage.InTenantTx(e.ctx, e.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(e.ctx, `SELECT max_queued, retry_max_elapsed_ms, retry_max_cost::text
+			FROM eacp.tool_contracts WHERE id = $1`, id).Scan(&queued, &elapsed, &cost)
+	}))
+	if queued != 50 || elapsed != 60000 || cost != "1500.500000" {
+		t.Fatalf("contract limits = %d %d %s", queued, elapsed, cost)
+	}
+	wantState(t, e.f.Exec("erin", `UPDATE eacp.tool_contracts SET max_queued = 1 WHERE id = $1`, id), sqlForbidden)
+	c.CostUnit, c.CostAmountField = "", ""
+	_, err := e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c)
+	wantErr(t, err, registry.ErrInvalid) // a retry cost needs a budget unit
+
+	// Every connector has a circuit, closed when registered.
+	got := must[registry.Circuit](t)(e.svc.ConnectorCircuit(e.ctx, e.as("audra"), w.connector))
+	if got.Open || got.Disabled || got.Reason != "registered" {
+		t.Fatalf("new circuit = %+v", got)
+	}
+	_, err = e.svc.SetConnectorDisabled(e.ctx, e.as("erin"), w.connector, true, "not mine")
+	wantErr(t, err, registry.ErrForbidden)
+	_, err = e.svc.SetConnectorDisabled(e.ctx, e.as("otto"), w.connector, true, "")
+	wantErr(t, err, registry.ErrInvalid)
+	_, err = e.svc.SetConnectorDisabled(e.ctx, e.as("otto"), uuid.New(), true, "unknown")
+	wantErr(t, err, registry.ErrNotFound)
+	got = must[registry.Circuit](t)(e.svc.SetConnectorDisabled(e.ctx, e.as("otto"), w.connector, true, "vendor incident"))
+	if !got.Open || !got.Disabled || got.ChangedBy == nil || *got.ChangedBy != e.f.P["otto"] {
+		t.Fatalf("disabled circuit = %+v", got)
+	}
+	got = must[registry.Circuit](t)(e.svc.SetConnectorDisabled(e.ctx, e.as("opal"), w.connector, false, "recovered"))
+	if got.Open || got.Disabled || got.Reason != "recovered" {
+		t.Fatalf("enabled circuit = %+v", got)
+	}
+}

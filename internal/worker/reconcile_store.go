@@ -111,7 +111,7 @@ func (s *Store) loadReconcile(ctx context.Context, l Lease) (reconcileJob, error
 			c.secret_ref, extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8,
 			a.reconcile_attempts, extract(epoch FROM now() - COALESCE(a.outcome_unknown_at, a.state_changed_at))::float8,
 			k.proof_standard, COALESCE(eacp.outcome_settled_at(a) <= now(), true),
-			a.cancel_requested_at IS NULL AND a.not_after > now() AND a.attempt_count < k.max_attempts,
+			a.cancel_requested_at IS NULL AND a.not_after > now() AND eacp.retry_budget_exhausted(a, k) IS NULL,
 			ARRAY(SELECT x.external_reference FROM eacp.action_attempts x
 			      WHERE x.action_id = a.id AND x.outcome = 'succeeded' ORDER BY x.attempt_no)
 			FROM eacp.actions a

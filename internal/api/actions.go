@@ -165,8 +165,13 @@ func (s *Server) submitAction(w http.ResponseWriter, r *http.Request, c identity
 			"detail": "this Idempotency-Key was used for a different request"})
 		return nil
 	case errors.Is(err, action.ErrAdmission):
+		scope := "tenant"
+		var a *action.AdmissionError
+		if errors.As(err, &a) {
+			scope = a.Scope
+		}
 		w.Header().Set("Retry-After", "1")
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "admission_limit"})
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "admission_limit", "scope": scope})
 		return nil
 	case errors.Is(err, action.ErrGovernanceUnavailable):
 		// The action is persisted and stays RECEIVED; resubmitting the same

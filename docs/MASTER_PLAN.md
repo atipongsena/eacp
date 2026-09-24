@@ -1432,6 +1432,8 @@ per-tenant max QUEUED
 
 แต่ละ limit แบบละเอียด (tenant/connector/worker) อยู่ Slice B (Phase 13)
 
+**Phase 13 (ADR-022 §1):** เพิ่ม limit ของ action ที่ยังไม่ release ต่อ tenant และ queue ต่อ connector group (`max_queued`); 429 บอก `scope` ของ limit ที่เต็ม
+
 ---
 
 # 27. Bulkhead Isolation
@@ -3541,6 +3543,8 @@ Benchmark fairness
 ---
 
 # 87. Phase 13 — Backpressure, Bulkheads, Circuit Breakers & Retry Budgets (Slice B)
+
+> **Status (2026-09-24): complete.** Normative detail: [ADR-022](adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) Rev 1.0. Admission adds a per-tenant limit on unreleased actions and a per-connector queue limit (429 with a scope). Each worker bulkheads its slots per capacity group. A per-worker breaker opens a journaled, shared connector circuit that PostgreSQL enforces at T14 and T16, and operators can disable a connector. Backoff is jittered, and the retry budget (attempts, elapsed time, retry cost) is enforced in PostgreSQL on every retry edge. Slice B is complete.
 
 ```text
 global / tenant / connector / queue / worker limits

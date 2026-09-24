@@ -40,8 +40,9 @@ func main() {
 			}
 			engine := action.New(d.DB, action.Options{
 				Provider: provider,
-				Limits:   action.Limits{MaxQueuedPerTenant: d.Config.MaxQueuedPerTenant, MaxQueuedGlobal: d.Config.MaxQueuedGlobal},
-				Log:      d.Log, EvaluationTimeout: d.Config.PDPTimeout,
+				Limits: action.Limits{MaxQueuedPerTenant: d.Config.MaxQueuedPerTenant, MaxQueuedGlobal: d.Config.MaxQueuedGlobal,
+					MaxPendingPerTenant: d.Config.MaxPendingPerTenant},
+				Log: d.Log, EvaluationTimeout: d.Config.PDPTimeout,
 			})
 			api.New(d.DB, d.Log).WithActions(engine).Register(mux)
 			sweeper := action.NewSweeper(engine)

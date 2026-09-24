@@ -280,9 +280,10 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 	for _, id := range retries {
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			var state string
-			var due, cancelled, expired, exhausted, samePolicy bool
+			var exhausted *string // the retry limit reached (ADR-022 §5)
+			var due, cancelled, expired, samePolicy bool
 			err := tx.QueryRow(ctx, `SELECT a.state, a.next_attempt_at <= now(), a.cancel_requested_at IS NOT NULL,
-				a.not_after <= now(), a.attempt_count >= k.max_attempts,
+				a.not_after <= now(), eacp.retry_budget_exhausted(a, k),
 				p.current_bundle_id = a.policy_bundle_id AND p.current_version = a.policy_version
 				FROM eacp.actions a
 				JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
@@ -300,8 +301,8 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 				to, why = "FAILED", "cancelled"
 			case expired:
 				to, why = "FAILED", "expired"
-			case exhausted:
-				to, why = "FAILED", "retry budget exhausted"
+			case exhausted != nil:
+				to, why = "FAILED", "retry budget exhausted: "+*exhausted
 			case !due:
 				return nil
 			case samePolicy:

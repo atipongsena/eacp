@@ -50,8 +50,9 @@ over-capacity lease.
   to the conservative value (weight one, priority zero).
 - This limits active leases in a connector group. It does not promise a
   bounded count of uncertain external effects; UNKNOWN_OUTCOME and
-  reconciliation retain the ADR-004 semantics. Phase 13 owns broader
-  bulkheads, worker/global limits and backpressure.
+  reconciliation retain the ADR-004 semantics. Phase 13 (ADR-022) adds the
+  worker bulkheads, connector circuits, connector queue admission and retry
+  budgets.
 - The claim hint performs capacity checks over active rows. The active
   lease index and bounded candidate list keep it practical for the initial
   release; benchmark results are recorded with Phase 12 validation.

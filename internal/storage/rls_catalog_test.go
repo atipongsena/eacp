@@ -63,9 +63,10 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
-	// 00005-00007, 00010).
+	// 00005-00007, 00010, 00012, 00013).
 	reviewedPolicies := []string{
 		"actions owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"connector_circuits owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connectors owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"outbox_events owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"scheduler_team_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -88,7 +89,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// under RLS (the relay locks and publishes each row in its tenant).
 	reviewedDefiners := []string{
 		"eacp.audit_chain_append()",
-		"eacp.claimable_actions(text[],jsonb,integer)",
+		"eacp.claimable_actions(text[],jsonb,integer,jsonb)",
 		"eacp.global_queued_count()",
 		"eacp.outbox_pending(text[],integer)",
 		"eacp.outbox_prunable(integer)",

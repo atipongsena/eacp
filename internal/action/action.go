@@ -36,13 +36,24 @@ var (
 	// ErrIdempotencyConflict: the key was used for a request with a
 	// different input digest (HTTP 409).
 	ErrIdempotencyConflict = errors.New("action: idempotency key reused for a different request")
-	// ErrAdmission: a static admission limit is reached; no action was
-	// created (HTTP 429, MASTER_PLAN §26).
+	// ErrAdmission: an admission limit is reached; no action was created
+	// (HTTP 429, MASTER_PLAN §26). The error is an *AdmissionError naming
+	// the limit.
 	ErrAdmission = errors.New("action: admission limit reached")
 	// ErrGovernanceUnavailable: no complete decision could be obtained. The
 	// action keeps its state and nothing becomes executable (ADR-002 §6).
 	ErrGovernanceUnavailable = errors.New("action: governance unavailable")
 )
+
+// AdmissionError names the admission limit a submission reached (ADR-022
+// §1): "global", "tenant", "pending" or "connector". It matches
+// ErrAdmission.
+type AdmissionError struct{ Scope string }
+
+func (e *AdmissionError) Error() string { return "action: " + e.Scope + " admission limit reached" }
+
+// Is reports whether target is ErrAdmission.
+func (e *AdmissionError) Is(target error) bool { return target == ErrAdmission }
 
 // Actor performs an engine call. Exactly one identity is set.
 type Actor struct {

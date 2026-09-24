@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +29,16 @@ type Options struct {
 	Lease time.Duration
 	// Concurrency bounds the actions executed at once (default 4).
 	Concurrency int
+	// GroupConcurrency bounds the actions executed at once per tenant and
+	// capacity group (the contract's concurrency_group, else its connector):
+	// the worker's bulkhead (ADR-022 §2). Default: half of Concurrency, at
+	// least 1; at most Concurrency.
+	GroupConcurrency int
+	// BreakerFailures consecutive failures of a connector open its breaker
+	// for BreakerCooldown, doubling on each consecutive trip up to 10m, and
+	// open its shared circuit as long (ADR-022 §3). Defaults 5 and 30s.
+	BreakerFailures int
+	BreakerCooldown time.Duration
 	// PollInterval is the idle wait between claims (default 500ms).
 	PollInterval time.Duration
 	// Wake, when set, ends an idle wait early: a NATS work hint (ADR-014)
@@ -35,7 +46,7 @@ type Options struct {
 	// fenced claim through PostgreSQL; polling continues as the backstop.
 	Wake <-chan struct{}
 	// Backoff is the delay before retry attempt n+1 after attempt n
-	// (default 1s doubling, at most 5m).
+	// (default 1s doubling, at most 5m, with equal jitter).
 	Backoff func(attempt int) time.Duration
 	// Connectors by protocol. The worker claims only actions whose
 	// connector protocol is listed here.
@@ -58,6 +69,10 @@ type Worker struct {
 	store     *Store
 	o         Options
 	protocols []string
+	breaker   *breaker
+
+	mu       sync.Mutex
+	inflight map[Skip]int // leased actions per tenant and capacity group
 }
 
 // New returns a Worker over pool (the application role).
@@ -74,18 +89,32 @@ func New(pool *pgxpool.Pool, o Options) (*Worker, error) {
 	if o.Concurrency <= 0 {
 		o.Concurrency = 4
 	}
+	if o.GroupConcurrency <= 0 {
+		o.GroupConcurrency = max(o.Concurrency/2, 1)
+	}
+	if o.GroupConcurrency > o.Concurrency {
+		return nil, errors.New("worker: group concurrency must not exceed concurrency")
+	}
+	if o.BreakerFailures <= 0 {
+		o.BreakerFailures = 5
+	}
+	if o.BreakerCooldown <= 0 {
+		o.BreakerCooldown = 30 * time.Second
+	}
+	if o.BreakerCooldown < time.Second || o.BreakerCooldown > maxBreakerCooldown {
+		return nil, errors.New("worker: breaker cooldown must be between 1s and 10m")
+	}
 	if o.PollInterval <= 0 {
 		o.PollInterval = 500 * time.Millisecond
 	}
 	if o.Backoff == nil {
-		o.Backoff = func(n int) time.Duration {
-			return min(time.Second<<min(max(n-1, 0), 9), 5*time.Minute)
-		}
+		o.Backoff = jitteredBackoff
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	w := &Worker{store: NewStore(pool, o.ID), o: o}
+	w := &Worker{store: NewStore(pool, o.ID), o: o, inflight: map[Skip]int{},
+		breaker: newBreaker(o.BreakerFailures, o.BreakerCooldown, time.Now)}
 	for p := range o.Connectors {
 		w.protocols = append(w.protocols, p)
 	}
@@ -96,12 +125,51 @@ func New(pool *pgxpool.Pool, o Options) (*Worker, error) {
 // Store returns the worker's fenced store.
 func (w *Worker) Store() *Store { return w.store }
 
-// claim leases up to n claimable actions.
-func (w *Worker) claim(ctx context.Context, n int) ([]Lease, error) {
-	var leases []Lease
+// skipList is what the claim hint must leave out for this worker: capacity
+// groups whose bulkhead is full and connectors whose breaker is open.
+func (w *Worker) skipList() []Skip {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var skip []Skip
+	for k, n := range w.inflight {
+		if n >= w.o.GroupConcurrency {
+			skip = append(skip, k)
+		}
+	}
+	for _, k := range w.breaker.blockedKeys() {
+		skip = append(skip, Skip{TenantID: k.tenant, Key: "connector:" + k.connector.String()})
+	}
+	return skip
+}
+
+// hold counts a lease against its bulkhead until the returned func runs.
+func (w *Worker) hold(l Lease) (free func()) {
+	k := Skip{TenantID: l.TenantID, Key: l.Capacity}
+	w.mu.Lock()
+	w.inflight[k]++
+	w.mu.Unlock()
+	return func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if w.inflight[k]--; w.inflight[k] <= 0 {
+			delete(w.inflight, k)
+		}
+	}
+}
+
+// claimed is a lease counted against its bulkhead.
+type claimed struct {
+	Lease
+	free func()
+}
+
+// claim leases up to n claimable actions, keeping each capacity group within
+// the worker's bulkhead and skipping connectors whose breaker is open.
+func (w *Worker) claim(ctx context.Context, n int) ([]claimed, error) {
+	var leases []claimed
 	attempted := make(map[Candidate]bool)
 	for len(leases) < n {
-		cands, err := w.store.Claimable(ctx, w.protocols, w.o.Secrets.Bindings(), 100)
+		cands, err := w.store.Claimable(ctx, w.protocols, w.o.Secrets.Bindings(), 100, w.skipList())
 		if err != nil {
 			return leases, err
 		}
@@ -121,7 +189,7 @@ func (w *Worker) claim(ctx context.Context, n int) ([]Lease, error) {
 			return leases, err
 		}
 		if ok {
-			leases = append(leases, l)
+			leases = append(leases, claimed{Lease: l, free: w.hold(l)})
 			clear(attempted) // The successful claim advanced the database turn.
 		} else {
 			attempted[next] = true
@@ -136,7 +204,10 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	leases, err := w.claim(ctx, w.o.Concurrency)
 	var wg sync.WaitGroup
 	for _, l := range leases {
-		wg.Go(func() { w.execute(ctx, l) })
+		wg.Go(func() {
+			defer l.free()
+			w.execute(ctx, l.Lease)
+		})
 	}
 	wg.Wait()
 	return len(leases), err
@@ -160,13 +231,14 @@ func (w *Worker) Run(ctx context.Context) {
 				slots <- struct{}{}
 				wg.Go(func() {
 					defer func() {
+						l.free()
 						<-slots
 						select { // wake the loop without ever blocking on it
 						case freed <- struct{}{}:
 						default:
 						}
 					}()
-					w.execute(ctx, l)
+					w.execute(ctx, l.Lease)
 				})
 			}
 			if len(leases) > 0 {
@@ -218,6 +290,25 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 		w.release(exec, l, log, "worker shutting down")
 		return
 	}
+	// ADR-022 §3: an open breaker withholds the call; a half-open one lets
+	// this call through as its probe.
+	key := breakerKey{l.TenantID, job.ConnectorID}
+	admitted, isProbe := w.breaker.start(key)
+	if !admitted {
+		w.release(exec, l, log, "connector circuit open")
+		return
+	}
+	probe := neutral // until a call is made
+	defer func() {
+		if cooldown := w.breaker.done(key, probe, isProbe); cooldown > 0 {
+			log.WarnContext(exec, "connector circuit breaker opened", "connector", job.ConnectorID.String(),
+				"cooldown", cooldown)
+			if err := w.store.TripCircuit(exec, l, job.ConnectorID, cooldown,
+				fmt.Sprintf("worker %s: %d consecutive failures", w.o.ID, w.o.BreakerFailures)); err != nil {
+				log.ErrorContext(exec, "cannot open the shared circuit", "err", err)
+			}
+		}
+	}()
 
 	decision, d, err := w.store.Intent(exec, l, w.o.Lease)
 	if err != nil {
@@ -233,7 +324,8 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	}
 
 	callCtx, cancel := context.WithTimeout(exec, d.Timeout)
-	stop := w.heartbeat(exec, l, cancel, log)
+	var cancelled atomic.Bool // set when the worker itself cancels the call
+	stop := w.heartbeat(exec, l, func() { cancelled.Store(true); cancel() }, log)
 	res := safeExecute(callCtx, conn, Call{
 		TenantID: l.TenantID, ActionID: l.ActionID, OperationKey: job.OperationKey, Attempt: d.Attempt,
 		Generation: l.Generation, Tool: job.Tool, Endpoint: job.Endpoint, Payload: job.EnforcedPayload,
@@ -242,6 +334,7 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	cancel()
 	stop()
 	res = classify(scrub(res, w.o.Secrets.Values()), job.Contract)
+	probe = signalOf(res, cancelled.Load())
 
 	var comp Completion
 	for try := 0; ; try++ {

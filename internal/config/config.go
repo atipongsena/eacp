@@ -36,13 +36,14 @@ type Config struct {
 	OTelEndpoint    string
 	ShutdownTimeout time.Duration
 
-	// Action API (controlplane-api): static admission limits on QUEUED
-	// actions (MASTER_PLAN §26), the sweeper interval and the bound on one
-	// governance (PDP) call.
-	MaxQueuedPerTenant int64
-	MaxQueuedGlobal    int64
-	SweepInterval      time.Duration
-	PDPTimeout         time.Duration
+	// Action API (controlplane-api): admission limits on released and on
+	// unreleased unfinished actions (MASTER_PLAN §26, ADR-022 §1), the
+	// sweeper interval and the bound on one governance (PDP) call.
+	MaxQueuedPerTenant  int64
+	MaxQueuedGlobal     int64
+	MaxPendingPerTenant int64
+	SweepInterval       time.Duration
+	PDPTimeout          time.Duration
 
 	// Governance provider (controlplane-api, ADR-002 §8): "local" or
 	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
@@ -78,6 +79,14 @@ type Config struct {
 	WorkerConcurrency    int
 	WorkerPollInterval   time.Duration
 	ConnectorSecretsFile string
+
+	// Worker bulkhead and circuit breaker (ADR-022 §2, §3): in-flight
+	// actions per tenant and capacity group (default half the concurrency),
+	// consecutive failures that open a connector's breaker, and its first
+	// cooldown.
+	WorkerGroupConcurrency int
+	WorkerBreakerFailures  int
+	WorkerBreakerCooldown  time.Duration
 }
 
 var (
@@ -154,6 +163,7 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	if cfg.MaxQueuedPerTenant > cfg.MaxQueuedGlobal && cfg.MaxQueuedGlobal > 0 {
 		errs = append(errs, errors.New("EACP_ACTION_MAX_QUEUED_PER_TENANT: must not exceed EACP_ACTION_MAX_QUEUED_GLOBAL"))
 	}
+	cfg.MaxPendingPerTenant = limit("EACP_ACTION_MAX_PENDING_PER_TENANT", "1000")
 	duration := func(key, def string, max time.Duration) time.Duration {
 		d, err := time.ParseDuration(get(key, def))
 		if err != nil || d <= 0 || d > max {
@@ -209,6 +219,20 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 			errs = append(errs, errors.New("EACP_WORKER_CONCURRENCY: must be an integer in [1, 256]"))
 		}
 		cfg.WorkerConcurrency = n
+		g, err := strconv.Atoi(get("EACP_WORKER_GROUP_CONCURRENCY", strconv.Itoa(max(n/2, 1))))
+		if err != nil || g <= 0 || g > n {
+			errs = append(errs, errors.New("EACP_WORKER_GROUP_CONCURRENCY: must be an integer in [1, EACP_WORKER_CONCURRENCY]"))
+		}
+		cfg.WorkerGroupConcurrency = g
+		f, err := strconv.Atoi(get("EACP_WORKER_BREAKER_FAILURES", "5"))
+		if err != nil || f < 1 || f > 100 {
+			errs = append(errs, errors.New("EACP_WORKER_BREAKER_FAILURES: must be an integer in [1, 100]"))
+		}
+		cfg.WorkerBreakerFailures = f
+		cfg.WorkerBreakerCooldown = duration("EACP_WORKER_BREAKER_COOLDOWN", "30s", 10*time.Minute)
+		if cfg.WorkerBreakerCooldown > 0 && cfg.WorkerBreakerCooldown < time.Second {
+			errs = append(errs, errors.New("EACP_WORKER_BREAKER_COOLDOWN: must be at least 1s"))
+		}
 		cfg.WorkerPollInterval = duration("EACP_WORKER_POLL_INTERVAL", "500ms", time.Minute)
 		cfg.ConnectorSecretsFile = get("EACP_CONNECTOR_SECRETS_FILE", "")
 	} else if get("EACP_CONNECTOR_SECRETS_FILE", "") != "" {
@@ -235,6 +259,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("shutdown_timeout", c.ShutdownTimeout),
 		slog.Int64("action_max_queued_per_tenant", c.MaxQueuedPerTenant),
 		slog.Int64("action_max_queued_global", c.MaxQueuedGlobal),
+		slog.Int64("action_max_pending_per_tenant", c.MaxPendingPerTenant),
 		slog.Duration("action_sweep_interval", c.SweepInterval),
 		slog.Duration("pdp_timeout", c.PDPTimeout),
 		slog.String("governance_provider", c.GovernanceProvider),
@@ -248,6 +273,9 @@ func (c Config) LogValue() slog.Value {
 		slog.String("worker_id", c.WorkerID),
 		slog.Duration("worker_lease", c.WorkerLease),
 		slog.Int("worker_concurrency", c.WorkerConcurrency),
+		slog.Int("worker_group_concurrency", c.WorkerGroupConcurrency),
+		slog.Int("worker_breaker_failures", c.WorkerBreakerFailures),
+		slog.Duration("worker_breaker_cooldown", c.WorkerBreakerCooldown),
 		slog.Duration("worker_poll_interval", c.WorkerPollInterval),
 		slog.String("connector_secrets_file", c.ConnectorSecretsFile),
 	)

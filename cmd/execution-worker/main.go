@@ -55,7 +55,9 @@ func main() {
 			connectors := map[string]worker.Connector{"http": connector.NewHTTP()}
 			w, err := worker.New(d.DB, worker.Options{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
-				PollInterval: d.Config.WorkerPollInterval, Wake: wake, Secrets: secrets, Connectors: connectors, Log: d.Log,
+				GroupConcurrency: d.Config.WorkerGroupConcurrency, BreakerFailures: d.Config.WorkerBreakerFailures,
+				BreakerCooldown: d.Config.WorkerBreakerCooldown,
+				PollInterval:    d.Config.WorkerPollInterval, Wake: wake, Secrets: secrets, Connectors: connectors, Log: d.Log,
 			})
 			if err != nil {
 				return err

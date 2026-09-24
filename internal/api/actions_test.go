@@ -166,6 +166,9 @@ func TestAdmissionLimitIs429(t *testing.T) {
 	if hdr.Get("Retry-After") == "" {
 		t.Fatal("429 without Retry-After")
 	}
+	if body["error"] != "admission_limit" || body["scope"] != "tenant" {
+		t.Fatalf("429 body = %v, want admission_limit with scope tenant", body)
+	}
 }
 
 func TestWaitReturnsWhenTerminalOrAfterTheDeadline(t *testing.T) {

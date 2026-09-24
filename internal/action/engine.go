@@ -23,16 +23,19 @@ import (
 	"eacp/internal/storage"
 )
 
-// Limits are the static admission limits of Slice A (MASTER_PLAN §26):
-// the number of QUEUED actions per tenant and across all tenants.
+// Limits are the admission limits (MASTER_PLAN §26, ADR-022 §1): released,
+// unfinished actions per tenant and across all tenants, and unreleased,
+// unfinished actions per tenant. A contract's max_queued also bounds its
+// connector's queue.
 type Limits struct {
-	MaxQueuedPerTenant int64
-	MaxQueuedGlobal    int64
+	MaxQueuedPerTenant  int64
+	MaxQueuedGlobal     int64
+	MaxPendingPerTenant int64
 }
 
 // DefaultLimits apply when Options.Limits leaves a limit at zero. Admission
 // is never unbounded.
-var DefaultLimits = Limits{MaxQueuedPerTenant: 1000, MaxQueuedGlobal: 10000}
+var DefaultLimits = Limits{MaxQueuedPerTenant: 1000, MaxQueuedGlobal: 10000, MaxPendingPerTenant: 1000}
 
 // Budget denial reasons (ADR-012 §4). A budget denial is terminal (T12).
 const (
@@ -77,6 +80,9 @@ func New(pool *pgxpool.Pool, o Options) *Engine {
 	}
 	if o.Limits.MaxQueuedGlobal <= 0 {
 		o.Limits.MaxQueuedGlobal = DefaultLimits.MaxQueuedGlobal
+	}
+	if o.Limits.MaxPendingPerTenant <= 0 {
+		o.Limits.MaxPendingPerTenant = DefaultLimits.MaxPendingPerTenant
 	}
 	return &Engine{pool: pool, o: o}
 }
@@ -216,7 +222,7 @@ func (e *Engine) Submit(ctx context.Context, a Actor, s Submission) (View, error
 		if found, err := existing(); found || err != nil {
 			return err
 		}
-		if err := e.admit(ctx, tx); err != nil {
+		if err := e.admit(ctx, tx, s.Tool); err != nil {
 			return err
 		}
 		err := tx.QueryRow(ctx, `INSERT INTO eacp.actions
@@ -244,23 +250,33 @@ func (e *Engine) Submit(ctx context.Context, a Actor, s Submission) (View, error
 	return e.Advance(ctx, a, id)
 }
 
-// admit applies the static admission limits to released, unfinished
-// actions (QUEUED to RETRY_WAIT). Counts are advisory under concurrency:
-// concurrent submissions may overshoot by their number.
-func (e *Engine) admit(ctx context.Context, tx pgx.Tx) error {
-	var tenant, global int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.actions
-		WHERE state IN ('QUEUED', 'LEASED', 'EXECUTING', 'RETRY_WAIT')`).Scan(&tenant); err != nil {
+// admit applies the admission limits (ADR-022 §1) to a new submission for
+// tool. Counts are advisory under concurrency: concurrent submissions may
+// overshoot by their number.
+func (e *Engine) admit(ctx context.Context, tx pgx.Tx, tool string) error {
+	var queued, pending int64
+	var connectorFull bool
+	if err := tx.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE state IN ('QUEUED', 'LEASED', 'EXECUTING', 'RETRY_WAIT')),
+		count(*) FILTER (WHERE state IN ('RECEIVED', 'PENDING_APPROVAL', 'AUTHORIZED')),
+		eacp.connector_queue_full($1)
+		FROM eacp.actions`, tool).Scan(&queued, &pending, &connectorFull); err != nil {
 		return err
 	}
-	if tenant >= e.o.Limits.MaxQueuedPerTenant {
-		return ErrAdmission
+	switch {
+	case queued >= e.o.Limits.MaxQueuedPerTenant:
+		return &AdmissionError{Scope: "tenant"}
+	case pending >= e.o.Limits.MaxPendingPerTenant:
+		return &AdmissionError{Scope: "pending"}
+	case connectorFull:
+		return &AdmissionError{Scope: "connector"}
 	}
+	var global int64
 	if err := tx.QueryRow(ctx, `SELECT eacp.global_queued_count()`).Scan(&global); err != nil {
 		return err
 	}
 	if global >= e.o.Limits.MaxQueuedGlobal {
-		return ErrAdmission
+		return &AdmissionError{Scope: "global"}
 	}
 	return nil
 }

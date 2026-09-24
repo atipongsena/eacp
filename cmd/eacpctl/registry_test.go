@@ -164,6 +164,27 @@ func TestAgentAndConnectorCommands(t *testing.T) {
 	}
 }
 
+func TestConnectorCircuitCommands(t *testing.T) {
+	f, keyFor := apiEnv(t)
+	conn := f.ActiveTool(t, "erp", "lookup").Connector.String()
+	otto := keyFor("otto")
+	if _, err := runWith(t, otto, "connector", "disable", conn); err == nil {
+		t.Fatal("disable without a reason accepted by the CLI")
+	}
+	out, err := runWith(t, otto, "connector", "disable", conn, "--reason", "vendor incident")
+	if err != nil || !strings.Contains(out, `"disabled": true`) {
+		t.Fatalf("connector disable: %v\n%s", err, out)
+	}
+	out, err = runWith(t, keyFor("audra"), "connector", "circuit", conn)
+	if err != nil || !strings.Contains(out, `"open": true`) {
+		t.Fatalf("connector circuit: %v\n%s", err, out)
+	}
+	out, err = runWith(t, otto, "connector", "enable", conn, "--reason", "recovered")
+	if err != nil || !strings.Contains(out, `"open": false`) {
+		t.Fatalf("connector enable: %v\n%s", err, out)
+	}
+}
+
 func TestCommandsSurfaceHTTPErrors(t *testing.T) {
 	f, keyFor := apiEnv(t)
 	_, err := runWith(t, keyFor("carol"), "agent", "register", "--name", "x1", "--display-name", "x",

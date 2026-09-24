@@ -110,9 +110,38 @@ func runAgent(ctx context.Context, args []string, getenv func(string) string, ou
 	}
 }
 
+const connectorUsage = `usage:
+  eacpctl connector register --name --endpoint --secret-ref [--protocol http]
+  eacpctl connector circuit <connector-id>
+  eacpctl connector disable|enable <connector-id> --reason <text>   (operator, ADR-022 §3)`
+
 func runConnector(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
-	if len(args) == 0 || args[0] != "register" {
-		return errors.New("usage: eacpctl connector register --name --endpoint --secret-ref [--protocol http]")
+	if len(args) == 0 {
+		return errors.New(connectorUsage)
+	}
+	switch args[0] {
+	case "register":
+	case "circuit":
+		if len(args) != 2 {
+			return errors.New(connectorUsage)
+		}
+		return call(ctx, getenv, out, "GET", "/v1/connectors/"+url.PathEscape(args[1])+"/circuit", nil)
+	case "disable", "enable":
+		if len(args) < 2 {
+			return errors.New(connectorUsage)
+		}
+		fs := newFlags("connector " + args[0])
+		reason := fs.String("reason", "", "why (journaled)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if *reason == "" || fs.NArg() != 0 {
+			return errors.New(connectorUsage)
+		}
+		return call(ctx, getenv, out, "POST", "/v1/connectors/"+url.PathEscape(args[1])+"/circuit/"+args[0],
+			map[string]any{"reason": *reason})
+	default:
+		return errors.New(connectorUsage)
 	}
 	fs := newFlags("connector register")
 	name := fs.String("name", "", "connector slug")

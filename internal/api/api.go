@@ -96,6 +96,9 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/connectors", p(editor, s.registerConnector))
 	mux.Handle("GET /v1/connectors", p(anyPrincipal, s.listConnectors))
 	mux.Handle("POST /v1/connectors/{id}/tools", p(editor, s.registerTool))
+	mux.Handle("GET /v1/connectors/{id}/circuit", p(actionReader, s.connectorCircuit))
+	mux.Handle("POST /v1/connectors/{id}/circuit/disable", p(operator, s.switchCircuit(true)))
+	mux.Handle("POST /v1/connectors/{id}/circuit/enable", p(operator, s.switchCircuit(false)))
 	mux.Handle("POST /v1/tools/{id}/contracts", p(editorOrApprover, s.proposeContract))
 	mux.Handle("POST /v1/tools/{id}/contract", p(approver, s.activateContract))
 	mux.Handle("POST /v1/tool-contracts/{id}/revoke", p(containment, s.revokeContract))
@@ -517,6 +520,39 @@ func (s *Server) listConnectors(w http.ResponseWriter, r *http.Request, c identi
 		writeJSON(w, http.StatusOK, map[string]any{"connectors": conns})
 	}
 	return err
+}
+
+// connectorCircuit is GET /v1/connectors/{id}/circuit (ADR-022 §3).
+func (s *Server) connectorCircuit(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	circuit, err := s.reg.ConnectorCircuit(r.Context(), actor(c), id)
+	if err == nil {
+		writeJSON(w, http.StatusOK, circuit)
+	}
+	return err
+}
+
+// switchCircuit is POST /v1/connectors/{id}/circuit/disable and /enable: an
+// operator stops or resumes new dispatch to a connector, with a reason.
+func (s *Server) switchCircuit(disabled bool) func(http.ResponseWriter, *http.Request, identity.Caller) error {
+	return func(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+		id, err := pathID(r, "id")
+		if err != nil {
+			return err
+		}
+		var in reasonBody
+		if err := decode(r, &in); err != nil {
+			return err
+		}
+		circuit, err := s.reg.SetConnectorDisabled(r.Context(), actor(c), id, disabled, in.Reason)
+		if err == nil {
+			writeJSON(w, http.StatusOK, circuit)
+		}
+		return err
+	}
 }
 
 func (s *Server) registerTool(w http.ResponseWriter, r *http.Request, c identity.Caller) error {

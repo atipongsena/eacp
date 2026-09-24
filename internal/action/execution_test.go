@@ -167,7 +167,7 @@ func TestSweeperReclaimsLapsedLeases(t *testing.T) {
 		}
 		want, reason := "QUEUED", "retry"
 		if attempt == 3 {
-			want, reason = "FAILED", "retry budget exhausted"
+			want, reason = "FAILED", "retry budget exhausted: attempts"
 		}
 		if got := v.get(read.ID); got.State != want || got.StateReason != reason || got.AttemptCount != int(attempt) {
 			t.Fatalf("attempt %d = %s (%s)", attempt, got.State, got.StateReason)

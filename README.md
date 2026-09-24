@@ -6,11 +6,12 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - **Execution:** a Go execution fabric with fenced dispatch, explicit `UNKNOWN_OUTCOME` handling and reconciliation ([ADR-004](docs/adr/ADR-004-action-state-machine-and-execution-semantics.md))
 - **State:** PostgreSQL is the single source of truth, with tenant isolation enforced by Row-Level Security
 
-> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B has started:
+> **Status: early development.** Slice A (Phases 1–8) is complete: platform foundation; registry, identity and capability; local governance and durable approvals; the Action API and atomic release boundary; workers, leases, fencing and the dispatch intent; the HTTP connector and Fake ERP; `UNKNOWN_OUTCOME`, reconciliation and human resolution; hardening and the [demo](docs/DEMO.md). Every Slice A invariant has passing tests ([map](docs/INVARIANTS.md)). Slice B is complete:
 - Phase 9 adds the Microsoft AGT/ACS sidecar PDP ([ADR-002](docs/adr/ADR-002-agt-integration-sidecar-pdp.md) Rev 2.4).
 - Phase 10 adds NATS JetStream work hints and dashboard events ([ADR-014](docs/adr/ADR-014-postgresql-authority-nats-signals.md)).
 - Phase 11 adds hard budget reservation ([ADR-012](docs/adr/ADR-012-budget-reservation.md)).
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
+- Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -96,6 +97,15 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | PostgreSQL chooses tenant/team weighted turns; teams pin their group weight and contract priority at release, with aging and deadline promotion within a team. NATS remains a wake-up hint. | [ADR-011](docs/adr/ADR-011-scheduler-fairness.md), `TestSchedulerServesTenantWithSmallerBacklog`, `TestSchedulerUsesPinnedTeamWeight`, `TestSchedulerPriorityAndAging` |
 | T14 serializes and enforces `max_inflight` for a connector or named group, including raw SQL, concurrent claims and stale transaction snapshots. | `TestConnectorCapacityIsEnforcedForRawClaims`, `TestConnectorCapacitySerializesConcurrentClaims`, `TestConnectorCapacityRejectsStaleRepeatableReadClaim`, `TestNamedCapacityGroupSpansConnectorsAndStateIsTenantIsolated` |
 | The 10,000:100:100 benchmark gives each small team 10 of the first 30 claims; the measured 30-claim run was about 1.4 seconds with `-race` on the development machine. | `BenchmarkSchedulerFairness` |
+
+## Slice B (Phase 13): backpressure, bulkheads, circuit breakers and retry budgets
+
+| Capability | Evidence |
+|---|---|
+| Admission answers 429 with a `scope` and creates nothing: global and tenant queues, a tenant's unreleased actions (`EACP_ACTION_MAX_PENDING_PER_TENANT`), and a connector group's queue (contract `max_queued`). A full connector queue still admits other connectors. | [ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) §1, `TestAdmissionBoundsPendingAndConnectorQueues`, `TestAdmissionLimitIs429` |
+| No connector failure starves another pool (§103 invariant 9): a worker holds at most `EACP_WORKER_GROUP_CONCURRENCY` actions per capacity group, and `max_inflight` bounds the group across workers. | `TestConnectorFailureDoesNotStarveUnrelatedConnectors` |
+| A breaker per worker and connector opens after `EACP_WORKER_BREAKER_FAILURES` failures, probes once after its cooldown and doubles the cooldown on each consecutive trip. It also opens the connector's shared circuit, journaled; while that is open, PostgreSQL refuses the claim (T14) and the dispatch intent (T16). Operators disable and enable a connector (`eacpctl connector disable\|enable`). | `TestBreakerOpensProbesAndCloses`, `TestLocalBreakerHoldsWithoutTheSharedCircuit`, `TestOpenCircuitRefusesClaimAndDispatch`, `TestDisableSerializesWithAStaleDispatchIntent`, `TestCircuitChangesAreGuardedAndJournaled` |
+| Retries back off exponentially with jitter and stay within the contract's retry budget: attempts, `retry_max_elapsed_ms` since the first dispatch, and `retry_max_cost`. PostgreSQL answers the budget question for the worker, sweeper, reconciler and operator retries alike. | `TestDefaultBackoffIsJitteredWithinBounds`, `TestRetryBudgetBoundsElapsedTime`, `TestRetryBudgetBoundsRetryCost` |
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

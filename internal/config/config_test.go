@@ -37,8 +37,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.ShutdownTimeout != 15*time.Second {
 		t.Errorf("ShutdownTimeout = %v, want 15s", cfg.ShutdownTimeout)
 	}
-	if cfg.MaxQueuedPerTenant != 1000 || cfg.MaxQueuedGlobal != 10000 {
-		t.Errorf("admission limits = %d/%d, want 1000/10000", cfg.MaxQueuedPerTenant, cfg.MaxQueuedGlobal)
+	if cfg.MaxQueuedPerTenant != 1000 || cfg.MaxQueuedGlobal != 10000 || cfg.MaxPendingPerTenant != 1000 {
+		t.Errorf("admission limits = %d/%d/%d, want 1000/10000/1000",
+			cfg.MaxQueuedPerTenant, cfg.MaxQueuedGlobal, cfg.MaxPendingPerTenant)
 	}
 	if cfg.SweepInterval != time.Second || cfg.PDPTimeout != 5*time.Second {
 		t.Errorf("SweepInterval = %v, PDPTimeout = %v, want 1s and 5s", cfg.SweepInterval, cfg.PDPTimeout)
@@ -111,6 +112,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"negative global limit":     {"EACP_ACTION_MAX_QUEUED_GLOBAL": "-1"},
 		"tenant above global":       {"EACP_ACTION_MAX_QUEUED_PER_TENANT": "20", "EACP_ACTION_MAX_QUEUED_GLOBAL": "10"},
 		"unparsable limit":          {"EACP_ACTION_MAX_QUEUED_GLOBAL": "lots"},
+		"zero pending limit":        {"EACP_ACTION_MAX_PENDING_PER_TENANT": "0"},
 		"zero sweep interval":       {"EACP_ACTION_SWEEP_INTERVAL": "0s"},
 		"unparsable pdp timeout":    {"EACP_PDP_TIMEOUT": "later"},
 		"pdp timeout over a minute": {"EACP_PDP_TIMEOUT": "2m"},
@@ -164,16 +166,24 @@ func TestWorkerSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.WorkerID != "" || cfg.WorkerLease != 30*time.Second || cfg.WorkerConcurrency != 4 ||
-		cfg.WorkerPollInterval != 500*time.Millisecond || cfg.ConnectorSecretsFile != "" {
+		cfg.WorkerPollInterval != 500*time.Millisecond || cfg.ConnectorSecretsFile != "" ||
+		cfg.WorkerGroupConcurrency != 2 || cfg.WorkerBreakerFailures != 5 || cfg.WorkerBreakerCooldown != 30*time.Second {
 		t.Fatalf("worker defaults = %+v", cfg)
 	}
 	cfg, err = Load(env(map[string]string{
 		"EACP_WORKER_ID": "worker-a", "EACP_WORKER_LEASE": "10s",
 		"EACP_WORKER_CONCURRENCY": "16", "EACP_WORKER_POLL_INTERVAL": "2s",
+		"EACP_WORKER_GROUP_CONCURRENCY": "3", "EACP_WORKER_BREAKER_FAILURES": "8",
+		"EACP_WORKER_BREAKER_COOLDOWN": "1m",
 	}), Options{AllowConnectorSecrets: true})
 	if err != nil || cfg.WorkerID != "worker-a" || cfg.WorkerLease != 10*time.Second ||
-		cfg.WorkerConcurrency != 16 || cfg.WorkerPollInterval != 2*time.Second {
+		cfg.WorkerConcurrency != 16 || cfg.WorkerPollInterval != 2*time.Second ||
+		cfg.WorkerGroupConcurrency != 3 || cfg.WorkerBreakerFailures != 8 || cfg.WorkerBreakerCooldown != time.Minute {
 		t.Fatalf("worker overrides = %+v, %v", cfg, err)
+	}
+	// A one-slot worker cannot split its slot; the bulkhead is that slot.
+	if cfg, err := Load(env(map[string]string{"EACP_WORKER_CONCURRENCY": "1"}), Options{AllowConnectorSecrets: true}); err != nil || cfg.WorkerGroupConcurrency != 1 {
+		t.Fatalf("one-slot worker = %+v, %v", cfg, err)
 	}
 	for name, vars := range map[string]map[string]string{
 		"short lease":        {"EACP_WORKER_LEASE": "1s"},
@@ -182,6 +192,12 @@ func TestWorkerSettings(t *testing.T) {
 		"huge concurrency":   {"EACP_WORKER_CONCURRENCY": "100000"},
 		"zero poll interval": {"EACP_WORKER_POLL_INTERVAL": "0s"},
 		"bad worker id":      {"EACP_WORKER_ID": "no spaces allowed"},
+		"bulkhead too wide":  {"EACP_WORKER_CONCURRENCY": "4", "EACP_WORKER_GROUP_CONCURRENCY": "5"},
+		"zero bulkhead":      {"EACP_WORKER_GROUP_CONCURRENCY": "0"},
+		"zero failures":      {"EACP_WORKER_BREAKER_FAILURES": "0"},
+		"too many failures":  {"EACP_WORKER_BREAKER_FAILURES": "101"},
+		"short cooldown":     {"EACP_WORKER_BREAKER_COOLDOWN": "100ms"},
+		"long cooldown":      {"EACP_WORKER_BREAKER_COOLDOWN": "11m"},
 	} {
 		if _, err := Load(env(vars), Options{AllowConnectorSecrets: true}); err == nil {
 			t.Errorf("%s: accepted %v", name, vars)

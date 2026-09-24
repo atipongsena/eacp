@@ -388,3 +388,35 @@ func TestPrincipalManagementThroughTheAPI(t *testing.T) {
 		t.Fatalf("me = %v", me)
 	}
 }
+
+func TestConnectorCircuitAPI(t *testing.T) {
+	h := newHarness(t)
+	conn := h.f.ActiveTool(t, "erp", "lookup").Connector
+	path := "/v1/connectors/" + conn.String() + "/circuit"
+	code, body := h.as("audra", "GET", path, nil)
+	h.want(200, code, body)
+	if body["open"] != false || body["disabled"] != false {
+		t.Fatalf("new connector circuit = %v", body)
+	}
+	code, body = h.as("carol", "POST", path+"/disable", map[string]any{"reason": "x"})
+	h.want(403, code, body)
+	code, body = h.as("otto", "POST", path+"/disable", map[string]any{"reason": ""})
+	h.want(400, code, body)
+	code, body = h.as("otto", "POST", path+"/disable", map[string]any{"reason": "vendor incident"})
+	h.want(200, code, body)
+	if body["open"] != true || body["disabled"] != true || body["reason"] != "vendor incident" {
+		t.Fatalf("disabled circuit = %v", body)
+	}
+	code, body = h.as("audra", "GET", path, nil)
+	h.want(200, code, body)
+	if body["disabled"] != true {
+		t.Fatalf("circuit after disable = %v", body)
+	}
+	code, body = h.as("opal", "POST", path+"/enable", map[string]any{"reason": "vendor recovered"})
+	h.want(200, code, body)
+	if body["open"] != false || body["disabled"] != false {
+		t.Fatalf("enabled circuit = %v", body)
+	}
+	code, body = h.as("otto", "POST", "/v1/connectors/"+uuid.NewString()+"/circuit/disable", map[string]any{"reason": "x"})
+	h.want(404, code, body)
+}

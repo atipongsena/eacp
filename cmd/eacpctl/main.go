@@ -19,6 +19,9 @@
 //	eacpctl agent list
 //	eacpctl agent inspect <id|name>
 //	eacpctl connector register --name --endpoint --secret-ref [--protocol http]
+//	eacpctl connector circuit <connector-id>
+//	eacpctl connector disable|enable <connector-id> --reason <text>
+//	                          stop or resume new dispatch to a connector (operators, ADR-022)
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -52,7 +55,7 @@ const usage = `usage:
   eacpctl key generate --kind agent|principal --tenant <uuid>
   eacpctl tenant create --slug <slug> --name <name> --admin <spec> --admin <spec>
   eacpctl agent register|list|inspect ...
-  eacpctl connector register ...
+  eacpctl connector register|circuit|disable|enable ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`

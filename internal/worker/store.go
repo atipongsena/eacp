@@ -35,9 +35,20 @@ func NewStore(pool *pgxpool.Pool, id string) *Store { return &Store{pool: pool, 
 type Candidate struct{ TenantID, ActionID uuid.UUID }
 
 // Lease is a claimed action at a lease generation (the fencing token).
+// Capacity names its capacity group ("group:<name>" or "connector:<id>")
+// for the worker's bulkhead; Claim sets it.
 type Lease struct {
 	TenantID, ActionID uuid.UUID
 	Generation         int64
+	Capacity           string
+}
+
+// Skip is a key the claim hint leaves out for one tenant: a capacity group
+// ("group:<name>" or "connector:<id>") whose bulkhead is full, or a
+// connector ("connector:<id>") whose breaker is open (ADR-022 §2).
+type Skip struct {
+	TenantID uuid.UUID `json:"tenant_id"`
+	Key      string    `json:"key"`
 }
 
 func (l Lease) String() string { return fmt.Sprintf("%s@%d", l.ActionID, l.Generation) }
@@ -76,9 +87,10 @@ func (s *Store) inTx(ctx context.Context, tenant uuid.UUID, gen int64, fn func(p
 }
 
 // Claimable lists up to limit eligible QUEUED actions in PostgreSQL fair
-// order. The protocol, credential and capacity checks are hints; Claim
-// rechecks the authoritative state under the action lock.
-func (s *Store) Claimable(ctx context.Context, protocols []string, bindings []Binding, limit int) ([]Candidate, error) {
+// order, leaving out open circuits and the keys in skip. The protocol,
+// credential, capacity and circuit checks are hints; Claim rechecks the
+// authoritative state under the action lock.
+func (s *Store) Claimable(ctx context.Context, protocols []string, bindings []Binding, limit int, skip []Skip) ([]Candidate, error) {
 	if len(protocols) == 0 || len(bindings) == 0 {
 		return nil, nil
 	}
@@ -86,8 +98,15 @@ func (s *Store) Claimable(ctx context.Context, protocols []string, bindings []Bi
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT tenant_id, action_id FROM eacp.claimable_actions($1, $2::jsonb, $3)`,
-		protocols, string(b), limit)
+	if skip == nil {
+		skip = []Skip{}
+	}
+	sk, err := json.Marshal(skip)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT tenant_id, action_id FROM eacp.claimable_actions($1, $2::jsonb, $3, $4::jsonb)`,
+		protocols, string(b), limit, string(sk))
 	if err != nil {
 		return nil, err
 	}
@@ -99,8 +118,8 @@ func (s *Store) Claimable(ctx context.Context, protocols []string, bindings []Bi
 }
 
 // Claim leases c for lease (T14, FOR UPDATE SKIP LOCKED). ok is false when
-// another worker holds the row, it is no longer QUEUED, or its connector
-// capacity is occupied.
+// another worker holds the row, it is no longer QUEUED, its connector
+// capacity is occupied or its connector's circuit is open.
 func (s *Store) Claim(ctx context.Context, c Candidate, lease time.Duration) (l Lease, ok bool, err error) {
 	err = storage.InTenantTx(ctx, s.pool, c.TenantID.String(), func(tx pgx.Tx) error {
 		var state string
@@ -125,7 +144,14 @@ func (s *Store) Claim(ctx context.Context, c Candidate, lease time.Duration) (l 
 		}
 		ok = tag.RowsAffected() == 1
 		l = Lease{TenantID: c.TenantID, ActionID: c.ActionID, Generation: gen + 1}
-		return nil
+		if !ok {
+			return nil
+		}
+		return tx.QueryRow(ctx, `SELECT COALESCE('group:' || k.concurrency_group, 'connector:' || t.connector_id::text)
+			FROM eacp.actions a
+			JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
+			JOIN eacp.tools t ON t.tenant_id = k.tenant_id AND t.id = k.tool_id
+			WHERE a.id = $1`, c.ActionID).Scan(&l.Capacity)
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "53300" {
@@ -146,6 +172,7 @@ type Job struct {
 	InputPayload, EnforcedPayload             json.RawMessage
 	EnforcedDigest                            []byte
 	Attempts                                  int // dispatch intents so far
+	ConnectorID                               uuid.UUID
 	Protocol, Endpoint, SecretRef             string
 	Contract                                  Contract
 }
@@ -160,7 +187,7 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 		err := tx.QueryRow(ctx, `SELECT a.state, a.lease_generation, a.agent_id, a.agent_version_id, a.subject,
 			a.operation, a.target, a.tool, a.tool_schema_version, a.resource, a.operation_key,
 			a.input_payload::text, a.enforced_payload::text, a.enforced_digest, a.attempt_count,
-			c.protocol, c.endpoint, c.secret_ref, k.version, k.side_effects, k.idempotency_mode,
+			c.id, c.protocol, c.endpoint, c.secret_ref, k.version, k.side_effects, k.idempotency_mode,
 			COALESCE(k.idempotency_key_field, ''), COALESCE(k.correlation_field, ''),
 			k.no_effect_errors, k.max_attempts
 			FROM eacp.actions a
@@ -169,7 +196,7 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 			JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id
 			WHERE a.id = $1`, l.ActionID).Scan(&state, &gen, &j.AgentID, &j.AgentVersionID, &j.Subject,
 			&j.Operation, &j.Target, &j.Tool, &j.ToolSchemaVersion, &j.Resource, &j.OperationKey,
-			&input, &enforced, &j.EnforcedDigest, &j.Attempts, &j.Protocol, &j.Endpoint, &j.SecretRef,
+			&input, &enforced, &j.EnforcedDigest, &j.Attempts, &j.ConnectorID, &j.Protocol, &j.Endpoint, &j.SecretRef,
 			&j.Contract.Version, &j.Contract.SideEffects, &j.Contract.IdempotencyMode,
 			&j.Contract.IdempotencyKeyField, &j.Contract.CorrelationField, &j.Contract.NoEffectErrors,
 			&j.Contract.MaxAttempts)
@@ -189,10 +216,11 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 type Decision string
 
 const (
-	Dispatched  Decision = "dispatched"  // T16: the call may be made
-	Reauthorize Decision = "reauthorize" // T16a: policy changed
-	Denied      Decision = "denied"      // T16b: revoked before dispatch
-	Expired     Decision = "expired"     // T18: not_after passed
+	Dispatched  Decision = "dispatched"   // T16: the call may be made
+	Reauthorize Decision = "reauthorize"  // T16a: policy changed
+	Denied      Decision = "denied"       // T16b: revoked before dispatch
+	Expired     Decision = "expired"      // T18: not_after passed
+	CircuitOpen Decision = "circuit_open" // T17: the connector's circuit is open
 )
 
 // Dispatch is a recorded dispatch intent.
@@ -203,8 +231,8 @@ type Dispatch struct {
 
 // Intent records the fenced dispatch intent (T16) in its own transaction,
 // with the registry and policy read FOR SHARE. When dispatch is not
-// permitted it makes T16a, T16b or T18 instead. Only Dispatched allows the
-// external call.
+// permitted it makes T16a, T16b, T18 or, while the connector's circuit is
+// open (ADR-022 §3), T17 instead. Only Dispatched allows the external call.
 func (s *Store) Intent(ctx context.Context, l Lease, leaseAfterCall time.Duration) (Decision, Dispatch, error) {
 	var d Dispatch
 	var decision Decision
@@ -212,11 +240,14 @@ func (s *Store) Intent(ctx context.Context, l Lease, leaseAfterCall time.Duratio
 		var state string
 		var gen int64
 		var expired bool
-		var drift *string
+		var drift, circuit *string
 		var timeout float64
 		err := tx.QueryRow(ctx, `SELECT a.state, a.lease_generation, a.not_after <= now(), eacp.dispatch_drift(a),
-			extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8
-			FROM eacp.actions a WHERE a.id = $1 FOR UPDATE`, l.ActionID).Scan(&state, &gen, &expired, &drift, &timeout)
+			extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8,
+			(SELECT eacp.connector_circuit_state(t.tenant_id, t.connector_id) FROM eacp.tools t
+			 WHERE t.tenant_id = a.tenant_id AND t.id = a.tool_id)
+			FROM eacp.actions a WHERE a.id = $1 FOR UPDATE`, l.ActionID).Scan(&state, &gen, &expired, &drift, &timeout,
+			&circuit)
 		if err != nil {
 			return err
 		}
@@ -237,6 +268,9 @@ func (s *Store) Intent(ctx context.Context, l Lease, leaseAfterCall time.Duratio
 		case drift != nil:
 			decision = Denied
 			return move(`UPDATE eacp.actions SET state = 'DENIED', state_reason = $2 WHERE id = $1`, *drift)
+		case circuit != nil:
+			decision = CircuitOpen
+			return move(`UPDATE eacp.actions SET state = 'QUEUED', state_reason = 'connector circuit open' WHERE id = $1`)
 		}
 		decision = Dispatched
 		d.Timeout = time.Duration(timeout * float64(time.Second))
@@ -303,14 +337,12 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 	err := s.inTx(ctx, l.TenantID, l.Generation, func(tx pgx.Tx) error {
 		var state string
 		var gen int64
-		var attempts, maxAttempts int
-		var cancelled, alive, readOnly bool
-		err := tx.QueryRow(ctx, `SELECT a.state, a.lease_generation, a.attempt_count, a.cancel_requested_at IS NOT NULL,
-			a.not_after > now(), k.max_attempts, k.side_effects = ARRAY['READ_ONLY'] AND k.revoked_at IS NULL
+		var budgetLeft, cancelled, alive, readOnly bool
+		err := tx.QueryRow(ctx, `SELECT a.state, a.lease_generation, a.cancel_requested_at IS NOT NULL,
+			a.not_after > now(), k.side_effects = ARRAY['READ_ONLY'] AND k.revoked_at IS NULL
 			FROM eacp.actions a
 			JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
-			WHERE a.id = $1 FOR UPDATE OF a`, l.ActionID).Scan(&state, &gen, &attempts, &cancelled, &alive,
-			&maxAttempts, &readOnly)
+			WHERE a.id = $1 FOR UPDATE OF a`, l.ActionID).Scan(&state, &gen, &cancelled, &alive, &readOnly)
 		if err != nil {
 			return err
 		}
@@ -323,7 +355,14 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 		if c.Late {
 			return nil
 		}
-		retry := attempts < maxAttempts && !cancelled && alive
+		// The retry budget (ADR-022 §5), asked of the database that enforces it.
+		if err := tx.QueryRow(ctx, `SELECT eacp.retry_budget_exhausted(a, k) IS NULL
+			FROM eacp.actions a
+			JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
+			WHERE a.id = $1`, l.ActionID).Scan(&budgetLeft); err != nil {
+			return err
+		}
+		retry := budgetLeft && !cancelled && alive
 		var reason string
 		switch {
 		case r.Outcome == Succeeded:
@@ -353,4 +392,17 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 		return Completion{}, err
 	}
 	return c, nil
+}
+
+// TripCircuit opens the shared circuit of connector for cooldown (at most
+// 10 minutes, and never earlier than it already is) after this worker's
+// breaker opened on failed calls such as the one under lease l (ADR-022
+// §3). The database journals it.
+func (s *Store) TripCircuit(ctx context.Context, l Lease, connector uuid.UUID, cooldown time.Duration, reason string) error {
+	return s.inTx(ctx, l.TenantID, l.Generation, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE eacp.connector_circuits
+			SET open_until = now() + make_interval(secs => $2), reason = $3 WHERE connector_id = $1`,
+			connector, min(cooldown, maxBreakerCooldown).Seconds(), reason)
+		return err
+	})
 }

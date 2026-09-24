@@ -32,8 +32,8 @@ type ReconcilerOptions struct {
 	MaxAttempts int
 	MaxAge      time.Duration
 	// Backoff is the delay before reconciliation attempt n+1 after attempt
-	// n (default 1s doubling, at most 5m), and before a retry permitted by
-	// authoritative negative evidence.
+	// n (default 1s doubling, at most 5m, with equal jitter), and before a
+	// retry permitted by authoritative negative evidence.
 	Backoff func(attempt int) time.Duration
 	// Connectors by protocol and the worker-held credentials (ADR-001 §3):
 	// a lookup authenticates like the call it looks for.
@@ -78,9 +78,7 @@ func NewReconciler(pool *pgxpool.Pool, o ReconcilerOptions) (*Reconciler, error)
 		o.MaxAge = time.Hour
 	}
 	if o.Backoff == nil {
-		o.Backoff = func(n int) time.Duration {
-			return min(time.Second<<min(max(n-1, 0), 9), 5*time.Minute)
-		}
+		o.Backoff = jitteredBackoff
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))

@@ -216,6 +216,8 @@ Slice A Phase 5 implements T14 and T16–T27, and cancel requests in `EXECUTING`
 
 **Phase 12 amendment (ADR-011).** The claim hint now orders eligible work by PostgreSQL tenant/team turns and priority aging, and omits capacity-saturated groups. T14 enforces connector capacity under a transaction advisory lock and advances scheduler state before the audit append. The worker requests a fresh hint after each successful claim. The other T14 fencing rules above still apply.
 
+**Phase 13 amendment (ADR-022).** T14 is also refused while the connector's shared circuit is open or the connector is disabled, and T16 reads that circuit row `FOR SHARE` and is refused likewise; the worker releases such a lease instead (T17). Every edge that grants a retry (T20, T22a, T25, T26, T31, T37) now requires the contract's whole retry budget, which adds a retry time and a retry cost to `max_attempts`; T27 and T32 accept any exhausted limit. The worker's default backoff is jittered. The rest of this section still applies.
+
 **Heartbeat.** A heartbeat extends a live lease only (`OLD.leased_until > now()`), because an expired lease belongs to the sweeper. It changes nothing but the lease, and it is neither a transition nor journaled. It returns the cancel request. The worker heartbeats every lease/3 while a call is in flight, and cancels the call if the lease is lost or a cancel is requested.
 
 **Dispatch intent (T16).** T16 is its own committed transaction before any external call, with registry rows read `FOR SHARE`. The database requires all of:

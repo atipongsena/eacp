@@ -23,7 +23,7 @@ import (
 func schedulerCandidates(t *testing.T, f *registrytest.Fixture, limit int) []worker.Candidate {
 	t.Helper()
 	store := worker.NewStore(f.App, "scheduler-test")
-	got, err := store.Claimable(context.Background(), []string{"http"}, []worker.Binding{{TenantID: uuid.MustParse(pgtest.TenantA), Ref: "erp", Host: "fakeerp:8090"}}, limit)
+	got, err := store.Claimable(context.Background(), []string{"http"}, []worker.Binding{{TenantID: uuid.MustParse(pgtest.TenantA), Ref: "erp", Host: "fakeerp:8090"}}, limit, nil)
 	must(t, err)
 	return got
 }
@@ -129,7 +129,7 @@ func TestSchedulerServesTenantWithSmallerBacklog(t *testing.T) {
 	}
 	seen := false
 	for i := 0; i < 2; i++ {
-		got, err := store.Claimable(context.Background(), []string{"http"}, bindings, 20)
+		got, err := store.Claimable(context.Background(), []string{"http"}, bindings, 20, nil)
 		must(t, err)
 		if got[0].ActionID == small {
 			seen = true
@@ -298,7 +298,7 @@ func TestSchedulerPriorityAndAging(t *testing.T) {
 		{TenantID: uuid.MustParse(pgtest.TenantA), Ref: "priority", Host: "fakeerp:8090"},
 	}
 	query := func() uuid.UUID {
-		got, err := store.Claimable(context.Background(), []string{"http"}, bindings, 10)
+		got, err := store.Claimable(context.Background(), []string{"http"}, bindings, 10, nil)
 		must(t, err)
 		return got[0].ActionID
 	}
@@ -399,7 +399,7 @@ func BenchmarkSchedulerFairness(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		for i := 0; i < 30; i++ {
-			candidates, err := store.Claimable(ctx, []string{"http"}, bindings, 1)
+			candidates, err := store.Claimable(ctx, []string{"http"}, bindings, 1, nil)
 			if err != nil || len(candidates) != 1 {
 				b.Fatalf("claim hint = %v, %v", candidates, err)
 			}
