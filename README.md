@@ -13,7 +13,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 
-Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)).
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)). Phase 18 adds Agent FinOps: LLM cost ingest, chargeback, soft budgets, a spend dashboard and alerts ([ADR-025](docs/adr/ADR-025-agent-finops.md)).
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -153,6 +153,18 @@ The enforceable scopes are `tenant`, `team`, `agent`, `agent_version`, `action`,
 - `rollback` activates an older `SUSPENDED` version of one agent.
 
 Operators may pause and quarantine. Only a `registry_approver` may resume, release or roll back, under the same separation of duties as a single activation. The CLI is `eacpctl fleet status|list|operation|pause|quarantine|resume|release|rollback`.
+
+## Phase 18: Agent FinOps
+
+EACP is not in the LLM path, so it ingests LLM cost. An agent runtime points its OTLP/HTTP trace exporter at `<api>/v1/agent/otlp` with its agent key, as JSON (`OTEL_EXPORTER_OTLP_PROTOCOL=http/json`), gzip or not. Spans carrying OpenTelemetry GenAI usage (`gen_ai.operation.name` plus `gen_ai.usage.*_tokens`) are recorded against the key's agent and priced in PostgreSQL. Other spans are ignored.
+
+- **Rate card.** An admin adds prices per million tokens with `POST /v1/finops/prices` (or `eacpctl finops price add`). A price applies from now on, never to the past. Usage with no price stays unpriced and raises an `unpriced_usage` alert; it is never counted as zero.
+- **Billing.** An admin imports provider billing lines with `POST /v1/finops/billing` (or `eacpctl finops billing import <file.json>`). Per agent and day, the greater of the reported and billed amounts counts.
+- **Chargeback.** `GET /v1/finops/chargeback?group_by=agent|team|account&from=…&to=…` combines tool spend from hard budgets (committed and held) with LLM spend.
+- **Soft limits and alerts.** An admin sets a monthly soft limit on a budget account with `PUT /v1/finops/soft-limits/{account}`. The evaluator (every `EACP_FINOPS_INTERVAL`, default 1m) raises alerts at 80 % and 100 % of it. It also raises alerts on hourly spend anomalies and on unpriced usage. Operators acknowledge alerts with `POST /v1/finops/alerts/{id}/ack`.
+- **Dashboard.** `GET /v1/finops/dashboard` shows spend today and month to date, the top agents, today's hard budget blocks and open alerts.
+
+Soft limits and alerts never block anything; only hard budgets do.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

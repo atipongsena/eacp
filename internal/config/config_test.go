@@ -44,6 +44,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.SweepInterval != time.Second || cfg.PDPTimeout != 5*time.Second {
 		t.Errorf("SweepInterval = %v, PDPTimeout = %v, want 1s and 5s", cfg.SweepInterval, cfg.PDPTimeout)
 	}
+	if cfg.FinOpsInterval != time.Minute {
+		t.Errorf("FinOpsInterval = %v, want 1m", cfg.FinOpsInterval)
+	}
 	if cfg.ReconcileMaxAttempts != 10 || cfg.ReconcileMaxAge != time.Hour {
 		t.Errorf("reconcile limits = %d %v, want 10 and 1h", cfg.ReconcileMaxAttempts, cfg.ReconcileMaxAge)
 	}
@@ -66,6 +69,7 @@ func TestLoadReadsOverrides(t *testing.T) {
 		"EACP_PDP_TIMEOUT":                  "2s",
 		"EACP_RECONCILE_MAX_ATTEMPTS":       "3",
 		"EACP_RECONCILE_MAX_AGE":            "20m",
+		"EACP_FINOPS_INTERVAL":              "5m",
 	}), Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -75,7 +79,7 @@ func TestLoadReadsOverrides(t *testing.T) {
 		cfg.OTelExporter != "otlp" || cfg.OTelEndpoint != "collector:4318" ||
 		cfg.ShutdownTimeout != 3*time.Second || cfg.MaxQueuedPerTenant != 5 || cfg.MaxQueuedGlobal != 50 ||
 		cfg.SweepInterval != 250*time.Millisecond || cfg.PDPTimeout != 2*time.Second ||
-		cfg.ReconcileMaxAttempts != 3 || cfg.ReconcileMaxAge != 20*time.Minute {
+		cfg.ReconcileMaxAttempts != 3 || cfg.ReconcileMaxAge != 20*time.Minute || cfg.FinOpsInterval != 5*time.Minute {
 		t.Fatalf("overrides not applied: %+v", cfg)
 	}
 }
@@ -95,10 +99,12 @@ func TestLoadAllowsMissingDatabaseURLWhenNotRequired(t *testing.T) {
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	cases := map[string]map[string]string{
-		"unknown environment": {"EACP_ENV": "prod-ish"},
-		"unknown log level":   {"EACP_LOG_LEVEL": "loud"},
-		"unknown log format":  {"EACP_LOG_FORMAT": "xml"},
-		"unknown exporter":    {"EACP_OTEL_EXPORTER": "zipkin"},
+		"unknown environment":       {"EACP_ENV": "prod-ish"},
+		"unknown log level":         {"EACP_LOG_LEVEL": "loud"},
+		"unknown log format":        {"EACP_LOG_FORMAT": "xml"},
+		"finops interval too short": {"EACP_FINOPS_INTERVAL": "1s"},
+		"finops interval too long":  {"EACP_FINOPS_INTERVAL": "2h"},
+		"unknown exporter":          {"EACP_OTEL_EXPORTER": "zipkin"},
 		"otlp without endpoint": {
 			"EACP_OTEL_EXPORTER": "otlp",
 		},

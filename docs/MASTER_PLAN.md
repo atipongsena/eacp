@@ -3632,6 +3632,13 @@ rollback
 
 # 92. Phase 18 — Agent FinOps (Later)
 
+> **Status (2026-09-25): delivered.** Normative detail: [ADR-025](adr/ADR-025-agent-finops.md) Rev 1.0.
+> - **Ingest.** LLM cost is ingested, never proxied (§3.1). An agent exports OTLP/HTTP JSON GenAI spans with its own key; PostgreSQL binds each record to that key and prices it from an insert-only, forward-only rate card. Admins import provider billing lines.
+> - **Effective spend.** Effective LLM spend per agent, unit and UTC day is the greater of the reported and billed sums.
+> - **Chargeback** groups tool spend (ADR-012, committed and held) and LLM spend by agent, owning team or budget account. Accounts roll up the ADR-012 tree.
+> - **Soft limits and alerts.** Monthly soft limits, soft-limit, anomaly and unpriced-usage alerts, and the dashboard are observations. Only ADR-012 hard limits block.
+> - **Not done:** actual tool cost, run budgets, forecasts and an alert signal on NATS.
+
 Build:
 
 ```text

@@ -75,11 +75,18 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname IN ('fleet_operation_targets', 'fleet_operations') ORDER BY relname`); !slices.Equal(got, []string{"fleet_operation_targets", "fleet_operations"}) {
 		t.Errorf("reviewed fleet tables missing: %v", got)
 	}
+	finops := []string{"budget_soft_limits", "finops_alerts", "model_prices", "usage_records"}
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname IN ('budget_soft_limits', 'finops_alerts', 'model_prices', 'usage_records')
+		ORDER BY relname`); !slices.Equal(got, finops) {
+		t.Errorf("reviewed finops tables missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
-	// 00005-00007, 00010, 00012, 00013, 00014).
+	// 00005-00007, 00010, 00012, 00013, 00014, 00016 and 00018).
 	reviewedPolicies := []string{
 		"actions owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"budget_soft_limits owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connector_circuits owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connectors owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"kill_states owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -91,6 +98,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"tenants tenant_isolation PERMISSIVE ALL {public} (id = eacp.current_tenant_id())",
 		"tool_contracts owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"tools owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"usage_records owner_scan PERMISSIVE SELECT {eacp_owner} true",
 	}
 	if got := strs(`SELECT concat_ws(' ', tablename, policyname, permissive, cmd, roles::text, qual, with_check)
 		FROM pg_policies WHERE schemaname = 'eacp'
@@ -101,12 +109,13 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	}
 
 	// SECURITY DEFINER functions run as the owner and so cross tenants. Each
-	// is reviewed: the journal chain append, and claim, count and outbox
-	// hints that return only ids and counts; the caller re-checks everything
+	// is reviewed: the journal chain append, and claim, count, outbox and
+	// finops-evaluator hints that return only ids and counts; the caller re-checks everything
 	// under RLS (the relay locks and publishes each row in its tenant).
 	reviewedDefiners := []string{
 		"eacp.audit_chain_append()",
 		"eacp.claimable_actions(text[],jsonb,integer,jsonb)",
+		"eacp.finops_tenants()",
 		"eacp.global_queued_count()",
 		"eacp.mcp_scans_due(jsonb,integer)",
 		"eacp.outbox_pending(text[],integer)",

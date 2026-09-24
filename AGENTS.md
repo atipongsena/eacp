@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–13. Slice C: Phases 14 (MCP Registry, ADR-023) and 15 (Dependency Graph, ADR-015) complete. Phase 16 (Distributed Kill Switch, ADR-016) is complete for seven action-bound scopes (global, run and model await platform authority and authenticated action bindings). Phase 17 (Fleet Operations, ADR-024) is complete.**
+Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–13. Slice C: Phases 14 (MCP Registry, ADR-023) and 15 (Dependency Graph, ADR-015) complete. Phase 16 (Distributed Kill Switch, ADR-016) is complete for seven action-bound scopes (global, run and model await platform authority and authenticated action bindings). Phase 17 (Fleet Operations, ADR-024) is complete. Phase 18 (Agent FinOps, ADR-025) is complete.**
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -36,6 +36,7 @@ Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–1
 - MCP tools are discovered, never declared (ADR-023). Only the execution worker's scanner talks to an MCP server, with the worker-held secret. A scan transaction binds `storage.SetScanner` (worker id and scan-lease generation) and writes only through `eacp.mcp_record_scan`; `eacp.actor_context()` rejects the scanner. PostgreSQL computes every fingerprint, digest and risk; never send them from Go. An MCP contract pins the tool's current `definition_id`. A high-risk change or a missing certified tool quarantines the tool; release is a second registry approver and never recertifies. No worker serves protocol `mcp` yet: do not add `tools/call` without an ADR.
 - Backpressure and breakers only withhold work (ADR-022). A connector's circuit row is created with the connector; only a worker opens it (at most 10 minutes, never earlier) and only an `operator` disables or enables it. T14 and T16 refuse an open circuit in PostgreSQL. Ask `eacp.retry_budget_exhausted` whether a retry is allowed; never compare `attempt_count` with `max_attempts` in Go.
 - Dependency edges are tenant-scoped, immutable observations with source, expiry and confidence (ADR-015); only a `registry_editor` records or revokes them. Existing allowlists and connector/tool rows supply the capability edges. Blast radius runs in a tenant read-only snapshot with recursive CTEs; stale or unknown evidence widens possible impact. Its `observed_only` coverage never proves an undeclared dependency absent. The graph never grants access or triggers containment.
+- FinOps observes and never blocks (ADR-025). OTel usage is recorded only with the agent's own key; PostgreSQL binds the agent and computes every cost from the forward-only rate card (never send a cost from Go). Unpriced usage stays NULL, never zero. Alerts are raised only by the `finops` system actor through `eacp.finops_evaluate()` and acknowledged once by an operator or admin.
 - Kill states and epochs are authoritative in PostgreSQL (ADR-016). `eacp.set_kill` checks an operator and tenant-local target, journals the change and requires a second operator to clear it. T14/T16 use the tenant kill advisory lock and reject active scopes. After intent, worker checks again before the call, polls during the call, and treats an epoch change as `UNKNOWN_OUTCOME`. Global, run and model scopes require authoritative identity bindings; reject them until those exist.
 - Fleet operations are ADR-003 lifecycle transitions, never a new authority (ADR-024). Insert a `eacp.fleet_operation_targets` row to make a transition. The version guard still authorizes it; the target guard reads the `from` state, checks the kind's pair and binds the operation to its creating transaction and actor. Never update `agent_versions` for a fleet operation from Go. Resume and release undo only their source operation's targets. The fleet view is read-only and repeats `eacp.action_capability_denial`'s tool rules without locks; keep `TestFleetDriftAgreesWithTheCapabilityCheck` green when either changes.
 
@@ -85,6 +86,7 @@ internal/messaging/natstest  embedded JetStream server for tests (never skips)
 internal/budget      budget accounts and limit changes (two-person raises, escrow)
 internal/kill        operator API for PostgreSQL execution kills (ADR-016)
 internal/fleet       fleet operations (atomic lifecycle transitions) and the read-only fleet view (ADR-024)
+internal/finops      OTLP GenAI usage ingest, rate card, billing import, chargeback, soft limits, dashboard, alert evaluator (ADR-025)
 internal/connector   HTTP connector (execute, lookup)
 internal/connector/mcp  MCP discovery client (Streamable HTTP, modern and legacy revisions); mcptest fake server
 internal/fakeerp     credential-protected Fake ERP with a durable operation log

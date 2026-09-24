@@ -44,6 +44,9 @@ type Config struct {
 	MaxPendingPerTenant int64
 	SweepInterval       time.Duration
 	PDPTimeout          time.Duration
+	// FinOpsInterval is how often controlplane-api runs the FinOps alert
+	// evaluator (ADR-025 §8).
+	FinOpsInterval time.Duration
 
 	// Governance provider (controlplane-api, ADR-002 §8): "local" or
 	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
@@ -178,6 +181,10 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	}
 	cfg.SweepInterval = duration("EACP_ACTION_SWEEP_INTERVAL", "1s", time.Hour)
 	cfg.PDPTimeout = duration("EACP_PDP_TIMEOUT", "5s", time.Minute)
+	cfg.FinOpsInterval = duration("EACP_FINOPS_INTERVAL", "1m", time.Hour)
+	if cfg.FinOpsInterval > 0 && cfg.FinOpsInterval < 10*time.Second {
+		errs = append(errs, errors.New("EACP_FINOPS_INTERVAL: must be at least 10s"))
+	}
 	cfg.GovernanceProvider = get("EACP_GOVERNANCE_PROVIDER", "local")
 	cfg.AGTPDPURL = get("EACP_AGT_PDP_URL", "")
 	cfg.AGTPDPCAFile = get("EACP_AGT_PDP_CA_FILE", "")
@@ -275,6 +282,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int64("action_max_pending_per_tenant", c.MaxPendingPerTenant),
 		slog.Duration("action_sweep_interval", c.SweepInterval),
 		slog.Duration("pdp_timeout", c.PDPTimeout),
+		slog.Duration("finops_interval", c.FinOpsInterval),
 		slog.String("governance_provider", c.GovernanceProvider),
 		slog.String("agt_pdp_url", RedactURL(c.AGTPDPURL)),
 		slog.String("agt_pdp_cert_file", c.AGTPDPCertFile),

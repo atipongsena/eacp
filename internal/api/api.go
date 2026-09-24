@@ -24,6 +24,7 @@ import (
 	"eacp/internal/approval"
 	"eacp/internal/audit"
 	"eacp/internal/budget"
+	"eacp/internal/finops"
 	"eacp/internal/fleet"
 	"eacp/internal/governance"
 	"eacp/internal/identity"
@@ -45,6 +46,7 @@ type Server struct {
 	budgets *budget.Service
 	kills   *kill.Service
 	fleet   *fleet.Service
+	finops  *finops.Service
 
 	actions *action.Engine
 }
@@ -53,7 +55,7 @@ type Server struct {
 func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
 		appr: approval.New(pool), log: log, budgets: budget.New(pool), kills: kill.New(pool),
-		fleet:   fleet.New(pool),
+		fleet: fleet.New(pool), finops: finops.New(pool),
 		actions: action.New(pool, action.Options{Provider: governance.LocalProvider{InstanceID: "controlplane-api"}, Log: log})}
 }
 
@@ -130,6 +132,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerDependency(mux)
 	s.registerKill(mux)
 	s.registerFleet(mux)
+	s.registerFinOps(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

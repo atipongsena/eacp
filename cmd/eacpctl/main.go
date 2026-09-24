@@ -40,6 +40,15 @@
 //	eacpctl fleet resume|release <operation-id> --reason <text> [--dry-run]
 //	eacpctl fleet rollback <agent> [--to <version-id>] --reason <text> [--dry-run]
 //	                          atomic lifecycle changes across agents (ADR-024)
+//	eacpctl finops dashboard|prices|soft-limits
+//	eacpctl finops chargeback [--by agent|team|account] [--from T] [--to T]
+//	eacpctl finops usage [--agent UUID] [--from T] [--to T] [--limit N]
+//	eacpctl finops price add --provider --model --unit --input --output [--cached] [--effective-from] --reason <text>
+//	eacpctl finops billing import <file.json>
+//	eacpctl finops soft-limit <account-id> (--limit X | --clear) --reason <text>
+//	eacpctl finops alerts [--open] [--limit N]
+//	eacpctl finops ack <alert-id> --reason <text>
+//	                          LLM cost, chargeback, soft budgets and alerts (ADR-025)
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -79,6 +88,7 @@ const usage = `usage:
   eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <AGT reason>]
   eacpctl kill list
   eacpctl fleet status|list|operation|pause|resume|quarantine|release|rollback ...
+  eacpctl finops dashboard|chargeback|usage|prices|price|billing|soft-limits|soft-limit|alerts|ack ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
@@ -117,6 +127,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runKill(ctx, args[1:], getenv, out)
 	case "fleet":
 		return runFleet(ctx, args[1:], getenv, out)
+	case "finops":
+		return runFinOps(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
 	case "pdp-dev-certs":

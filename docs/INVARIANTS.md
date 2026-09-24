@@ -16,6 +16,8 @@ Phase 16 (Slice C) adds PostgreSQL-authoritative scoped execution kills (ADR-016
 
 Phase 17 (Slice C) adds fleet operations and the fleet view (ADR-024). An operation is a set of ADR-003 lifecycle transitions that PostgreSQL makes atomically under the version guard. Its tests join invariants 8, 17 and 19. `internal/fleet/schema_test.go` also checks every rule in raw SQL; `internal/fleet/fleet_test.go` checks selection, dry runs, atomicity, rollback and the observed health reasons.
 
+Phase 18 (Slice C) adds Agent FinOps (ADR-025): LLM usage ingest over OTLP/HTTP JSON and billing imports, a forward-only rate card priced in PostgreSQL, chargeback, soft limits, a spend dashboard and alerts. Nothing it adds blocks an action; only invariant 3's hard budgets do. Its tests join invariants 8 and 17. `internal/finops/schema_test.go` also checks key-bound attribution, the observation window, idempotent spans, rounding up and the cache rule, and the evaluator's thresholds and baseline; `internal/finops/service_test.go` checks effective spend as the greater source per day and the account rollup.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -118,6 +120,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestKillRejectsDirectWriteAndForeignTarget — the kill API rejects a foreign target and direct table writes
 - `internal/fleet` TestFleetOperationsAreTenantScoped — a fleet operation selects, changes and shows only its tenant's agents
 - `internal/fleet` TestFleetTargetMustBeATenantVersion — a raw target naming another tenant's version is refused
+- `internal/finops` TestAlertsThroughTheServiceAndTheEvaluatorAcrossTenants — the cross-tenant evaluator hint yields tenant ids only; each tenant sees and acknowledges only its own alerts
+- `internal/api` TestFinOpsOfOtherTenantsAreNotFound — the FinOps API shows another tenant no spend, and its agents, accounts and alerts are not found
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -205,6 +209,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — dependency evidence insertion and revocation are journaled with the editor actor
 - `internal/worker` TestKillAndResumeAreJournaledWithActorAndReason — both operator changes are audited with reason and emitted to the outbox
 - `internal/fleet` TestPauseTargetRecordsDatabaseStateAndIsJournaled — each transition and the operation (actor, reason, targets) are journaled, the operation last
+- `internal/finops` TestSoftLimitsAreAdminOnlyAndJournaled — soft limits, prices and billing imports are journaled with their actor and the row's reason
+- `internal/finops` TestAlertsAreRaisedByFinOpsAndAcknowledgedOnce — an alert's creation (the finops system actor) and its single acknowledgement are journaled
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 

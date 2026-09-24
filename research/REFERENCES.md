@@ -3,6 +3,25 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 18 — OTLP/HTTP JSON and the OpenTelemetry GenAI conventions (2026-09-25)
+
+Checked against the OTLP specification (opentelemetry.io/docs/specs/otlp, **1.11.0**) and the GenAI semantic-conventions repository (`open-telemetry/semantic-conventions-genai`, commit `8ffdf568e1b4391a99adb081db16e8102e36918e`, 2026-09-22, status **Development**). `internal/finops/otlp_test.go` and `internal/api/finops_test.go` pin what EACP relies on.
+
+### OTLP/HTTP facts used
+
+- The default trace path is `/v1/traces`. EACP serves it under the agent API as `POST /v1/agent/otlp/v1/traces`, so an exporter's endpoint is `<api>/v1/agent/otlp`.
+- JSON requests use `Content-Type: application/json`. Keys are lowerCamelCase, `traceId`/`spanId` are **case-insensitive** hex strings, enums are integers, and 64-bit integers are decimal strings. EACP also accepts a JSON integer, as the protobuf JSON mapping does. Receivers **must** ignore unknown fields.
+- Servers **must** support `gzip` (`Content-Encoding: gzip`) as well as no compression. EACP bounds the body at 4 MiB both before and after decompression.
+- Full success is `200` with `partialSuccess` unset. Partial success is `200` with `partialSuccess.rejectedSpans` (an int64 string) and `errorMessage`. Undecodable data is `400`. Throttling is `429` or `503`. JSON responses use `Content-Type: application/json`.
+- Accepting binary Protobuf and JSON on the same port is a **SHOULD**. EACP accepts JSON only and answers `415` for anything else (ADR-025 §1), a documented deviation.
+
+### GenAI attributes used
+
+- `gen_ai.operation.name` is required. Well-known values include `chat`, `generate_content`, `text_completion`, `embeddings`, `invoke_agent`, `invoke_workflow`, `plan`, `execute_tool` and `fetch_response`. `fetch_response` SHOULD NOT report usage.
+- Also used: `gen_ai.provider.name`, `gen_ai.request.model` and `gen_ai.response.model`. `gen_ai.system` is not in this registry.
+- `gen_ai.usage.input_tokens` "SHOULD include all types of input tokens, including cached tokens". `gen_ai.usage.output_tokens` and `gen_ai.usage.cache_read.input_tokens` are the other usage attributes. All are integers.
+- Agent-level spans (`invoke_agent`, …) may carry usage aggregated over their child calls. EACP stores them as not billable, so usage is never counted twice (ADR-025 §2).
+
 ## Phase 14 — MCP specification and the official Go SDK (2026-09-24)
 
 Checked against the specification repository (`modelcontextprotocol/modelcontextprotocol`, `main`: `schema/2026-07-28/schema.ts` and `docs/specification/2026-07-28`, plus `2025-11-25` for the legacy transport), against the SDK module source (`go mod download`), and by running the SDK's server in `internal/connector/mcp/interop_test.go`.

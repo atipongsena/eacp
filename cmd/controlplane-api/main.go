@@ -10,6 +10,7 @@
 // AGT sidecar PDP (ADR-002 §8). It prunes the transactional outbox and, with
 // EACP_NATS_URL set, relays it to NATS JetStream as work hints and dashboard
 // events (ADR-014); NATS is never an authority or a readiness dependency.
+// It runs the FinOps alert evaluator every EACP_FINOPS_INTERVAL (ADR-025).
 package main
 
 import (
@@ -23,6 +24,7 @@ import (
 	"eacp/internal/action"
 	"eacp/internal/api"
 	"eacp/internal/config"
+	"eacp/internal/finops"
 	"eacp/internal/messaging"
 	"eacp/internal/service"
 )
@@ -49,6 +51,7 @@ func main() {
 			sweeper.ReconcileMaxAge = d.Config.ReconcileMaxAge
 			d.Background(func(ctx context.Context) { sweeper.Run(ctx, d.Config.SweepInterval) })
 			d.Background(func(ctx context.Context) { messaging.RunPruner(ctx, d.DB, time.Minute, d.Log) })
+			d.Background(func(ctx context.Context) { finops.New(d.DB).Run(ctx, d.Config.FinOpsInterval, d.Log) })
 			return startRelay(d)
 		})
 }

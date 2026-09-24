@@ -16,6 +16,7 @@ import (
 	"eacp/internal/approval"
 	"eacp/internal/connector/mcp"
 	"eacp/internal/connector/mcp/mcptest"
+	"eacp/internal/finops"
 	"eacp/internal/fleet"
 	"eacp/internal/identity"
 	"eacp/internal/messaging"
@@ -27,7 +28,8 @@ import (
 
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, budget, execution, reconciliation, operator
-// resolution, journal, outbox and inbox, MCP discovery, kills, fleet operations), neither tenant B nor a session without a tenant sees
+// resolution, journal, outbox and inbox, MCP discovery, kills, fleet operations,
+// FinOps), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -124,6 +126,31 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	if _, err := fleet.New(v.f.App).Apply(ctx, registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["otto"]},
 		fleet.Request{Kind: "pause", Selector: fleet.Selector{AgentIDs: []uuid.UUID{spare.Agent}}, Reason: "isolation fixture"}); err != nil {
 		t.Fatal(err)
+	}
+	// Phase 18: a price, a reported span, a billing line, a soft limit and
+	// the evaluator's alert for the unpriced span.
+	fin := finops.New(v.f.App)
+	alice := registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["alice"]}
+	if _, err := fin.AddPrice(ctx, alice, finops.NewPrice{Provider: "openai", Model: "gpt-x", Unit: "USD",
+		InputPerMTok: "1", OutputPerMTok: "1", Reason: "isolation fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if in, err := fin.RecordSpans(ctx, v.f.Tenant, v.agent.Version, []finops.Span{{TraceID: strings.Repeat("ab", 16),
+		SpanID: strings.Repeat("cd", 8), Operation: "chat", Provider: "openai", Model: "unpriced", InputTokens: 1,
+		ObservedAt: time.Now()}}); err != nil || in.Accepted != 1 {
+		t.Fatalf("span = %+v %v", in, err)
+	}
+	if _, err := fin.ImportBilling(ctx, alice, []finops.BillingLine{{ExternalID: "inv-1", AgentID: v.agent.Agent,
+		Provider: "openai", Cost: "1", Unit: "USD", ObservedAt: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	usd := v.f.ID(t, "alice", `INSERT INTO eacp.budget_accounts (tenant_id, name, unit) VALUES (eacp.current_tenant_id(), 'usd', 'USD') RETURNING id`)
+	limit := "100"
+	if _, err := fin.SetSoftLimit(ctx, alice, usd, &limit, "isolation fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := fin.Evaluate(ctx, v.f.Tenant); err != nil || n != 1 {
+		t.Fatalf("finops evaluate = %d %v", n, err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member
