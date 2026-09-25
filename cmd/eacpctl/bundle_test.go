@@ -278,3 +278,21 @@ resources:
 		t.Fatalf("a policy declared twice: %v", err)
 	}
 }
+
+func TestAPolicyFileMayNotLinkOutOfTheBundle(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(outside, []byte(`{"private_key": "not for the API"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := writeBundle(t, map[string]string{"eacp.yml": "bundle:\n  name: people\nresources:\n  policy: {file: policies/tenant.json}\n"})
+	if err := os.MkdirAll(filepath.Join(dir, "policies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "policies", "tenant.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	b, err := loadBundle(dir, "", nil)
+	if err == nil || !strings.Contains(err.Error(), "policy") {
+		t.Fatalf("a policy linked out of the bundle was read: %v %v", err, b.desired["policy"])
+	}
+}

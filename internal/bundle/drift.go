@@ -80,6 +80,11 @@ func driftEntries(st State, d Diff) []DriftEntry {
 	for _, f := range d.Findings {
 		switch f.Kind {
 		case KindOrphan:
+			// A grant or membership of a managed principal or group that the
+			// bundle does not declare was added outside it (ADR-026 Rev 1.1).
+			if strings.HasPrefix(f.Address, "role.") || strings.HasPrefix(f.Address, "member.") {
+				set(f.Address, DriftModified, f.Detail)
+			}
 		case KindUnresolvedReference:
 			set(f.Address, DriftMissing, f.Detail)
 		case KindUnmanagedReference:

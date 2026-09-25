@@ -26,6 +26,7 @@ type State struct {
 	Policy           PolicyState               // the active policy version, if any
 	Budgets          map[string]BudgetState    // by name
 	Prices           map[string]PriceState     // the price in effect, by provider + " " + model
+	PriceKeys        map[uuid.UUID]string      // provider + " " + model of every managed price row, any bundle
 }
 
 // ConnectorState is a registered connector and its tools by name.
@@ -67,7 +68,7 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 		Connectors: map[string]ConnectorState{}, Agents: map[string]AgentState{},
 		Principals: map[string]uuid.UUID{}, Groups: map[string]uuid.UUID{},
 		AddressElsewhere: map[string]string{}, People: map[string]PrincipalState{}, GroupRows: map[string]GroupState{},
-		Budgets: map[string]BudgetState{}, Prices: map[string]PriceState{}}
+		Budgets: map[string]BudgetState{}, Prices: map[string]PriceState{}, PriceKeys: map[uuid.UUID]string{}}
 
 	rows, err := tx.Query(ctx, `SELECT br.address, br.object_id, b.name FROM eacp.bundle_resources br
 		JOIN eacp.bundles b ON b.tenant_id = br.tenant_id AND b.id = br.bundle_id`)

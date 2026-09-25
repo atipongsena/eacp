@@ -284,3 +284,26 @@ func TestIdentityDrift(t *testing.T) {
 		t.Fatalf("drift = %v", got)
 	}
 }
+
+func TestDriftReportsGrantsAndMembersAddedOutsideTheBundle(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	cs := submitted(t, f, s, "alice", gov("people", peopleDoc))
+	_, err := s.Approve(ctx, as(f, "bob"), cs.ID)
+	ok(t, err)
+	dana := f.ID(t, "alice", `SELECT id FROM eacp.principals WHERE name = 'dana'`)
+	grant := f.ID(t, "alice", `INSERT INTO eacp.role_grants (tenant_id, principal_id, role)
+		VALUES (eacp.current_tenant_id(), $1, 'operator') RETURNING id`, dana)
+	ok(t, f.Exec("bob", `UPDATE eacp.role_grants SET approved_at = now() WHERE id = $1`, grant))
+	f.ID(t, "alice", `INSERT INTO eacp.group_memberships (tenant_id, group_id, principal_id)
+		SELECT eacp.current_tenant_id(), id, $1 FROM eacp.groups WHERE name = 'ops' RETURNING id`, f.P["carol"])
+	dr, err := s.Drift(ctx, as(f, "audra"), "people")
+	ok(t, err)
+	got := map[string]string{}
+	for _, e := range dr.Entries {
+		got[e.Address] = e.Status
+	}
+	if got["role.dana.operator"] != bundle.DriftModified || got["member.ops.carol"] != bundle.DriftModified {
+		t.Fatalf("drift = %v", got)
+	}
+}

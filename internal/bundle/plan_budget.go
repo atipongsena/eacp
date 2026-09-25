@@ -159,7 +159,26 @@ func (p *planner) budgetAgent(addr string, want Budget) (string, *uuid.UUID, boo
 // whenever the declared rates differ from the price in effect.
 func (p *planner) price(name string) {
 	want, addr := p.doc.Prices[name], "price."+name
-	cur, exists := p.st.Prices[want.Provider+" "+want.Model]
+	key := want.Provider + " " + want.Model
+	// One bundle prices a model: ownership follows provider and model, not
+	// the id of the price in effect, which the API may have replaced.
+	owner := ""
+	for id, other := range p.st.ManagedElsewhere {
+		if p.st.PriceKeys[id] == key && (owner == "" || other < owner) {
+			owner = other
+		}
+	}
+	if owner != "" {
+		p.find(addr, KindUnmanaged, "%s is priced by bundle %s", key, owner)
+		return
+	}
+	if id, ok := p.managed[addr]; ok {
+		if k, known := p.st.PriceKeys[id]; known && k != key {
+			p.find(addr, KindUnsupported, "provider and model are immutable: %s manages %s, not %s", addr, k, key)
+			return
+		}
+	}
+	cur, exists := p.st.Prices[key]
 	if exists {
 		if _, managed := p.managed[addr]; !managed {
 			if other := p.st.ManagedElsewhere[cur.ID]; other != "" {

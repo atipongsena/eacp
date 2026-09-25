@@ -127,3 +127,20 @@ func TestAPriceIsAddedWhenItDiffersFromTheOneInEffect(t *testing.T) {
 	raw := strings.Replace(priceDoc, `"output_per_mtok": 10`, `"output_per_mtok": 12`, 1)
 	wantOps(t, diff("rates", cs, mustDoc(t, raw), st, false), "1 submit create price.gpt")
 }
+
+func TestPriceOwnershipFollowsProviderAndModel(t *testing.T) {
+	// Another bundle manages an older price of the model; an API price is in effect now.
+	st := empty()
+	older := uuid.MustParse("00000000-0000-4000-8000-00000000c006")
+	st.ManagedElsewhere[older] = "other"
+	st.PriceKeys[older] = "openai gpt-4.1"
+	st.Prices["openai gpt-4.1"] = PriceState{ID: priceID, Unit: "USD", Input: "1", Output: "1"}
+	raw := strings.TrimSuffix(priceDoc, "}") + `, "imports": [{"to": "price.gpt", "id": "` + priceID.String() + `"}]}`
+	wantFinding(t, diff("rates", cs, mustDoc(t, raw), st, false), "price.gpt", KindUnmanaged)
+	wantFinding(t, diff("rates", cs, mustDoc(t, priceDoc), st, false), "price.gpt", KindUnmanaged)
+	// A managed price's provider and model are immutable.
+	st = empty()
+	st.Managed["price.gpt"] = priceID
+	st.PriceKeys[priceID] = "openai gpt-4"
+	wantFinding(t, diff("rates", cs, mustDoc(t, priceDoc), st, false), "price.gpt", KindUnsupported)
+}

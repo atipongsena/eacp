@@ -49,7 +49,8 @@ func empty() State {
 		Principals: map[string]uuid.UUID{"carol": carol}, Groups: map[string]uuid.UUID{},
 		People: map[string]PrincipalState{"carol": {ID: carol, Kind: "human", Subject: "carol@example.com",
 			DisplayName: "Carol", Grants: map[string]GrantState{}}},
-		GroupRows: map[string]GroupState{}, Budgets: map[string]BudgetState{}, Prices: map[string]PriceState{}}
+		GroupRows: map[string]GroupState{}, Budgets: map[string]BudgetState{}, Prices: map[string]PriceState{},
+		PriceKeys: map[uuid.UUID]string{}}
 }
 
 // applied is the state after the validDoc bundle "ledger" was applied.

@@ -173,5 +173,17 @@ func loadGovernance(ctx context.Context, tx pgx.Tx, st *State) error {
 		}
 		st.Prices[provider+" "+model] = p
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	rows, err = tx.Query(ctx, `SELECT mp.id, mp.provider || ' ' || mp.model FROM eacp.bundle_resources br
+		JOIN eacp.model_prices mp ON mp.tenant_id = br.tenant_id AND mp.id = br.object_id WHERE br.kind = 'price'`)
+	if err != nil {
+		return err
+	}
+	var pid uuid.UUID
+	var key string
+	_, err = pgx.ForEachRow(rows, []any{&pid, &key}, func() error { st.PriceKeys[pid] = key; return nil })
+	return err
 }

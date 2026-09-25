@@ -230,27 +230,33 @@ func loadBundle(dir, targetName string, vars map[string]string) (loadedBundle, e
 	return b, nil
 }
 
-// readPolicy reads the policy file as JSON with its numbers intact. The file
-// stays inside the bundle directory and under 1 MiB.
+// readPolicy reads the policy file as JSON with its numbers intact. It is
+// opened through an os.Root, so neither "..", an absolute path nor a symlink
+// or junction reaches outside the bundle directory; it is a regular file of
+// at most 1 MiB.
 func readPolicy(dir, file string) (any, error) {
 	if file == "" || filepath.IsAbs(file) {
 		return nil, fmt.Errorf("policy.file %q: give a path relative to the bundle directory", file)
 	}
-	path := filepath.Join(dir, file)
-	rel, err := filepath.Rel(dir, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("policy.file %q: stays inside the bundle directory", file)
-	}
-	info, err := os.Stat(path)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, fmt.Errorf("policy.file: %v", err)
 	}
-	if info.Size() > 1<<20 {
+	defer root.Close()
+	f, err := root.Open(filepath.FromSlash(file))
+	if err != nil {
+		return nil, fmt.Errorf("policy.file %q: stays inside the bundle directory: %v", file, err)
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("policy.file %q: is not a regular file", file)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 1<<20+1))
+	if err != nil {
+		return nil, fmt.Errorf("policy.file: %v", err)
+	}
+	if len(raw) > 1<<20 {
 		return nil, fmt.Errorf("policy.file %q: over 1 MiB", file)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("policy.file: %v", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
