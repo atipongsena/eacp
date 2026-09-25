@@ -100,6 +100,14 @@ The narrative is printed by `go test -v`. For example:
 
 No worker calls an MCP tool yet (`tools/call` needs its own ADR). The quarantine therefore shows up as a denial at submission. The kill is shown on an ERP purchase, which is the path a worker can dispatch.
 
+### The operator console
+
+Run the demo with `KEEP=1 DEMO=C scripts/demo.sh` and open `http://127.0.0.1:18080/ui/`. Sign in with a principal key of the tenant. The demo generates its keys in memory and does not print them, so register one of your own with `eacpctl key generate` and an admin's approval (ADR-003 §5).
+
+- **Overview.** The overview shows the SOC counters, and the incidents page lists the drift and kill incidents.
+- **Containment.** The drift incident shows po-assistant as affected. Its "Pause the agents that use this tool" link opens the fleet form, pre-filled. Preview the operation, confirm it, and link it to the incident.
+- **Two-person rules.** The acknowledger cannot resolve the critical incident; a second operator can. The operator who set a kill cannot clear it on the Security page; a second operator can.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

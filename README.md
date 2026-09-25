@@ -176,6 +176,11 @@ A release moves an agent from its `ACTIVE` (stable) version to a candidate: `EVA
 - **Canary.** A second `registry_approver` advances the release (`POST /v1/releases/{id}/advance` with the state they reviewed). The candidate becomes `ACTIVE` beside the stable version and serves only subjects whose bucket is inside the current step; others are `DENIED canary_cohort`. A runtime asks `GET /v1/agent/release/route?subject=` which version to use. Each step and the promotion need enough candidate actions and no guardrail breach against the stable version (denials, failures, unknown outcomes, p95 latency, cost per action).
 - **Rollback.** An operator or approver rolls back with `POST /v1/releases/{id}/rollback`. Every `EACP_RELEASE_INTERVAL` (default 30s) the control plane also rolls back any canary whose report breaches a guardrail. Promotion is never automatic.
 
+## Phase 22: Agent SOC and the operator console
+
+- **Incidents.** Every `EACP_INCIDENT_INTERVAL` (default 15s) the control plane opens incidents from existing signals: MCP drift, kills, open circuits, unknown outcomes, canary rollbacks and FinOps overspend, each with its blast radius. Operators acknowledge, assign, note, link and resolve them (`/v1/incidents`, `eacpctl incident`); a critical incident is resolved by a second person. `GET /v1/soc/summary` (`eacpctl soc summary`) serves the SOC counters.
+- **Console.** Open `http://localhost:8080/ui/` and sign in with a principal API key. The key stays in the tab's memory only; a reload or 30 minutes without activity signs you out. The console shows the overview, incidents, security (kills, circuits, quarantined tools), fleet, approvals, execution, inventory, dependencies and cost, and runs the incident lifecycle and containment through the same API, behind a confirm dialog. It holds no authority of its own (ADR-028). Set `EACP_UI=off` to disable it.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start

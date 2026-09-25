@@ -3694,7 +3694,7 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 
 # 94. Phase 22 — Agent SOC (Later)
 
-> **Status (2026-09-25): 22a delivered (ADR-027).** Incidents are opened by a PostgreSQL evaluator from existing signals (MCP drift, kills, open circuits, unknown outcomes, canary rollbacks, FinOps overspend), with their blast radius. Operators work incidents through an insert-only, journaled timeline, and a critical incident is resolved by a second person. `GET /v1/soc/summary` serves the §55 counters from one read-only snapshot. 22b, the operator web UI below, follows.
+> **Status (2026-09-25): 22a delivered (ADR-027).** Incidents are opened by a PostgreSQL evaluator from existing signals (MCP drift, kills, open circuits, unknown outcomes, canary rollbacks, FinOps overspend), with their blast radius. Operators work incidents through an insert-only, journaled timeline, and a critical incident is resolved by a second person. `GET /v1/soc/summary` serves the §55 counters from one read-only snapshot. **22b delivered (ADR-028):** the operator console at `/ui/` covers the areas below. It is embedded in controlplane-api, calls the existing API with the operator's own key (memory only) and holds no authority; containment (kill, tool quarantine, circuit disable, fleet pause) goes through a confirm dialog, and fleet operations are always dry-run first.
 
 Operator UI:
 
