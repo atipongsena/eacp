@@ -86,6 +86,12 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname LIKE 'agent_release%' ORDER BY relname`); !slices.Equal(got, releases) {
 		t.Errorf("reviewed release tables missing: %v", got)
 	}
+	bundles := []string{"bundle_resources", "bundles", "change_set_refs", "change_set_steps", "change_sets"}
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname IN ('bundle_resources', 'bundles', 'change_set_refs', 'change_set_steps', 'change_sets')
+		ORDER BY relname`); !slices.Equal(got, bundles) {
+		t.Errorf("reviewed bundle tables missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
 	// 00005-00007, 00010, 00012, 00013, 00014, 00016, 00018 and 00019).
