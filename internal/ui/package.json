@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "EACP operator console: plain ES modules, no dependencies, no build. Tests: node --test jstest/*.test.mjs"
+}
