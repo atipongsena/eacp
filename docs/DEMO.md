@@ -85,7 +85,8 @@ The narrative is printed by `go test -v`. For example:
 | C4 | Blast radius of `sap-mcp`: po-assistant is confirmed, team procurement is affected, invoice-bot is not; coverage `observed_only` | Blast radius from capability edges (ADR-015) |
 | C5 | Otto kills po-assistant's version (`security_incident`). Its next purchase uses `erp.create_po`, which did not drift: it stays `QUEUED`, is never attempted and reaches no ERP. invoice-bot keeps working. Otto cannot clear their own kill (403). The held action is cancelled | Kill fencing in PostgreSQL, two-person clear, cancellation never blocked (ADR-016) |
 | C6 | The held action and its outbox events carry the agent's W3C trace context. The journal since the drift shows the rescan request, the quarantine (`tools.update` by the scanner), the new definition, the scan, the denied lookup, the kill and the cancellation. Auditor audra verifies the tenant's hash chain | Trace and audit evidence |
-| C7 | Search every API response, every service log (including `fakemcp`'s) and a database dump for the ERP and MCP credentials | Not found anywhere |
+| C7 | Erin plans a bundle declaring a `ledger` connector and a `ledger-bot` agent (the plan writes nothing), submits it, cannot approve it herself; rita approves. A replan finds no changes and drift is in sync (ADR-026) | Two-person Governance-as-Code |
+| C8 | Search every API response, every service log (including `fakemcp`'s) and a database dump for the ERP and MCP credentials | Not found anywhere |
 
 ```text
 === C3. Trigger MCP drift: the server now advertises a different get_po

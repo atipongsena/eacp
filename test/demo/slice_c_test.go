@@ -73,7 +73,10 @@ func TestSliceCDemo(t *testing.T) {
 	d.step("C6. Trace and audit evidence")
 	d.incidentEvidence(before, held)
 
-	d.step("C7. Scan responses, logs and the database for the ERP and MCP credentials")
+	d.step("C7. Governance-as-Code: plan a bundle, submit (erin), approve (rita), check drift")
+	d.governanceAsCode()
+
+	d.step("C8. Scan responses, logs and the database for the ERP and MCP credentials")
 	d.secretScan()
 
 	d.step("Slice C demo complete")
@@ -333,4 +336,34 @@ func (d *demo) incidentEvidence(before, held string) {
 		d.t.Fatalf("audit chain = %v", v)
 	}
 	d.logf("audra verifies tenant Globex's hash chain: %v entries, head %.16s…", v["count"], v["head"])
+}
+
+// governanceAsCode declares a ledger connector and a ledger agent as a
+// bundle (ADR-026): a plan writes nothing, erin submits, rita approves, a
+// replan is empty, and drift is in sync until an operator pauses the agent.
+func (d *demo) governanceAsCode() {
+	desired := json.RawMessage(`{
+	 "connectors": {"ledger": {"protocol": "http", "endpoint": "http://fakeerp:8090", "secret_ref": "erp",
+	   "tools": {"post_entry": {"contract": {"side_effects": ["READ_ONLY"], "idempotency_mode": "none",
+	     "reconciliation_lookup": "none", "reconciliation_consistency": "none", "proof_standard": "none",
+	     "max_attempts": 3}}}}},
+	 "agents": {"ledger-bot": {"display_name": "Ledger bot", "environment": "production", "risk_class": "medium",
+	   "owner": {"principal": "carol"}, "version": {"runtime": "python", "code_ref": "git:ledger-1"},
+	   "allowlist": ["ledger.post_entry"], "state": "ACTIVE"}}}`)
+	plan := d.must(201, "erin", "POST", "/v1/change-sets", map[string]any{"bundle": "ledger", "desired": desired})
+	id := plan["id"].(string)
+	d.logf("plan %s: %d steps, base digest %s; nothing written yet", id, len(plan["steps"].([]any)),
+		plan["base_digest"])
+	d.must(200, "erin", "POST", "/v1/change-sets/"+id+"/submit", nil)
+	if res := d.must(403, "erin", "POST", "/v1/change-sets/"+id+"/approve", nil); res["error"] == nil {
+		d.t.Fatalf("self-approval = %v", res)
+	}
+	applied := d.must(200, "rita", "POST", "/v1/change-sets/"+id+"/approve", nil)
+	d.logf("erin submitted, erin could not approve, rita approved: %s", applied["state"])
+	again := d.must(200, "erin", "POST", "/v1/change-sets", map[string]any{"bundle": "ledger", "desired": desired})
+	if len(again["steps"].([]any)) != 0 {
+		d.t.Fatalf("replan after apply = %v", again)
+	}
+	drift := d.must(200, "audra", "GET", "/v1/bundles/ledger/drift", nil)
+	d.logf("replan: no changes; drift: %d addresses in sync", len(drift["entries"].([]any)))
 }
