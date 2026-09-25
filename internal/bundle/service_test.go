@@ -310,3 +310,47 @@ func TestAnObjectBelongsToOneBundle(t *testing.T) {
 		t.Fatalf("findings = %+v", be.Findings)
 	}
 }
+
+func TestDriftObservesAndNeverChanges(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	_, err := s.Drift(ctx, as(f, "audra"), "ledger")
+	if !errors.Is(err, registry.ErrNotFound) {
+		t.Fatalf("drift before any apply: %v", err)
+	}
+	applied := apply(t, f, s, ledgerDoc)
+	status := func() map[string]string {
+		t.Helper()
+		d, err := s.Drift(ctx, as(f, "audra"), "ledger")
+		ok(t, err)
+		if d.ChangeSetID != applied.ID {
+			t.Fatalf("drift of %s, want %s", d.ChangeSetID, applied.ID)
+		}
+		out := map[string]string{}
+		for _, e := range d.Entries {
+			out[e.Address] = e.Status
+		}
+		return out
+	}
+	for addr, st := range status() {
+		if st != bundle.DriftInSync {
+			t.Fatalf("%s is %s right after apply", addr, st)
+		}
+	}
+	ok(t, f.Exec("otto", `UPDATE eacp.agent_versions SET state = 'SUSPENDED', state_reason = 'paused'`))
+	if got := status()["version.ledger-bot"]; got != bundle.DriftModified {
+		t.Fatalf("suspended version drift = %q", got)
+	}
+	ok(t, f.Exec("rita", `UPDATE eacp.agent_versions SET state = 'RETIRED', state_reason = 'gone'`))
+	// Drift only reads: it adds no audit event and changes no change set.
+	before := count(t, f, `SELECT count(*) FROM eacp.audit_events`)
+	if got := status()["version.ledger-bot"]; got != bundle.DriftMissing {
+		t.Fatalf("retired version drift = %q", got)
+	}
+	if after := count(t, f, `SELECT count(*) FROM eacp.audit_events`); after != before {
+		t.Fatalf("drift wrote %d audit events", after-before)
+	}
+	if n := count(t, f, `SELECT count(*) FROM eacp.change_sets WHERE state <> 'APPLIED'`); n != 0 {
+		t.Fatalf("drift left %d other change sets", n)
+	}
+}
