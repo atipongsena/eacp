@@ -358,3 +358,43 @@ func firstDiff(a, b string) string {
 	}
 	return ""
 }
+
+// InTenantSnapshotTx reads one snapshot and may write: a row committed by
+// another transaction after its first statement stays invisible.
+func TestInTenantSnapshotTxReadsOneSnapshotAndWrites(t *testing.T) {
+	db := pgtest.Migrated(t)
+	ctx := context.Background()
+	app := pgtest.Pool(t, db.AppDSN)
+	owner := pgtest.Pool(t, db.OwnerDSN)
+	err := storage.InTenantSnapshotTx(ctx, app, pgtest.TenantA, func(tx pgx.Tx) error {
+		var before int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.principals`).Scan(&before); err != nil {
+			return err
+		}
+		if err := storage.InTenantTx(ctx, owner, pgtest.TenantA, func(o pgx.Tx) error {
+			_, err := o.Exec(ctx, `INSERT INTO eacp.principals (tenant_id, kind, name, display_name)
+				VALUES (eacp.current_tenant_id(), 'service', 'late-svc', 'late')`)
+			return err
+		}); err != nil {
+			return err
+		}
+		var after int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.principals`).Scan(&after); err != nil {
+			return err
+		}
+		if after != before {
+			t.Errorf("snapshot saw %d then %d principals", before, after)
+		}
+		var readOnly string
+		if err := tx.QueryRow(ctx, `SHOW transaction_read_only`).Scan(&readOnly); err != nil {
+			return err
+		}
+		if readOnly != "off" {
+			t.Errorf("transaction_read_only = %s", readOnly)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

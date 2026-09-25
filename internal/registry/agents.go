@@ -83,11 +83,7 @@ func (s *Service) RegisterAgent(ctx context.Context, a Actor, n NewAgent) (Agent
 	var ag Agent
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
 		var err error
-		ag, err = scanAgent(tx.QueryRow(ctx, `
-			INSERT INTO eacp.agents (tenant_id, name, display_name, environment, risk_class, owner_principal_id, owner_group_id)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6)
-			RETURNING `+agentColumns,
-			n.Name, n.DisplayName, n.Environment, n.RiskClass, nullID(n.OwnerPrincipalID), nullID(n.OwnerGroupID)))
+		ag, err = Tx{tx}.RegisterAgent(ctx, n)
 		return err
 	})
 	return ag, err
@@ -154,12 +150,10 @@ func (s *Service) GetAgent(ctx context.Context, a Actor, idOrName string) (Agent
 // RegisterVersion registers a new version (number assigned by the database)
 // in state REGISTERED.
 func (s *Service) RegisterVersion(ctx context.Context, a Actor, agentID uuid.UUID, n NewVersion) (Version, error) {
-	v := Version{AgentID: agentID, Runtime: n.Runtime, CodeRef: n.CodeRef, AllowedTools: []string{}}
+	var v Version
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
-			INSERT INTO eacp.agent_versions (tenant_id, agent_id, runtime, code_ref)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3) RETURNING id, version, state`,
-			agentID, n.Runtime, n.CodeRef).Scan(&v.ID, &v.Number, &v.State)
+		var err error
+		v, err = Tx{tx}.RegisterVersion(ctx, agentID, n)
 		return err
 	})
 	return v, err
@@ -170,17 +164,8 @@ func (s *Service) RegisterVersion(ctx context.Context, a Actor, agentID uuid.UUI
 func (s *Service) ProposeAllowlist(ctx context.Context, a Actor, versionID uuid.UUID, tools []string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		ids := make([]uuid.UUID, 0, len(tools))
-		for _, ref := range tools {
-			toolID, err := resolveTool(ctx, tx, ref)
-			if err != nil {
-				return err
-			}
-			ids = append(ids, toolID)
-		}
-		err := tx.QueryRow(ctx, `
-			INSERT INTO eacp.agent_allowlists (tenant_id, agent_version_id, tool_ids)
-			VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, versionID, ids).Scan(&id)
+		var err error
+		id, err = Tx{tx}.ProposeAllowlist(ctx, versionID, tools)
 		return err
 	})
 	return id, err
@@ -188,23 +173,10 @@ func (s *Service) ProposeAllowlist(ctx context.Context, a Actor, versionID uuid.
 
 // ActivateAllowlist points a version at an allowlist (two-person).
 func (s *Service) ActivateAllowlist(ctx context.Context, a Actor, versionID, allowlistID uuid.UUID) error {
-	return s.change(ctx, a, func(tx pgx.Tx) error {
-		err := execOne(ctx, tx, `UPDATE eacp.agent_versions SET active_allowlist_id = $2 WHERE id = $1`, versionID, allowlistID)
-		return err
-	})
+	return s.change(ctx, a, func(tx pgx.Tx) error { return Tx{tx}.ActivateAllowlist(ctx, versionID, allowlistID) })
 }
 
 // TransitionVersion moves a version through its lifecycle (ADR-003 §2).
 func (s *Service) TransitionVersion(ctx context.Context, a Actor, versionID uuid.UUID, to State, reason string) error {
-	return s.change(ctx, a, func(tx pgx.Tx) error {
-		var from State
-		if err := tx.QueryRow(ctx, `SELECT state FROM eacp.agent_versions WHERE id = $1`, versionID).Scan(&from); err != nil {
-			return err
-		}
-		if from == to {
-			return newErr(ErrConflict, "version is already %s", to)
-		}
-		return execOne(ctx, tx, `UPDATE eacp.agent_versions SET state = $2, state_reason = $3 WHERE id = $1`,
-			versionID, string(to), reason)
-	})
+	return s.change(ctx, a, func(tx pgx.Tx) error { return Tx{tx}.TransitionVersion(ctx, versionID, to, reason) })
 }

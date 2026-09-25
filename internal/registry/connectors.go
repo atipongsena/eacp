@@ -71,12 +71,10 @@ type Contract struct {
 
 // RegisterConnector registers an immutable connector (registry_editor).
 func (s *Service) RegisterConnector(ctx context.Context, a Actor, n NewConnector) (Connector, error) {
-	c := Connector{Name: n.Name, Protocol: n.Protocol, Endpoint: n.Endpoint, SecretRef: n.SecretRef, Tools: []string{}}
+	var c Connector
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
-			INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4) RETURNING id`,
-			n.Name, n.Protocol, n.Endpoint, n.SecretRef).Scan(&c.ID)
+		var err error
+		c, err = Tx{tx}.RegisterConnector(ctx, n)
 		return err
 	})
 	return c, err
@@ -114,8 +112,8 @@ func (s *Service) ListConnectors(ctx context.Context, a Actor) ([]Connector, err
 func (s *Service) RegisterTool(ctx context.Context, a Actor, connectorID uuid.UUID, name string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO eacp.tools (tenant_id, connector_id, name)
-			VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, connectorID, name).Scan(&id)
+		var err error
+		id, err = Tx{tx}.RegisterTool(ctx, connectorID, name)
 		return err
 	})
 	return id, err
@@ -125,26 +123,8 @@ func (s *Service) RegisterTool(ctx context.Context, a Actor, connectorID uuid.UU
 func (s *Service) ProposeContract(ctx context.Context, a Actor, toolID uuid.UUID, c Contract) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		noEffect := c.NoEffectErrors
-		if noEffect == nil {
-			noEffect = []string{}
-		}
-		err := tx.QueryRow(ctx, `
-			INSERT INTO eacp.tool_contracts
-			    (tenant_id, tool_id, side_effects, idempotency_mode, idempotency_key_field, correlation_field,
-			     reconciliation_lookup, reconciliation_consistency, proof_standard, no_effect_errors,
-			     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity, schedule_priority,
-			     cost_unit, cost_fixed, cost_amount_field, cost_unit_field,
-			     max_queued, retry_max_elapsed_ms, retry_max_cost, definition_id)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			        $15, $16, COALESCE($17::numeric, 0), $18, $19, $20, $21, $22::numeric, $23)
-			RETURNING id`,
-			toolID, c.SideEffects, c.IdempotencyMode, nullStr(c.IdempotencyKeyField), nullStr(c.CorrelationField),
-			c.ReconciliationLookup, c.ReconciliationConsistency, c.ProofStandard, noEffect,
-			c.MaxAttempts, nullInt(c.TimeoutMS), nullStr(c.ConcurrencyGroup), nullInt(c.MaxInflight),
-			nullStr(c.DataSensitivity), c.SchedulePriority, nullStr(c.CostUnit), nullStr(string(c.CostFixed)),
-			nullStr(c.CostAmountField), nullStr(c.CostUnitField),
-			nullInt(c.MaxQueued), nullInt(c.RetryMaxElapsedMS), nullStr(string(c.RetryMaxCost)), c.DefinitionID).Scan(&id)
+		var err error
+		id, err = Tx{tx}.ProposeContract(ctx, toolID, c)
 		return err
 	})
 	return id, err
@@ -152,20 +132,13 @@ func (s *Service) ProposeContract(ctx context.Context, a Actor, toolID uuid.UUID
 
 // ActivateContract makes a contract the tool's active one (two-person).
 func (s *Service) ActivateContract(ctx context.Context, a Actor, toolID, contractID uuid.UUID) error {
-	return s.change(ctx, a, func(tx pgx.Tx) error {
-		err := execOne(ctx, tx, `UPDATE eacp.tools SET active_contract_id = $2 WHERE id = $1`, toolID, contractID)
-		return err
-	})
+	return s.change(ctx, a, func(tx pgx.Tx) error { return Tx{tx}.ActivateContract(ctx, toolID, contractID) })
 }
 
 // RevokeContract permanently revokes a contract; its tool stops being
 // executable until another contract is activated.
 func (s *Service) RevokeContract(ctx context.Context, a Actor, contractID uuid.UUID, reason string) error {
-	return s.change(ctx, a, func(tx pgx.Tx) error {
-		err := execOne(ctx, tx, `UPDATE eacp.tool_contracts SET revoked_at = now(), revoke_reason = $2 WHERE id = $1`,
-			contractID, reason)
-		return err
-	})
+	return s.change(ctx, a, func(tx pgx.Tx) error { return Tx{tx}.RevokeContract(ctx, contractID, reason) })
 }
 
 // Circuit is a connector's shared circuit (ADR-022 §3). Open is true while

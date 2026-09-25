@@ -115,6 +115,24 @@ func InTenantReadTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn
 	})
 }
 
+// InTenantSnapshotTx is InTenantTx at REPEATABLE READ: every statement in fn
+// sees the snapshot of the first, and fn may still write. A change-set plan
+// (ADR-026) uses it so that what it reads, and the digest PostgreSQL computes
+// over those rows before it commits, describe the same registry.
+func InTenantSnapshotTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn func(pgx.Tx) error) error {
+	id, err := uuid.Parse(tenantID)
+	if err != nil || id == uuid.Nil {
+		return fmt.Errorf("storage: invalid tenant id %q", tenantID)
+	}
+	opts := pgx.TxOptions{IsoLevel: pgx.RepeatableRead}
+	return pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, id.String()); err != nil {
+			return fmt.Errorf("storage: set tenant context: %w", err)
+		}
+		return fn(tx)
+	})
+}
+
 // MigrateUp applies all pending migrations. It must run as the schema owner.
 // Concurrent runs are serialised with a PostgreSQL advisory lock.
 func MigrateUp(ctx context.Context, ownerDSN string) error {
