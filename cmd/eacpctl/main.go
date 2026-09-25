@@ -61,6 +61,15 @@
 //	eacpctl release advance <release-id> --from STATE [--from-bp N] --reason <text>
 //	eacpctl release rollback <release-id> --reason <text>
 //	                          evaluation, replay, shadow, canary and rollback (ADR-018)
+//	eacpctl incident list [--state S] [--severity S] [--kind K] [--limit N]
+//	eacpctl incident show <incident-id>
+//	eacpctl incident open --title T --severity S --reason R [--subject-type K --subject-id <uuid>]
+//	eacpctl incident ack <incident-id> --reason R
+//	eacpctl incident assign <incident-id> <principal-uuid|none>
+//	eacpctl incident note <incident-id> --text T
+//	eacpctl incident link <incident-id> <kind> <uuid>
+//	eacpctl incident resolve <incident-id> --code C --reason R
+//	eacpctl soc summary      incidents and the Agent SOC read model (ADR-027)
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -103,6 +112,8 @@ const usage = `usage:
   eacpctl bundle validate|plan|deploy|approve|reject|status|list|drift ...
   eacpctl finops dashboard|chargeback|usage|prices|price|billing|soft-limits|soft-limit|alerts|ack ...
   eacpctl release list|show|open|evaluation|advance|rollback ...
+  eacpctl incident list|show|open|ack|assign|note|link|resolve ...
+  eacpctl soc summary
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
@@ -147,6 +158,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runFinOps(ctx, args[1:], getenv, out)
 	case "release":
 		return runRelease(ctx, args[1:], getenv, out)
+	case "incident":
+		return runIncident(ctx, args[1:], getenv, out)
+	case "soc":
+		return runSOC(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
 	case "pdp-dev-certs":
