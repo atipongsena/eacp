@@ -49,6 +49,7 @@ type Payload struct {
 	Parent       string                 `json:"parent,omitempty"`
 	ParentID     *uuid.UUID             `json:"parent_id,omitempty"`
 	ProposalStep int                    `json:"proposal_step,omitempty"`
+	From         registry.State         `json:"from,omitempty"`
 	To           registry.State         `json:"to,omitempty"`
 	Reason       string                 `json:"reason,omitempty"`
 	ObjectID     *uuid.UUID             `json:"object_id,omitempty"`
@@ -380,9 +381,13 @@ func (p *planner) version(name string, want Agent, cur AgentState, agentID uuid.
 			return
 		}
 	}
+	from := registry.StateRegistered
+	if v != nil {
+		from = v.State
+	}
 	par, parID := parent(vaddr, versionID)
-	p.add(StageApprove, vaddr, OpTransition, Payload{To: registry.StateActive, Reason: p.reason, Parent: par,
-		ParentID: parID})
+	p.add(StageApprove, vaddr, OpTransition, Payload{From: from, To: registry.StateActive, Reason: p.reason,
+		Parent: par, ParentID: parID})
 }
 
 // replaced handles a version the bundle managed but no longer wants: with
@@ -396,8 +401,9 @@ func (p *planner) replaced(addr string, cur AgentState, old uuid.UUID) {
 		case x.State == registry.StateRetired || x.State == registry.StateRevoked:
 		case p.prune && (x.State == registry.StateRegistered || x.State == registry.StateSuspended):
 			id := x.ID
-			p.add(StageApprove, addr, OpTransition, Payload{To: registry.StateRetired, Reason: p.reason + " prune",
-				ParentID: &id})
+			p.ref("version", id)
+			p.add(StageApprove, addr, OpTransition, Payload{From: x.State, To: registry.StateRetired,
+				Reason: p.reason + " prune", ParentID: &id})
 		default:
 			p.find(addr, KindOrphan, "version %d (%s) is no longer declared; nothing is retired while it is %s",
 				x.Number, x.State, x.State)
@@ -472,11 +478,12 @@ func normalNumber(n json.Number, empty string) json.Number {
 	return json.Number(r.RatString())
 }
 
+// sortedCopy is s sorted and without duplicates, as the database stores it.
 func sortedCopy(s []string) []string {
 	out := slices.Clone(s)
 	if out == nil {
 		out = []string{}
 	}
 	slices.Sort(out)
-	return out
+	return slices.Compact(out)
 }

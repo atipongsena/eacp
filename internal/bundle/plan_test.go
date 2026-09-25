@@ -136,6 +136,16 @@ func TestContractNumbersAndAllowlistOrderDoNotDrift(t *testing.T) {
 	st.Connectors["ledger"].Tools["post_entry"] = tl
 	raw := strings.Replace(validDoc, `"max_attempts": 3`, `"max_attempts": 3, "cost_fixed": 0`, 1)
 	wantOps(t, diff("ledger", cs, mustDoc(t, raw), st, false))
+	// The database stores these arrays without duplicates.
+	c.NoEffectErrors = []string{"NOT_FOUND"}
+	tl.ActiveContract = &c
+	st.Connectors["ledger"].Tools["post_entry"] = tl
+	dup := strings.Replace(raw, `"side_effects": ["READ_ONLY"]`,
+		`"side_effects": ["READ_ONLY", "READ_ONLY"], "no_effect_errors": ["NOT_FOUND", "NOT_FOUND"]`, 1)
+	if dup == raw {
+		t.Fatal("the fixture has no side_effects to duplicate")
+	}
+	wantOps(t, diff("ledger", cs, mustDoc(t, dup), st, false))
 	if !sameContract(registry.Contract{CostFixed: "5", RetryMaxCost: "1.50"},
 		registry.Contract{CostFixed: "5.000000", RetryMaxCost: "1.5"}) {
 		t.Fatal("equal numbers compare unequal")

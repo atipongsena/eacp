@@ -137,6 +137,10 @@ func run(ctx context.Context, tx pgx.Tx, cs changeSetRow, stage string) error {
 		obj, err := apply(ctx, rtx, st, ids, produced)
 		if err != nil {
 			mapped := registry.MapErr(err)
+			if st.Op == OpTransition && errors.Is(mapped, registry.ErrConflict) {
+				return &Error{Code: CodeStale, Address: st.Address, Err: mapped,
+					Msg: fmt.Sprintf("step %d (%s %s): %v: plan the bundle again", st.Ordinal, st.Op, st.Address, mapped)}
+			}
 			return &Error{Code: CodeStepFailed, Address: st.Address, Err: mapped,
 				Msg: fmt.Sprintf("step %d (%s %s): %v", st.Ordinal, st.Op, st.Address, mapped)}
 		}
@@ -249,7 +253,7 @@ func apply(ctx context.Context, rtx registry.Tx, st Step, ids map[string]uuid.UU
 		if err != nil {
 			return uuid.Nil, err
 		}
-		return pid, rtx.TransitionVersion(ctx, pid, p.To, p.Reason)
+		return pid, rtx.TransitionVersionFrom(ctx, pid, p.From, p.To, p.Reason)
 	case "revoke contract":
 		if p.ObjectID == nil {
 			return uuid.Nil, errPayload

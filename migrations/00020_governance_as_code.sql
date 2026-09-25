@@ -171,7 +171,7 @@ $$;
 
 -- +goose StatementBegin
 -- The digest of what a change set depends on: its refs and the objects its
--- bundle manages.
+-- bundle manages, each with its current row (ids, fields and states).
 CREATE FUNCTION eacp.change_set_digest(p_change_set uuid) RETURNS bytea
     LANGUAGE sql STABLE
     AS $$
@@ -179,7 +179,7 @@ CREATE FUNCTION eacp.change_set_digest(p_change_set uuid) RETURNS bytea
       FROM (SELECT r.kind || ' ' || r.object_id || ' ' || eacp.change_set_ref_row(r.kind, r.object_id) AS line
               FROM eacp.change_set_refs r WHERE r.change_set_id = p_change_set
             UNION ALL
-            SELECT 'managed ' || br.address || ' ' || br.object_id
+            SELECT 'managed ' || br.address || ' ' || br.object_id || ' ' || eacp.change_set_ref_row(br.kind, br.object_id)
               FROM eacp.bundle_resources br
               JOIN eacp.change_sets cs ON cs.tenant_id = br.tenant_id AND cs.bundle_id = br.bundle_id
              WHERE cs.id = p_change_set) x

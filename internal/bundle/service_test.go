@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -353,4 +354,108 @@ func TestDriftObservesAndNeverChanges(t *testing.T) {
 	if n := count(t, f, `SELECT count(*) FROM eacp.change_sets WHERE state <> 'APPLIED'`); n != 0 {
 		t.Fatalf("drift left %d other change sets", n)
 	}
+}
+
+// submittedPrune applies ledgerDoc with a REGISTERED version, then plans
+// and submits (erin) a prune that retires it.
+func submittedPrune(t *testing.T) (*registrytest.Fixture, *bundle.Service, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	f, s := setup(t)
+	ctx := context.Background()
+	apply(t, f, s, strings.Replace(ledgerDoc, `, "state": "ACTIVE"`, ``, 1))
+	var version uuid.UUID
+	ok(t, storage.InTenantTx(ctx, f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT v.id FROM eacp.agent_versions v JOIN eacp.agents a ON a.id = v.agent_id
+			WHERE a.name = 'ledger-bot' AND v.state = 'REGISTERED'`).Scan(&version)
+	}))
+	connectorOnly := ledgerDoc[:strings.Index(ledgerDoc, `,
+ "agents"`)] + "}"
+	r := req(connectorOnly)
+	r.Prune = true
+	p, err := s.Plan(ctx, as(f, "erin"), r)
+	ok(t, err)
+	if len(p.Steps) != 1 || p.Steps[0].Op != bundle.OpTransition || p.Steps[0].Payload.From != registry.StateRegistered {
+		t.Fatalf("prune plan = %+v", p.Steps)
+	}
+	_, err = s.Submit(ctx, as(f, "erin"), p.ID)
+	ok(t, err)
+	return f, s, p.ID, version
+}
+
+func wantActive(t *testing.T, f *registrytest.Fixture, version uuid.UUID) {
+	t.Helper()
+	if n := count(t, f, `SELECT count(*) FROM eacp.agent_versions WHERE id = $1 AND state = 'ACTIVE'`, version); n != 1 {
+		t.Fatal("an ACTIVE version was retired by a prune planned before it was activated")
+	}
+}
+
+// A prune planned while a version was REGISTERED must not retire it after
+// it became ACTIVE: the managed objects' states are part of the digest.
+func TestPruneDoesNotRetireAVersionActivatedAfterThePlan(t *testing.T) {
+	f, s, id, version := submittedPrune(t)
+	ok(t, f.Exec("rita", `UPDATE eacp.agent_versions SET state = 'ACTIVE', state_reason = 'go live' WHERE id = $1`, version))
+	_, err := s.Approve(context.Background(), as(f, "ravi"), id)
+	wantCode(t, err, bundle.CodeStale)
+	wantActive(t, f, version)
+}
+
+// The same move committed between the approval's digest check and its step:
+// the step moves the version only from the state it was planned from.
+func TestPruneDoesNotRetireAVersionActivatedDuringTheApproval(t *testing.T) {
+	f, s, id, version := submittedPrune(t)
+	ctx := context.Background()
+	admin, err := pgx.Connect(ctx, f.DB.AdminDSN)
+	ok(t, err)
+	defer admin.Close(ctx)
+
+	updated, release, activated := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		activated <- storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
+			if err := storage.SetActor(ctx, tx, f.P["rita"]); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE eacp.agent_versions SET state = 'ACTIVE', state_reason = 'go live'
+				WHERE id = $1`, version); err != nil {
+				return err
+			}
+			close(updated)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-updated:
+	case err := <-activated:
+		t.Fatal(err)
+	}
+	approved := make(chan error, 1)
+	go func() {
+		_, err := s.Approve(ctx, as(f, "ravi"), id)
+		approved <- err
+	}()
+	// Wait until the approval blocks on the version row, then commit.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		ok(t, admin.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting))
+		if waiting > 0 {
+			break
+		}
+		select {
+		case err := <-approved:
+			close(release)
+			t.Fatalf("the approval finished before the activation committed: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatal("the approval never waited on the version")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	close(release)
+	ok(t, <-activated)
+	wantCode(t, <-approved, bundle.CodeStale)
+	wantActive(t, f, version)
 }

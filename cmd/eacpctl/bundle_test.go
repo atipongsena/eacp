@@ -197,3 +197,42 @@ func TestBundleDeployPlansThenSubmitsAndChecksTheTenant(t *testing.T) {
 		t.Fatalf("mismatched tenant: %v, calls %v", err, calls)
 	}
 }
+
+// A bundle comes from a repository, so its target's api never redirects the
+// API key: it must agree with EACP_API_URL, which stays required.
+func TestABundleNeverRedirectsTheAPIKey(t *testing.T) {
+	serve := func(hits *int) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*hits++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"change_sets": [], "entries": []}`))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	var trusted, other int
+	api, elsewhere := serve(&trusted), serve(&other)
+	yml := strings.Replace(eacpYML, "  dev:\n    default: true\n", "  dev:\n    default: true\n    api: "+elsewhere.URL+"\n", 1)
+	dir := writeBundle(t, map[string]string{"eacp.yml": yml})
+	const id = "0b9f0e6a-4c8e-4a55-9d1e-4f2f6f1f9a01"
+
+	for name, env := range map[string]map[string]string{
+		"a different EACP_API_URL": {"EACP_API_URL": api.URL, "EACP_API_KEY": "k"},
+		"no EACP_API_URL":          {"EACP_API_KEY": "k"},
+	} {
+		if _, err := runWith(t, env, "bundle", "list", "-C", dir); err == nil || !strings.Contains(err.Error(), "EACP_API_URL") {
+			t.Errorf("%s: list = %v", name, err)
+		}
+	}
+	// approve, status and reject never read the bundle.
+	if _, err := runWith(t, map[string]string{"EACP_API_URL": api.URL, "EACP_API_KEY": "k"}, "bundle", "approve", id, "-C", dir); err != nil {
+		t.Fatal(err)
+	}
+	if other != 0 || trusted != 1 {
+		t.Fatalf("the bundle's api got %d requests, EACP_API_URL %d", other, trusted)
+	}
+	// A target api that agrees with EACP_API_URL is used.
+	if _, err := runWith(t, map[string]string{"EACP_API_URL": elsewhere.URL + "/", "EACP_API_KEY": "k"}, "bundle", "list", "-C", dir); err != nil || other != 1 {
+		t.Fatalf("agreeing api: %v, %d requests", err, other)
+	}
+}

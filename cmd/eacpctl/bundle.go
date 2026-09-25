@@ -237,14 +237,19 @@ func substitute(v any, values map[string]string) (any, error) {
 	}
 }
 
-// targetEnv points the API client at the target's API, if it names one.
-func targetEnv(getenv func(string) string, t bundleTarget) func(string) string {
-	return func(k string) string {
-		if k == "EACP_API_URL" && t.API != "" {
-			return t.API
-		}
-		return getenv(k)
+// checkAPI refuses a target whose api disagrees with EACP_API_URL. A bundle
+// comes from a repository, so its api only asserts where the target lives:
+// it never redirects the API key, and EACP_API_URL stays required.
+func checkAPI(getenv func(string) string, b loadedBundle) error {
+	if b.target.API == "" {
+		return nil
 	}
+	set := getenv("EACP_API_URL")
+	if strings.TrimRight(set, "/") != strings.TrimRight(b.target.API, "/") {
+		return fmt.Errorf("target %s is at %s, but EACP_API_URL is %q: set EACP_API_URL to use this target",
+			b.targetName, b.target.API, set)
+	}
+	return nil
 }
 
 // checkTenant refuses to plan against a tenant other than the target's.
@@ -307,18 +312,23 @@ func runBundle(ctx context.Context, args []string, getenv func(string) string, o
 		return errors.New(bundleUsage)
 	}
 
-	// approve, status and reject need only an API: the bundle is optional.
+	// approve, status and reject need only the API and never read a bundle.
 	// list and drift need only its name and target.
 	var b loadedBundle
 	needsDocument := cmd == "validate" || cmd == "plan" || cmd == "deploy"
-	if _, statErr := os.Stat(filepath.Join(*dir, "eacp.yml")); statErr == nil || id == "" {
+	if id == "" {
 		var err error
 		b, err = loadBundle(*dir, *target, vars)
-		if err != nil && id == "" && (needsDocument || !errors.Is(err, errNoValue)) {
+		if err != nil && (needsDocument || !errors.Is(err, errNoValue)) {
 			return err
 		}
+		if cmd != "validate" {
+			if err := checkAPI(getenv, b); err != nil {
+				return err
+			}
+		}
 	}
-	env := targetEnv(getenv, b.target)
+	env := getenv
 
 	switch cmd {
 	case "validate":

@@ -14,7 +14,9 @@ write (ADR-003 §8), and two-person rules stay two-person.
 
 1. **A bundle is desired state, resolved by the client.** `eacpctl bundle` reads `eacp.yml` and
    `resources/*.yml`, picks a target (API URL, tenant, variable values), resolves `${var.NAME}` and sends
-   one JSON document. The server accepts JSON only, decodes it strictly (an unknown field is refused, so a
+   one JSON document. A target's API URL only asserts where the target lives: it must equal
+   `EACP_API_URL`, so a bundle from a pull request never redirects the API key, and `approve`, `status`
+   and `reject` never read a bundle. The server accepts JSON only, decodes it strictly (an unknown field is refused, so a
    secret cannot ride along) and refuses any unresolved `${`. A bundle never contains a secret value;
    connectors carry `secret_ref` only.
 2. **PostgreSQL is the state.** `eacp.bundle_resources` maps a bundle's addresses (`connector.erp`,
@@ -24,11 +26,13 @@ write (ADR-003 §8), and two-person rules stay two-person.
    registry in one REPEATABLE READ snapshot and records a change set: its canonical document, ordered
    steps (`create`, `propose`, `activate`, `transition`, `revoke`, `import`), each in stage `submit` or
    `approve`, and the refs it read. PostgreSQL computes `desired_digest` and `base_digest` (over the refs
-   and the bundle's managed objects) and journals `change_set.planned`. A blocking finding records nothing.
+   and the bundle's managed objects, each with its current fields and state) and journals `change_set.planned`. A blocking finding records nothing.
 4. **Apply is two stages, two people.** Submit locks the change set, checks `base_digest` (stale:
    `40001`), runs the submit steps as the submitter through `registry.Tx`, the same SQL as the API, then
    seals `sealed_digest` over the refs plus every object it produced. Approve needs a registry approver or
-   admin who is not the submitter, checks `sealed_digest`, and runs the activations and transitions. Each
+   admin who is not the submitter, checks `sealed_digest`, and runs the activations and transitions. A
+   transition moves a version only from the state it was planned from (`registry.Tx.TransitionVersionFrom`),
+   so a move committed between the digest check and the step makes the change set stale. Each
    step still passes its own trigger (roles, ≠ creator, ≠ allowlist author, MCP definition pin, the
    one-`ACTIVE` release guard). A stage is one transaction: any failing step rolls it all back. A change
    set without approve steps applies at submit, as the same single-person writes do through the API.

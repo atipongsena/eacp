@@ -127,3 +127,18 @@ func (t Tx) TransitionVersion(ctx context.Context, versionID uuid.UUID, to State
 	return execOne(ctx, t.Tx, `UPDATE eacp.agent_versions SET state = $2, state_reason = $3 WHERE id = $1`,
 		versionID, string(to), reason)
 }
+
+// TransitionVersionFrom moves a version only while it is still in from. A
+// version another transaction moved meanwhile, even one committed while this
+// statement waited for the row, is a conflict (ADR-026).
+func (t Tx) TransitionVersionFrom(ctx context.Context, versionID uuid.UUID, from, to State, reason string) error {
+	tag, err := t.Exec(ctx, `UPDATE eacp.agent_versions SET state = $2, state_reason = $3 WHERE id = $1 AND state = $4`,
+		versionID, string(to), reason, string(from))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return newErr(ErrConflict, "version is no longer %s", from)
+	}
+	return nil
+}
