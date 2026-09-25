@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"eacp/internal/action"
 	"eacp/internal/approval"
+	"eacp/internal/bundle"
 	"eacp/internal/connector/mcp"
 	"eacp/internal/connector/mcp/mcptest"
 	"eacp/internal/finops"
@@ -30,7 +32,7 @@ import (
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, budget, execution, reconciliation, operator
 // resolution, journal, outbox and inbox, MCP discovery, kills, fleet operations,
-// FinOps, releases), neither tenant B nor a session without a tenant sees
+// FinOps, releases, change sets), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -188,6 +190,25 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	if o, err := rel.Observe(ctx, release.Agent{TenantID: v.f.Tenant, AgentID: v.agent.Agent, VersionID: candidate}, p); err != nil ||
 		o.CapabilityDenial == nil {
 		t.Fatalf("replay = %+v, %v", o, err)
+	}
+
+	// Phase 20: a bundle with one connector and tool, planned and submitted
+	// by erin and approved by rita (ADR-026).
+	gac := bundle.New(v.f.App)
+	cs, err := gac.Plan(ctx, erin, bundle.Request{Bundle: "ledger", Desired: json.RawMessage(`{
+	 "connectors": {"ledger": {"protocol": "http", "endpoint": "http://fakeerp:8090", "secret_ref": "ledger",
+	   "tools": {"post_entry": {"contract": {"side_effects": ["READ_ONLY"], "idempotency_mode": "none",
+	     "reconciliation_lookup": "none", "reconciliation_consistency": "none", "proof_standard": "none",
+	     "max_attempts": 3}}}}}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gac.Submit(ctx, erin, cs.ID); err != nil {
+		t.Fatal(err)
+	}
+	if cs, err := gac.Approve(ctx, registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["rita"]}, cs.ID); err != nil ||
+		cs.State != "APPLIED" {
+		t.Fatalf("bundle approve = %+v, %v", cs, err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member

@@ -18,6 +18,8 @@ Phase 17 (Slice C) adds fleet operations and the fleet view (ADR-024). An operat
 
 Phase 18 (Slice C) adds Agent FinOps (ADR-025): LLM usage ingest over OTLP/HTTP JSON and billing imports, a forward-only rate card priced in PostgreSQL, chargeback, soft limits, a spend dashboard and alerts. Nothing it adds blocks an action; only invariant 3's hard budgets do. Its tests join invariants 8 and 17. `internal/finops/schema_test.go` also checks key-bound attribution, the observation window, idempotent spans, rounding up and the cache rule, and the evaluator's thresholds and baseline; `internal/finops/service_test.go` checks effective spend as the greater source per day and the account rollup.
 
+Phase 20 adds Governance-as-Code (ADR-026): bundles planned into change sets, two-person submit and approve through the registry triggers, and read-only drift. It grants nothing a registry write through the API could not. Its tests join invariants 8 and 17. `internal/bundle/schema_test.go` also checks every change-set rule in raw SQL; `internal/bundle/plan_test.go` checks the ordered diff, releases, containment, imports and prune; `internal/bundle/service_test.go` checks staleness, atomic stages and drift.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -122,6 +124,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/fleet` TestFleetTargetMustBeATenantVersion — a raw target naming another tenant's version is refused
 - `internal/finops` TestAlertsThroughTheServiceAndTheEvaluatorAcrossTenants — the cross-tenant evaluator hint yields tenant ids only; each tenant sees and acknowledges only its own alerts
 - `internal/api` TestFinOpsOfOtherTenantsAreNotFound — the FinOps API shows another tenant no spend, and its agents, accounts and alerts are not found
+- `internal/bundle` TestChangeSetsAreTenantIsolated — change sets, bundles and steps are tenant rows under RLS
+- `internal/api` TestChangeSetsOfOtherTenantsAreNotFound — the change-set and drift API answers 404 across tenants
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -211,6 +215,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/fleet` TestPauseTargetRecordsDatabaseStateAndIsJournaled — each transition and the operation (actor, reason, targets) are journaled, the operation last
 - `internal/finops` TestSoftLimitsAreAdminOnlyAndJournaled — soft limits, prices and billing imports are journaled with their actor and the row's reason
 - `internal/finops` TestAlertsAreRaisedByFinOpsAndAcknowledgedOnce — an alert's creation (the finops system actor) and its single acknowledgement are journaled
+- `internal/bundle` TestClosedChangeSetsAreTerminalAndRejectionNeedsAReason — every change-set move is journaled with its actor, a rejection with its reason
+- `internal/bundle` TestApprovalIsASecondPersonAgainstTheSealedDigest — plan, submission and approval are journaled; the approver is a second person
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 

@@ -281,7 +281,7 @@ Network                → agent runtime ไม่มี egress ไป privilege
 
 ใน Slice A ใช้ static secret ที่ worker ถือเท่านั้น
 
-JIT / short-lived credentials อยู่ Phase 22 (§96)
+JIT / short-lived credentials อยู่ Phase 24 (§96)
 
 **ขอบเขตของ claim (Rev 2.1):** claim "cannot bypass" ใช้ได้กับ **conforming deployment** (ADR-001 §3a)
 
@@ -2946,7 +2946,7 @@ secret ไม่อยู่ใน action payload, journal, trace หรือ l
 Agent ได้แค่ agent credential สำหรับเรียก EACP API
 ```
 
-Phase 22 (JIT credentials):
+Phase 24 (JIT credentials):
 
 ```text
 Agent
@@ -3212,7 +3212,7 @@ ADR-007 ถึง ADR-010 ต้องสอดคล้องกับ ADR-004 
 Slice A — Correct, non-bypassable execution     Phase 1–8
 Slice B — Enterprise governance & capacity       Phase 9–13
 Slice C — Fleet safety                           Phase 14–17
-Later   — Operations & ecosystem                 Phase 18–23
+Later   — Operations & ecosystem                 Phase 18–25
 ```
 
 แต่ละ slice จบด้วย demo ที่ใช้ **เฉพาะ capability ที่มีอยู่ใน slice นั้นหรือก่อนหน้า**
@@ -3675,7 +3675,19 @@ Rollback
 
 ---
 
-# 94. Phase 20 — Agent SOC (Later)
+# 93a. Phase 20 — Governance-as-Code (Later)
+
+> **Status (2026-09-25): delivered.** Normative detail: [ADR-026](adr/ADR-026-governance-as-code.md) Rev 1.0. A bundle (`eacp.yml`, targets, variables) declares connectors, tools, contracts, agents, versions and allowlists. The API plans it in one snapshot into a change set whose digests PostgreSQL computes. Submit (one person) and approve (a second) run its steps through the same registry writes and triggers as the API; a stale change set runs nothing. Nothing is deleted, releases and containment are never bypassed, and drift is read-only.
+
+---
+
+# 93b. Phase 21 — Governance-as-Code: identity, policy and budgets (Later)
+
+Principals, groups, memberships and role grants; governance policy versions; budget accounts and limit changes (raising stays two-person); FinOps soft limits and forward-only prices. They use the Phase 20 engine.
+
+---
+
+# 94. Phase 22 — Agent SOC (Later)
 
 Operator UI:
 
@@ -3699,7 +3711,7 @@ Incidents
 
 ---
 
-# 95. Phase 21 — Kubernetes / HA (Later)
+# 95. Phase 23 — Kubernetes / HA (Later)
 
 After architecture stable:
 
@@ -3719,7 +3731,7 @@ leader election where required
 
 ---
 
-# 96. Phase 22 — JIT Credentials (Later)
+# 96. Phase 24 — JIT Credentials (Later)
 
 Implement:
 
@@ -3741,7 +3753,7 @@ Phase นี้แค่เปลี่ยนจาก static secret เป็�
 
 ---
 
-# 97. Phase 23 — A2A & LLM Gateway (Later, optional modules)
+# 97. Phase 25 — A2A & LLM Gateway (Later, optional modules)
 
 A2A: support governed remote Agent execution
 
