@@ -127,6 +127,11 @@ func diff(bundle string, changeSet uuid.UUID, doc Document, st State, prune bool
 	for _, name := range sortedKeys(doc.Agents) {
 		p.agent(name)
 	}
+	p.policy()
+	p.budgets()
+	for _, name := range sortedKeys(doc.Prices) {
+		p.price(name)
+	}
 	p.orphans()
 	p.adminFloor()
 
