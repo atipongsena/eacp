@@ -40,6 +40,10 @@
 //	eacpctl fleet resume|release <operation-id> --reason <text> [--dry-run]
 //	eacpctl fleet rollback <agent> [--to <version-id>] --reason <text> [--dry-run]
 //	                          atomic lifecycle changes across agents (ADR-024)
+//	eacpctl bundle validate|plan|deploy [-C DIR] [-t TARGET] [--var NAME=VALUE]... [--prune] [--dry-run]
+//	eacpctl bundle approve|status|reject <change-set-id> [--reason TEXT]
+//	eacpctl bundle list|drift [-C DIR] [-t TARGET]
+//	                          Governance-as-Code: plan, two-person apply and drift (ADR-026)
 //	eacpctl finops dashboard|prices|soft-limits
 //	eacpctl finops chargeback [--by agent|team|account] [--from T] [--to T]
 //	eacpctl finops usage [--agent UUID] [--from T] [--to T] [--limit N]
@@ -96,6 +100,7 @@ const usage = `usage:
   eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <AGT reason>]
   eacpctl kill list
   eacpctl fleet status|list|operation|pause|resume|quarantine|release|rollback ...
+  eacpctl bundle validate|plan|deploy|approve|reject|status|list|drift ...
   eacpctl finops dashboard|chargeback|usage|prices|price|billing|soft-limits|soft-limit|alerts|ack ...
   eacpctl release list|show|open|evaluation|advance|rollback ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
@@ -136,6 +141,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runKill(ctx, args[1:], getenv, out)
 	case "fleet":
 		return runFleet(ctx, args[1:], getenv, out)
+	case "bundle":
+		return runBundle(ctx, args[1:], getenv, out)
 	case "finops":
 		return runFinOps(ctx, args[1:], getenv, out)
 	case "release":

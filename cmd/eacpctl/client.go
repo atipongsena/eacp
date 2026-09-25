@@ -16,12 +16,13 @@ import (
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
-// call sends one API request with the caller's key and prints the JSON
-// response indented. Non-2xx responses are errors carrying the status.
-func call(ctx context.Context, getenv func(string) string, out io.Writer, method, path string, body any) error {
+// send sends one API request with the caller's key and returns the status
+// and the raw response body. Non-2xx responses are errors carrying the
+// status.
+func send(ctx context.Context, getenv func(string) string, method, path string, body any) (int, []byte, error) {
 	key := getenv("EACP_API_KEY")
 	if key == "" {
-		return errors.New("EACP_API_KEY: required")
+		return 0, nil, errors.New("EACP_API_KEY: required")
 	}
 	base := getenv("EACP_API_URL")
 	if base == "" {
@@ -35,13 +36,13 @@ func call(ctx context.Context, getenv func(string) string, out io.Writer, method
 	default:
 		buf, err := json.Marshal(b)
 		if err != nil {
-			return err
+			return 0, nil, err
 		}
 		rd = bytes.NewReader(buf)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, rd)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	if rd != nil {
@@ -49,27 +50,49 @@ func call(ctx context.Context, getenv func(string) string, out io.Writer, method
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return resp.StatusCode, nil, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode,
+			strings.TrimSpace(string(raw)))
+	}
+	return resp.StatusCode, raw, nil
+}
+
+// request sends one API request and returns the raw response body.
+func request(ctx context.Context, getenv func(string) string, method, path string, body any) ([]byte, error) {
+	_, raw, err := send(ctx, getenv, method, path, body)
+	return raw, err
+}
+
+// call sends one API request with the caller's key and prints the JSON
+// response indented. Non-2xx responses are errors carrying the status.
+func call(ctx context.Context, getenv func(string) string, out io.Writer, method, path string, body any) error {
+	code, raw, err := send(ctx, getenv, method, path, body)
+	if err != nil {
+		return err
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		fmt.Fprintf(out, "HTTP %d\n", resp.StatusCode)
+		fmt.Fprintf(out, "HTTP %d\n", code)
 		return nil
 	}
+	return printJSON(out, raw)
+}
+
+// printJSON prints a JSON body indented, or as it is if it is not JSON.
+func printJSON(out io.Writer, raw []byte) error {
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, raw, "", "  ") != nil {
-		_, err = out.Write(raw)
+		_, err := out.Write(raw)
 		return err
 	}
 	pretty.WriteByte('\n')
-	_, err = pretty.WriteTo(out)
+	_, err := pretty.WriteTo(out)
 	return err
 }
 
