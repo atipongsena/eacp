@@ -59,6 +59,14 @@ type VersionRef struct {
 	Number int       `json:"number"`
 }
 
+// CanaryRef is a release candidate serving a canary cohort beside the
+// stable version (ADR-018 §4).
+type CanaryRef struct {
+	ReleaseID uuid.UUID  `json:"release_id"`
+	Version   VersionRef `json:"version"`
+	CanaryBP  int        `json:"canary_bp"`
+}
+
 // KillRef is an active kill scope that matches the agent's active version.
 type KillRef struct {
 	Scope    string    `json:"scope"`
@@ -81,7 +89,8 @@ type CircuitIssue struct {
 // AgentStatus is one agent in the fleet view.
 type AgentStatus struct {
 	registry.Agent
-	ActiveVersion   *VersionRef    `json:"active_version"`
+	ActiveVersion   *VersionRef    `json:"active_version"` // the stable version during a canary
+	Canary          *CanaryRef     `json:"canary,omitempty"`
 	VersionsByState map[string]int `json:"versions_by_state"`
 	OwnerKnown      bool           `json:"owner_known"`
 	Health          string         `json:"health"`
@@ -188,7 +197,7 @@ func view(ctx context.Context, tx pgx.Tx, f Filter) ([]AgentStatus, int, error) 
 		SELECT a.id, a.name, a.display_name, a.environment, a.risk_class,
 		       COALESCE(a.owner_principal_id, '00000000-0000-0000-0000-000000000000'),
 		       COALESCE(a.owner_group_id, '00000000-0000-0000-0000-000000000000'), a.created_at,
-		       v.id, v.version,
+		       v.id, v.version, r.id, cv.id, cv.version, r.canary_bp,
 		       CASE WHEN a.owner_principal_id IS NOT NULL THEN EXISTS (
 		                SELECT 1 FROM eacp.principals p
 		                WHERE p.tenant_id = a.tenant_id AND p.id = a.owner_principal_id AND p.disabled_at IS NULL)
@@ -201,7 +210,11 @@ func view(ctx context.Context, tx pgx.Tx, f Filter) ([]AgentStatus, int, error) 
 		                SELECT state, count(*) AS n FROM eacp.agent_versions x
 		                WHERE x.tenant_id = a.tenant_id AND x.agent_id = a.id GROUP BY state) s), '{}')
 		FROM eacp.agents a
+		LEFT JOIN eacp.agent_releases r ON r.tenant_id = a.tenant_id AND r.agent_id = a.id AND r.state = 'CANARY'
+		LEFT JOIN eacp.agent_versions cv ON cv.tenant_id = r.tenant_id AND cv.id = r.candidate_version_id
+		     AND cv.state = 'ACTIVE'
 		LEFT JOIN eacp.agent_versions v ON v.tenant_id = a.tenant_id AND v.agent_id = a.id AND v.state = 'ACTIVE'
+		     AND v.id IS DISTINCT FROM cv.id
 		WHERE ($1 = '' OR a.environment = $1) AND ($2 = '' OR a.risk_class = $2)
 		  AND ($3::uuid IS NULL OR a.owner_group_id = $3)
 		ORDER BY a.name`, f.Environment, f.RiskClass, nullID(f.OwnerGroupID))
@@ -211,14 +224,18 @@ func view(ctx context.Context, tx pgx.Tx, f Filter) ([]AgentStatus, int, error) 
 	var agents []AgentStatus
 	index := map[uuid.UUID]int{}
 	var g AgentStatus
-	var vid *uuid.UUID
-	var vnum *int
+	var vid, rid, cid *uuid.UUID
+	var vnum, cnum, bp *int
 	_, err = pgx.ForEachRow(rows, []any{&g.ID, &g.Name, &g.DisplayName, &g.Environment, &g.RiskClass,
-		&g.OwnerPrincipalID, &g.OwnerGroupID, &g.CreatedAt, &vid, &vnum, &g.OwnerKnown, &g.VersionsByState}, func() error {
+		&g.OwnerPrincipalID, &g.OwnerGroupID, &g.CreatedAt, &vid, &vnum, &rid, &cid, &cnum, &bp,
+		&g.OwnerKnown, &g.VersionsByState}, func() error {
 		st := g
-		st.ActiveVersion = nil
+		st.ActiveVersion, st.Canary = nil, nil
 		if vid != nil {
 			st.ActiveVersion = &VersionRef{ID: *vid, Number: *vnum}
+		}
+		if cid != nil {
+			st.Canary = &CanaryRef{ReleaseID: *rid, Version: VersionRef{ID: *cid, Number: *cnum}, CanaryBP: *bp}
 		}
 		st.Reasons, st.Kills, st.Drift, st.Circuits = []string{}, []KillRef{}, []ToolIssue{}, []CircuitIssue{}
 		st.OpenActions, st.RecentActions = map[string]int{}, map[string]int{}
@@ -231,7 +248,8 @@ func view(ctx context.Context, tx pgx.Tx, f Filter) ([]AgentStatus, int, error) 
 		return nil, 0, err
 	}
 
-	// Allowlisted tools of each ACTIVE version, with the capability check's
+	// Allowlisted tools of each ACTIVE version (a canary candidate's too:
+	// it serves its cohort), with the capability check's
 	// tool rules (same order as eacp.action_capability_denial) and circuits.
 	rows, err = tx.Query(ctx, `
 		SELECT v.agent_id, t.id, c.id, c.name || '.' || t.name, c.name,
@@ -267,7 +285,7 @@ func view(ctx context.Context, tx pgx.Tx, f Filter) ([]AgentStatus, int, error) 
 				st.Circuits = append(st.Circuits, CircuitIssue{Connector: connName, State: *circuit})
 			}
 		}
-		if denial != nil {
+		if denial != nil && !slices.Contains(st.Drift, ToolIssue{Tool: ref, Reason: *denial}) {
 			st.Drift = append(st.Drift, ToolIssue{Tool: ref, Reason: *denial})
 		}
 		return nil
@@ -299,7 +317,8 @@ func view(ctx context.Context, tx pgx.Tx, f Filter) ([]AgentStatus, int, error) 
 			case "agent":
 				match = target == st.ID
 			case "agent_version":
-				match = st.ActiveVersion != nil && target == st.ActiveVersion.ID
+				match = (st.ActiveVersion != nil && target == st.ActiveVersion.ID) ||
+					(st.Canary != nil && target == st.Canary.Version.ID)
 			case "tool":
 				match = slices.Contains(st.tools, target)
 			case "connector":

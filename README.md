@@ -13,7 +13,7 @@ EACP is a control plane for running many AI agents in an enterprise. Agents may 
 - Phase 12 adds PostgreSQL fair claim scheduling and connector capacity ([ADR-011](docs/adr/ADR-011-scheduler-fairness.md)).
 - Phase 13 adds backpressure, bulkheads, circuit breakers and retry budgets ([ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 
-Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)). Phase 18 adds Agent FinOps: LLM cost ingest, chargeback, soft budgets, a spend dashboard and alerts ([ADR-025](docs/adr/ADR-025-agent-finops.md)). The [Slice C demo](docs/DEMO.md#slice-c-demo) triggers MCP drift, shows the blast radius, kills the affected agent version and shows the trace and audit evidence.
+Slice C has begun. Phase 14 adds the MCP registry: tool discovery, fingerprints, definition history, contract invalidation and quarantine ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md)). Phase 15 adds tenant-scoped dependency evidence and conservative blast-radius queries ([ADR-015](docs/adr/ADR-015-dependency-graph.md)). Phase 16 adds PostgreSQL-fenced execution kills for scopes bound to actions ([ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)). Phase 17 adds fleet operations and the fleet view ([ADR-024](docs/adr/ADR-024-fleet-operations.md)). Phase 18 adds Agent FinOps: LLM cost ingest, chargeback, soft budgets, a spend dashboard and alerts ([ADR-025](docs/adr/ADR-025-agent-finops.md)). Phase 19 adds agent releases: evaluation evidence, replay, a structurally non-destructive shadow, a PostgreSQL-enforced canary cohort, promotion and rollback ([ADR-018](docs/adr/ADR-018-release-and-evaluation.md)). The [Slice C demo](docs/DEMO.md#slice-c-demo) triggers MCP drift, shows the blast radius, kills the affected agent version and shows the trace and audit evidence.
 > See the [Master Plan](docs/MASTER_PLAN.md) and the [ADRs](docs/adr/).
 
 ## Slice A goal
@@ -165,6 +165,16 @@ EACP is not in the LLM path, so it ingests LLM cost. An agent runtime points its
 - **Dashboard.** `GET /v1/finops/dashboard` shows spend today and month to date, the top agents, today's hard budget blocks and open alerts.
 
 Soft limits and alerts never block anything; only hard budgets do.
+
+## Phase 19: Release & Evaluation
+
+A release moves an agent from its `ACTIVE` (stable) version to a candidate: `EVALUATING → SHADOW → CANARY → PROMOTED`, or `ROLLED_BACK`.
+
+- **Open.** A registry editor opens a release with `POST /v1/releases` (or `eacpctl release open`), naming the required evaluation suites, the replay and shadow gates, the canary steps in basis points and the guardrail tolerances.
+- **Evaluate.** Registry roles record suite results with a dataset digest and an evidence reference (`POST /v1/releases/{id}/evaluations`). EACP gates on them; it does not run them.
+- **Replay and shadow.** The candidate's runtime posts what it would do for a reference action to `POST /v1/agent/release/observations` with the candidate's key. The PDP decides the proposal. PostgreSQL pairs it with the reference and computes agreement. A replay answers only with EACP's recorded outcome of the reference. The candidate is not `ACTIVE` before the canary, so none of this can execute anything.
+- **Canary.** A second `registry_approver` advances the release (`POST /v1/releases/{id}/advance` with the state they reviewed). The candidate becomes `ACTIVE` beside the stable version and serves only subjects whose bucket is inside the current step; others are `DENIED canary_cohort`. A runtime asks `GET /v1/agent/release/route?subject=` which version to use. Each step and the promotion need enough candidate actions and no guardrail breach against the stable version (denials, failures, unknown outcomes, p95 latency, cost per action).
+- **Rollback.** An operator or approver rolls back with `POST /v1/releases/{id}/rollback`. Every `EACP_RELEASE_INTERVAL` (default 30s) the control plane also rolls back any canary whose report breaches a guardrail. Promotion is never automatic.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

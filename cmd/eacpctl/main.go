@@ -49,6 +49,14 @@
 //	eacpctl finops alerts [--open] [--limit N]
 //	eacpctl finops ack <alert-id> --reason <text>
 //	                          LLM cost, chargeback, soft budgets and alerts (ADR-025)
+//	eacpctl release list [--agent UUID] [--state S]
+//	eacpctl release show <release-id>
+//	eacpctl release open --candidate <version-id> --suite NAME... --reason <text>
+//	                     [--min-replay N] [--min-shadow N] [--steps BP,...] [--min-canary-actions N]
+//	eacpctl release evaluation <release-id> --suite --score --threshold --dataset-digest --evidence
+//	eacpctl release advance <release-id> --from STATE [--from-bp N] --reason <text>
+//	eacpctl release rollback <release-id> --reason <text>
+//	                          evaluation, replay, shadow, canary and rollback (ADR-018)
 //
 // Actions and human resolution, through the API (operators, ADR-004 T35-T37):
 //
@@ -89,6 +97,7 @@ const usage = `usage:
   eacpctl kill list
   eacpctl fleet status|list|operation|pause|resume|quarantine|release|rollback ...
   eacpctl finops dashboard|chargeback|usage|prices|price|billing|soft-limits|soft-limit|alerts|ack ...
+  eacpctl release list|show|open|evaluation|advance|rollback ...
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
   eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
@@ -129,6 +138,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runFleet(ctx, args[1:], getenv, out)
 	case "finops":
 		return runFinOps(ctx, args[1:], getenv, out)
+	case "release":
+		return runRelease(ctx, args[1:], getenv, out)
 	case "api":
 		return runAPI(ctx, args[1:], getenv, out)
 	case "pdp-dev-certs":

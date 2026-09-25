@@ -77,7 +77,7 @@ ADR-004 and ADR-005 impose requirements on these records:
 
   A DB trigger enforces this whole table: allowed pairs, roles, the two-person rules, and terminal immutability. An `UPDATE` may change either the lifecycle state or the allowlist pointer, never both at once.
 - **Containment is single-person and fast.** Transitions that **reduce** capability (suspend, quarantine, revoke, retire) need one person. Transitions that **grant** capability (activate, resume, release from quarantine) always need a second.
-- **At most one `ACTIVE` version per agent** in Slice A, enforced by a partial unique index. To activate a new version, first retire or suspend the old one. Canary with several active versions is later work and needs its own ADR.
+- **At most one `ACTIVE` version per agent** in Slice A, enforced by a partial unique index. To activate a new version, first retire or suspend the old one. Canary with several active versions is later work and needs its own ADR. *(Phase 19: [ADR-018](ADR-018-release-and-evaluation.md) §4 replaces the index with the `agent_versions_release_guard` trigger, which allows a second `ACTIVE` version only for the candidate of a release in `CANARY`.)*
 - **Only an `ACTIVE` version can act** (ADR-004 T2, T10, T16).
 
 ### 3. Capability allowlists (immutable plus a pointer)

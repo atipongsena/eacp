@@ -21,6 +21,7 @@ import (
 	"eacp/internal/identity"
 	"eacp/internal/messaging"
 	"eacp/internal/registry"
+	"eacp/internal/release"
 	"eacp/internal/storage"
 	"eacp/internal/storage/pgtest"
 	"eacp/internal/worker"
@@ -29,7 +30,7 @@ import (
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, budget, execution, reconciliation, operator
 // resolution, journal, outbox and inbox, MCP discovery, kills, fleet operations,
-// FinOps), neither tenant B nor a session without a tenant sees
+// FinOps, releases), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -151,6 +152,42 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	}
 	if n, err := fin.Evaluate(ctx, v.f.Tenant); err != nil || n != 1 {
 		t.Fatalf("finops evaluate = %d %v", n, err)
+	}
+
+	// Phase 19: a release of a new version of the flow's agent, an evaluation
+	// and a replay of the found action. The candidate's allowlist is empty, so
+	// the proposal is denied by capability and needs no PDP.
+	candidate := v.f.ID(t, "erin", `INSERT INTO eacp.agent_versions (tenant_id, agent_id, runtime, code_ref)
+		VALUES (eacp.current_tenant_id(), $1, 'python', 'git:next') RETURNING id`, v.agent.Agent)
+	emptyAllowlist := v.f.ID(t, "erin", `INSERT INTO eacp.agent_allowlists (tenant_id, agent_version_id, tool_ids)
+		VALUES (eacp.current_tenant_id(), $1, '{}') RETURNING id`, candidate)
+	if err := v.f.Exec("rita", `UPDATE eacp.agent_versions SET active_allowlist_id = $1 WHERE id = $2`, emptyAllowlist, candidate); err != nil {
+		t.Fatal(err)
+	}
+	rel := release.New(v.f.App, release.Options{})
+	erin := registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["erin"]}
+	opened, err := rel.Open(ctx, erin, release.OpenRequest{CandidateVersionID: candidate, Reason: "isolation fixture",
+		Plan: release.Plan{RequiredSuites: []string{"accuracy"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rel.RecordEvaluation(ctx, erin, opened.ID, release.EvaluationInput{Suite: "accuracy", Score: "1",
+		Threshold: "0.5", DatasetDigest: strings.Repeat("ab", 32), EvidenceRef: "ci://isolation"}); err != nil {
+		t.Fatal(err)
+	}
+	p := release.Proposal{Kind: "replay", ReferenceActionID: found.ID}
+	var payload string
+	if err := storage.InTenantTx(ctx, v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT subject, operation, target, tool, tool_schema_version, resource, input_payload::text
+			FROM eacp.actions WHERE id = $1`, found.ID).Scan(&p.Subject, &p.Operation, &p.Target, &p.Tool,
+			&p.ToolSchemaVersion, &p.Resource, &payload)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p.Payload = []byte(payload)
+	if o, err := rel.Observe(ctx, release.Agent{TenantID: v.f.Tenant, AgentID: v.agent.Agent, VersionID: candidate}, p); err != nil ||
+		o.CapabilityDenial == nil {
+		t.Fatalf("replay = %+v, %v", o, err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member

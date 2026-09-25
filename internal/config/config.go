@@ -47,6 +47,9 @@ type Config struct {
 	// FinOpsInterval is how often controlplane-api runs the FinOps alert
 	// evaluator (ADR-025 §8).
 	FinOpsInterval time.Duration
+	// ReleaseInterval is how often controlplane-api checks canary guardrails
+	// and rolls back breached canaries (ADR-018 §6).
+	ReleaseInterval time.Duration
 
 	// Governance provider (controlplane-api, ADR-002 §8): "local" or
 	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
@@ -185,6 +188,10 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	if cfg.FinOpsInterval > 0 && cfg.FinOpsInterval < 10*time.Second {
 		errs = append(errs, errors.New("EACP_FINOPS_INTERVAL: must be at least 10s"))
 	}
+	cfg.ReleaseInterval = duration("EACP_RELEASE_INTERVAL", "30s", time.Hour)
+	if cfg.ReleaseInterval > 0 && cfg.ReleaseInterval < 10*time.Second {
+		errs = append(errs, errors.New("EACP_RELEASE_INTERVAL: must be at least 10s"))
+	}
 	cfg.GovernanceProvider = get("EACP_GOVERNANCE_PROVIDER", "local")
 	cfg.AGTPDPURL = get("EACP_AGT_PDP_URL", "")
 	cfg.AGTPDPCAFile = get("EACP_AGT_PDP_CA_FILE", "")
@@ -283,6 +290,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("action_sweep_interval", c.SweepInterval),
 		slog.Duration("pdp_timeout", c.PDPTimeout),
 		slog.Duration("finops_interval", c.FinOpsInterval),
+		slog.Duration("release_interval", c.ReleaseInterval),
 		slog.String("governance_provider", c.GovernanceProvider),
 		slog.String("agt_pdp_url", RedactURL(c.AGTPDPURL)),
 		slog.String("agt_pdp_cert_file", c.AGTPDPCertFile),

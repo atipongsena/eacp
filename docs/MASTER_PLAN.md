@@ -3653,6 +3653,15 @@ anomaly alerts
 
 # 93. Phase 19 — Release & Evaluation (Later)
 
+> **Status (2026-09-25): delivered.** Normative detail: [ADR-018](adr/ADR-018-release-and-evaluation.md) Rev 1.0.
+> - **AgentRelease** is a PostgreSQL row with a fixed plan: `EVALUATING → SHADOW → CANARY (steps) → PROMOTED`, or `ROLLED_BACK` from any open state. Every forward move is a second person's.
+> - **Evaluation** results are recorded, attested evidence; EACP gates on them and does not run them.
+> - **Replay** answers only from EACP's recorded outcome of a reference action, and gates on agreement rates (§51).
+> - **Shadow** proposals go to an insert-only observation table; the candidate is not `ACTIVE`, so it has no path to execution (§52).
+> - **Canary** activates the candidate beside the stable version for a deterministic subject cohort, enforced at T2, on every move toward execution and at T16. Guardrails compare denials, failures, unknown outcomes, latency and cost with the stable version.
+> - **Rollback** is manual (operator or approver) or automatic on a sufficient report with a breach. The automatic path only withdraws; promotion stays human.
+> - **Not done:** running evaluation harnesses, traffic mirroring, statistical tests and weight-based canaries.
+
 Build:
 
 ```text

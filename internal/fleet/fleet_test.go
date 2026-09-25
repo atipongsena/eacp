@@ -490,3 +490,63 @@ func TestRollbackIgnoresNewerSuspendedVersions(t *testing.T) {
 		t.Fatalf("rollback = %+v", op)
 	}
 }
+
+// ADR-018 §4: during a canary an agent has two ACTIVE versions. The view
+// shows one row with the stable version and the canary beside it; a kill of
+// the candidate and the candidate's drift are the agent's.
+func TestFleetViewShowsACanaryBesideTheStableVersion(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	erp := e.f.ActiveTool(t, "erp", "post")
+	crm := e.f.ActiveTool(t, "crm", "note")
+	stable := e.f.ActiveAgent(t, "buyer", erp.Tool)
+	candidate := e.f.ID(t, "erin", `INSERT INTO eacp.agent_versions (tenant_id, agent_id, runtime, code_ref)
+		VALUES (eacp.current_tenant_id(), $1, 'python', 'git:next') RETURNING id`, stable.Agent)
+	al := e.f.ID(t, "erin", `INSERT INTO eacp.agent_allowlists (tenant_id, agent_version_id, tool_ids)
+		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, candidate, []uuid.UUID{erp.Tool, crm.Tool})
+	if err := e.f.Exec("rita", `UPDATE eacp.agent_versions SET active_allowlist_id = $1 WHERE id = $2`, al, candidate); err != nil {
+		t.Fatal(err)
+	}
+	release := e.f.ID(t, "erin", `INSERT INTO eacp.agent_releases (tenant_id, candidate_version_id,
+		required_suites, reason, min_replay_cases, min_shadow_cases, canary_steps)
+		VALUES (eacp.current_tenant_id(), $1, '{accuracy}', 'next model', 0, 0, '{2500,10000}') RETURNING id`, candidate)
+	e.f.ID(t, "erin", `INSERT INTO eacp.agent_release_evaluations (tenant_id, release_id, suite, score, threshold,
+		dataset_digest, evidence_ref) VALUES (eacp.current_tenant_id(), $1, 'accuracy', 1, 0.5, repeat('ab', 32),
+		'ci://1') RETURNING id`, release)
+	for _, sql := range []string{
+		`UPDATE eacp.agent_releases SET state = 'SHADOW', change_reason = 'ok' WHERE id = $1`,
+		`UPDATE eacp.agent_releases SET state = 'CANARY', canary_bp = 2500, change_reason = 'ok' WHERE id = $1`,
+	} {
+		if err := e.f.Exec("ravi", sql, release); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The crm tool drifts: only the candidate allowlists it.
+	if err := e.f.Exec("otto", `UPDATE eacp.tool_contracts SET revoked_at = now(), revoke_reason = 'drill'
+		WHERE id = (SELECT active_contract_id FROM eacp.tools WHERE id = $1)`, crm.Tool); err != nil {
+		t.Fatal(err)
+	}
+
+	agents, err := e.s.Agents(ctx, e.as("audra"), fleet.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("agents = %+v", agents)
+	}
+	got := agents[0]
+	if got.ActiveVersion == nil || got.ActiveVersion.ID != stable.Version || got.Canary == nil ||
+		got.Canary.Version.ID != candidate || got.Canary.ReleaseID != release || got.Canary.CanaryBP != 2500 {
+		t.Fatalf("buyer = %+v, canary %+v", got.ActiveVersion, got.Canary)
+	}
+	if len(got.Drift) != 1 || got.Drift[0].Tool != "crm.note" || got.Health != fleet.HealthDegraded {
+		t.Fatalf("drift = %+v, health %s", got.Drift, got.Health)
+	}
+	if err := e.f.Exec("otto", `SELECT eacp.set_kill('agent_version', $1, true, 'drill')`, candidate); err != nil {
+		t.Fatal(err)
+	}
+	agents, err = e.s.Agents(ctx, e.as("audra"), fleet.Filter{})
+	if err != nil || agents[0].Health != fleet.HealthContained || len(agents[0].Kills) != 1 {
+		t.Fatalf("after the candidate kill = %+v, %v", agents, err)
+	}
+}

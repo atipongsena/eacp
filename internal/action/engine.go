@@ -394,6 +394,15 @@ func (e *Engine) inputs(ctx context.Context, tx pgx.Tx, r row) (snapshot, string
 	if r.ToolID == nil || grant.ToolID != *r.ToolID {
 		return s, string(registry.DenyUnknownTool), nil
 	}
+	// A release candidate acts only inside its canary cohort (ADR-018 §4).
+	var release *string
+	if err := tx.QueryRow(ctx, `SELECT eacp.release_denial($1, $2)`,
+		r.AgentVersionID, r.SubjectPrincipalID).Scan(&release); err != nil {
+		return s, "", err
+	}
+	if release != nil {
+		return s, *release, nil
+	}
 	s.contractID = grant.ContractID
 	if err := tx.QueryRow(ctx, `SELECT a.risk_class, v.active_allowlist_id,
 			array_to_string(c.side_effects, ',')

@@ -30,6 +30,7 @@ import (
 	"eacp/internal/identity"
 	"eacp/internal/kill"
 	"eacp/internal/registry"
+	"eacp/internal/release"
 	"eacp/internal/storage"
 )
 
@@ -48,15 +49,18 @@ type Server struct {
 	fleet   *fleet.Service
 	finops  *finops.Service
 
-	actions *action.Engine
+	actions  *action.Engine
+	releases *release.Service
 }
 
 // New returns a Server using pool (connected as the application role).
 func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
+	local := governance.LocalProvider{InstanceID: "controlplane-api"}
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
 		appr: approval.New(pool), log: log, budgets: budget.New(pool), kills: kill.New(pool),
 		fleet: fleet.New(pool), finops: finops.New(pool),
-		actions: action.New(pool, action.Options{Provider: governance.LocalProvider{InstanceID: "controlplane-api"}, Log: log})}
+		actions:  action.New(pool, action.Options{Provider: local, Log: log}),
+		releases: release.New(pool, release.Options{Provider: local, Log: log})}
 }
 
 // Role sets used by routes.
@@ -133,6 +137,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerKill(mux)
 	s.registerFleet(mux)
 	s.registerFinOps(mux)
+	s.registerRelease(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

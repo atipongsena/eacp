@@ -14,6 +14,7 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 | [ADR-014](ADR-014-postgresql-authority-nats-signals.md) | PostgreSQL as Execution Authority; NATS for Signals | Accepted (Rev 1.0) | Phase 10 |
 | [ADR-015](ADR-015-dependency-graph.md) | Dependency Graph and Conservative Blast Radius | Accepted (Rev 1.0) | Phase 15 |
 | [ADR-016](ADR-016-distributed-kill-switch.md) | PostgreSQL Authority for Distributed Execution Kills | Accepted (Rev 1.0) | Phase 16 |
+| [ADR-018](ADR-018-release-and-evaluation.md) | Agent Releases: Evaluation, Replay, Shadow, Canary and Rollback | Accepted (Rev 1.0) | Phase 19 |
 | [ADR-022](ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) | Backpressure, Bulkheads, Circuit Breakers and Retry Budgets | Accepted (Rev 1.0) | Phase 13 |
 | [ADR-023](ADR-023-mcp-registry-and-tool-fingerprint.md) | MCP Registry and Tool Fingerprint | Accepted (Rev 1.0) | Phase 14 |
 | [ADR-024](ADR-024-fleet-operations.md) | Fleet Operations over the Registry Lifecycle | Accepted (Rev 1.0) | Phase 17 |

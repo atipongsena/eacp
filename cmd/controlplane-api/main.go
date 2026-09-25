@@ -26,6 +26,7 @@ import (
 	"eacp/internal/config"
 	"eacp/internal/finops"
 	"eacp/internal/messaging"
+	"eacp/internal/release"
 	"eacp/internal/service"
 )
 
@@ -46,12 +47,15 @@ func main() {
 					MaxPendingPerTenant: d.Config.MaxPendingPerTenant},
 				Log: d.Log, EvaluationTimeout: d.Config.PDPTimeout,
 			})
-			api.New(d.DB, d.Log).WithActions(engine).Register(mux)
+			releases := release.New(d.DB, release.Options{Provider: provider, Log: d.Log,
+				EvaluationTimeout: d.Config.PDPTimeout})
+			api.New(d.DB, d.Log).WithActions(engine).WithReleases(releases).Register(mux)
 			sweeper := action.NewSweeper(engine)
 			sweeper.ReconcileMaxAge = d.Config.ReconcileMaxAge
 			d.Background(func(ctx context.Context) { sweeper.Run(ctx, d.Config.SweepInterval) })
 			d.Background(func(ctx context.Context) { messaging.RunPruner(ctx, d.DB, time.Minute, d.Log) })
 			d.Background(func(ctx context.Context) { finops.New(d.DB).Run(ctx, d.Config.FinOpsInterval, d.Log) })
+			d.Background(func(ctx context.Context) { releases.Run(ctx, d.Config.ReleaseInterval) })
 			return startRelay(d)
 		})
 }
