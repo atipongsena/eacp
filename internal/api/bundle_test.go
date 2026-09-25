@@ -47,6 +47,11 @@ func TestChangeSetAPI(t *testing.T) {
 	if body["state"] != "APPLIED" {
 		t.Fatalf("approve = %v", body)
 	}
+	code, body = h.as("erin", "POST", "/v1/change-sets", plan)
+	h.want(200, code, body)
+	if steps, ok := body["steps"].([]any); !ok || len(steps) != 0 || body["id"] != nil {
+		t.Fatalf("replan after apply = %v, want an empty steps array and no change set", body)
+	}
 
 	code, body = h.as("audra", "GET", "/v1/change-sets?bundle=ledger", nil)
 	h.want(200, code, body)

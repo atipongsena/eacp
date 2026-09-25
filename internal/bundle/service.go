@@ -165,7 +165,7 @@ func (s *Service) Plan(ctx context.Context, a registry.Actor, req Request) (Chan
 			return err
 		}
 		d := diff(req.Bundle, id, doc, st, req.Prune)
-		out.Steps, out.Findings = d.Steps, append(out.Findings, d.Findings...)
+		out.Steps, out.Findings = append(out.Steps, d.Steps...), append(out.Findings, d.Findings...)
 		if blocked(out.Findings) {
 			return &Error{Code: CodePlanBlocked, Msg: "the plan has blocking findings", Findings: out.Findings}
 		}
