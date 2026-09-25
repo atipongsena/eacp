@@ -16,7 +16,7 @@ import (
 var consoleFiles = []string{
 	"api.js", "app.css", "app.js", "confirm.js", "dom.js", "index.html", "router.js", "session.js",
 	"views/common.js", "views/cost.js", "views/dependencies.js", "views/execution.js",
-	"views/incidents.js", "views/inventory.js", "views/overview.js",
+	"views/incidents.js", "views/inventory.js", "views/overview.js", "views/security.js",
 }
 
 var wantHeaders = map[string]string{
