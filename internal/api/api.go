@@ -29,6 +29,7 @@ import (
 	"eacp/internal/fleet"
 	"eacp/internal/governance"
 	"eacp/internal/identity"
+	"eacp/internal/incident"
 	"eacp/internal/kill"
 	"eacp/internal/registry"
 	"eacp/internal/release"
@@ -51,8 +52,9 @@ type Server struct {
 	bundles *bundle.Service
 	finops  *finops.Service
 
-	actions  *action.Engine
-	releases *release.Service
+	actions   *action.Engine
+	releases  *release.Service
+	incidents *incident.Service
 }
 
 // New returns a Server using pool (connected as the application role).
@@ -60,7 +62,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
 	local := governance.LocalProvider{InstanceID: "controlplane-api"}
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
 		appr: approval.New(pool), log: log, budgets: budget.New(pool), kills: kill.New(pool),
-		fleet: fleet.New(pool), finops: finops.New(pool), bundles: bundle.New(pool),
+		fleet: fleet.New(pool), finops: finops.New(pool), bundles: bundle.New(pool), incidents: incident.New(pool),
 		actions:  action.New(pool, action.Options{Provider: local, Log: log}),
 		releases: release.New(pool, release.Options{Provider: local, Log: log})}
 }
@@ -141,6 +143,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerBundles(mux)
 	s.registerFinOps(mux)
 	s.registerRelease(mux)
+	s.registerIncidents(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))

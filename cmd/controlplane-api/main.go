@@ -25,6 +25,7 @@ import (
 	"eacp/internal/api"
 	"eacp/internal/config"
 	"eacp/internal/finops"
+	"eacp/internal/incident"
 	"eacp/internal/messaging"
 	"eacp/internal/release"
 	"eacp/internal/service"
@@ -56,6 +57,7 @@ func main() {
 			d.Background(func(ctx context.Context) { messaging.RunPruner(ctx, d.DB, time.Minute, d.Log) })
 			d.Background(func(ctx context.Context) { finops.New(d.DB).Run(ctx, d.Config.FinOpsInterval, d.Log) })
 			d.Background(func(ctx context.Context) { releases.Run(ctx, d.Config.ReleaseInterval) })
+			d.Background(func(ctx context.Context) { incident.New(d.DB).Run(ctx, d.Config.IncidentInterval, d.Log) })
 			return startRelay(d)
 		})
 }

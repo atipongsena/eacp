@@ -51,6 +51,10 @@ type Config struct {
 	// and rolls back breached canaries (ADR-018 §6).
 	ReleaseInterval time.Duration
 
+	// IncidentInterval is how often controlplane-api runs the incident
+	// evaluator (ADR-027 §4).
+	IncidentInterval time.Duration
+
 	// Governance provider (controlplane-api, ADR-002 §8): "local" or
 	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
 	// name a loopback host; https needs the mutual-TLS files. The client
@@ -192,6 +196,10 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	if cfg.ReleaseInterval > 0 && cfg.ReleaseInterval < 10*time.Second {
 		errs = append(errs, errors.New("EACP_RELEASE_INTERVAL: must be at least 10s"))
 	}
+	cfg.IncidentInterval = duration("EACP_INCIDENT_INTERVAL", "15s", time.Hour)
+	if cfg.IncidentInterval > 0 && cfg.IncidentInterval < 5*time.Second {
+		errs = append(errs, errors.New("EACP_INCIDENT_INTERVAL: must be at least 5s"))
+	}
 	cfg.GovernanceProvider = get("EACP_GOVERNANCE_PROVIDER", "local")
 	cfg.AGTPDPURL = get("EACP_AGT_PDP_URL", "")
 	cfg.AGTPDPCAFile = get("EACP_AGT_PDP_CA_FILE", "")
@@ -291,6 +299,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("pdp_timeout", c.PDPTimeout),
 		slog.Duration("finops_interval", c.FinOpsInterval),
 		slog.Duration("release_interval", c.ReleaseInterval),
+		slog.Duration("incident_interval", c.IncidentInterval),
 		slog.String("governance_provider", c.GovernanceProvider),
 		slog.String("agt_pdp_url", RedactURL(c.AGTPDPURL)),
 		slog.String("agt_pdp_cert_file", c.AGTPDPCertFile),

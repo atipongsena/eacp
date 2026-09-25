@@ -50,6 +50,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.ReleaseInterval != 30*time.Second {
 		t.Errorf("ReleaseInterval = %v, want 30s", cfg.ReleaseInterval)
 	}
+	if cfg.IncidentInterval != 15*time.Second {
+		t.Errorf("IncidentInterval = %v, want 15s", cfg.IncidentInterval)
+	}
 	if cfg.ReconcileMaxAttempts != 10 || cfg.ReconcileMaxAge != time.Hour {
 		t.Errorf("reconcile limits = %d %v, want 10 and 1h", cfg.ReconcileMaxAttempts, cfg.ReconcileMaxAge)
 	}
@@ -74,6 +77,7 @@ func TestLoadReadsOverrides(t *testing.T) {
 		"EACP_RECONCILE_MAX_AGE":            "20m",
 		"EACP_FINOPS_INTERVAL":              "5m",
 		"EACP_RELEASE_INTERVAL":             "2m",
+		"EACP_INCIDENT_INTERVAL":            "30s",
 	}), Options{RequireDatabase: true, DefaultHTTPAddr: ":8080"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -84,7 +88,7 @@ func TestLoadReadsOverrides(t *testing.T) {
 		cfg.ShutdownTimeout != 3*time.Second || cfg.MaxQueuedPerTenant != 5 || cfg.MaxQueuedGlobal != 50 ||
 		cfg.SweepInterval != 250*time.Millisecond || cfg.PDPTimeout != 2*time.Second ||
 		cfg.ReconcileMaxAttempts != 3 || cfg.ReconcileMaxAge != 20*time.Minute || cfg.FinOpsInterval != 5*time.Minute ||
-		cfg.ReleaseInterval != 2*time.Minute {
+		cfg.ReleaseInterval != 2*time.Minute || cfg.IncidentInterval != 30*time.Second {
 		t.Fatalf("overrides not applied: %+v", cfg)
 	}
 }
@@ -104,14 +108,16 @@ func TestLoadAllowsMissingDatabaseURLWhenNotRequired(t *testing.T) {
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	cases := map[string]map[string]string{
-		"unknown environment":        {"EACP_ENV": "prod-ish"},
-		"unknown log level":          {"EACP_LOG_LEVEL": "loud"},
-		"unknown log format":         {"EACP_LOG_FORMAT": "xml"},
-		"finops interval too short":  {"EACP_FINOPS_INTERVAL": "1s"},
-		"finops interval too long":   {"EACP_FINOPS_INTERVAL": "2h"},
-		"release interval too short": {"EACP_RELEASE_INTERVAL": "5s"},
-		"release interval too long":  {"EACP_RELEASE_INTERVAL": "2h"},
-		"unknown exporter":           {"EACP_OTEL_EXPORTER": "zipkin"},
+		"unknown environment":         {"EACP_ENV": "prod-ish"},
+		"unknown log level":           {"EACP_LOG_LEVEL": "loud"},
+		"unknown log format":          {"EACP_LOG_FORMAT": "xml"},
+		"finops interval too short":   {"EACP_FINOPS_INTERVAL": "1s"},
+		"finops interval too long":    {"EACP_FINOPS_INTERVAL": "2h"},
+		"release interval too short":  {"EACP_RELEASE_INTERVAL": "5s"},
+		"release interval too long":   {"EACP_RELEASE_INTERVAL": "2h"},
+		"incident interval too short": {"EACP_INCIDENT_INTERVAL": "1s"},
+		"incident interval too long":  {"EACP_INCIDENT_INTERVAL": "2h"},
+		"unknown exporter":            {"EACP_OTEL_EXPORTER": "zipkin"},
 		"otlp without endpoint": {
 			"EACP_OTEL_EXPORTER": "otlp",
 		},
