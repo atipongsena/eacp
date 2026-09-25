@@ -56,7 +56,7 @@ summary shows the §55 counters from one read-only snapshot.
 link_kind, link_id`. Kinds: `opened`, `acknowledged`, `assigned`, `resolved` (written only by the
 incidents trigger, `pg_trigger_depth() > 1`), `note` and `linked` (inserted directly by an operator or
 admin). A note is 1–4096 characters. A link names `action`, `kill_state`, `fleet_operation`, `release`,
-`change_set`, `tool`, `connector`, `agent_version` or `finops_alert` and must exist in the tenant. Notes
+`change_set`, `tool`, `connector`, `agent`, `agent_version` or `finops_alert` and must exist in the tenant. Notes
 and links are allowed in every state (post-incident review). Each row appends one audit event.
 
 ### 3.3 Guards
@@ -76,7 +76,7 @@ and links are allowed in every state (post-incident review). Each row appends on
 ### 3.4 The evaluator — `eacp.incident_evaluate()`
 
 Runs as `storage.SetSystem("incident")` per tenant (controlplane-api, `EACP_INCIDENT_INTERVAL`, default
-15s, minimum 5s, 0 disables). Idempotent: `INSERT … ON CONFLICT (tenant_id, kind, source_key) DO NOTHING`.
+15s, at least 5s). Idempotent: `INSERT … ON CONFLICT (tenant_id, kind, source_key) DO NOTHING`.
 It returns the number of incidents opened. Only **current** signals open an incident:
 
 | kind | signal (current) | source_key | severity |
