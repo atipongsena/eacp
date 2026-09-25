@@ -151,6 +151,7 @@ containment).
 The overview and the incident list refresh every 15 s while `document.visibilityState === 'visible'` and
 a session exists. Other views refresh on navigation and on a Refresh button. A refresh never re-sends a
 write.
+The polled incident list holds no form: a manual incident is opened on its own page, `#/incidents/new`.
 
 ## 6. Error handling
 

@@ -30,3 +30,19 @@ test('only one dialog at a time; cancel resolves null', async () => {
   document.body.childNodes.at(-1).dispatch('cancel');
   assert.equal(await third, null);
 });
+
+test('a danger dialog without a text field starts on Cancel, so a stray Enter confirms nothing', async () => {
+  const pending = ask({title: 'Apply fleet pause', danger: true, lines: ['1 version']});
+  const dialog = document.body.childNodes.at(-1);
+  assert.equal(document.activeElement.textContent, 'Cancel');
+  dialog.dispatch('cancel');
+  assert.equal(await pending, null);
+});
+
+test('a dialog with a reason starts in the reason field', async () => {
+  const pending = ask({title: 'Kill scope tool', danger: true, reason: 'required'});
+  const dialog = document.body.childNodes.at(-1);
+  assert.equal(document.activeElement.tagName, 'TEXTAREA');
+  dialog.dispatch('cancel');
+  assert.equal(await pending, null);
+});

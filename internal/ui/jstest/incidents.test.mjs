@@ -47,3 +47,62 @@ test('a manual incident without a subject recommends nothing and never throws', 
   assert.deepEqual(recommendations({id: ID, kind: 'manual', detail: {reason: 'x'}, affected: {}}), []);
   assert.deepEqual(recommendations({id: ID, kind: 'mcp_drift', detail: {}, affected: null}), []);
 });
+
+// ---- rendered views with a fake client ----
+import {installFakeDOM, all, byText} from './fakedom.mjs';
+import {render} from '../static/views/incidents.js';
+import {linkBack} from '../static/views/common.js';
+
+installFakeDOM();
+
+function fakeClient(responses = {}) {
+  const calls = [];
+  return {calls, call(name, opts) {
+    calls.push({name, opts});
+    const res = responses[name] ?? {ok: true, status: 200, data: {}};
+    return new Promise(resolve => setTimeout(() => resolve(typeof res === 'function' ? res(opts) : res), 5));
+  }};
+}
+const session = {me: () => ({principalId: 'p-1', tenantId: 't-1', roles: ['operator']}), hasAny: () => true};
+const INCIDENT = {id: ID, title: 'manual', severity: 'high', state: 'OPEN', kind: 'manual', detail: {}, affected: {}, events: []};
+const route = (parts, query = {}) => ({area: 'incidents', parts, query});
+
+test('a double submit of a note sends it once', async () => {
+  const client = fakeClient({'incident.get': {ok: true, status: 200, data: INCIDENT}});
+  const node = await render({client, session, route: route([ID]), go() {}, refresh() {}});
+  const form = all(node).find(e => e.tagName === 'FORM' && all(e).some(x => x.name === 'text'));
+  all(form).find(e => e.name === 'text').value = 'called the vendor';
+  await Promise.all([form.dispatch('submit'), form.dispatch('submit')]);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(client.calls.filter(c => c.name === 'incident.note').length, 1);
+});
+
+test('a double click on "Assign to me" assigns once', async () => {
+  const client = fakeClient({'incident.get': {ok: true, status: 200, data: INCIDENT}});
+  const node = await render({client, session, route: route([ID]), go() {}, refresh() {}});
+  const button = byText(node, 'button', 'Assign to me');
+  await Promise.all([button.dispatch('click'), button.dispatch('click')]);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(client.calls.filter(c => c.name === 'incident.assign').length, 1);
+});
+
+test('"Link this to the incident" links once and then stays disabled', async () => {
+  const client = fakeClient();
+  const node = linkBack({client, session, route: route([], {incident: ID})}, 'tool', TOOL);
+  const button = byText(node, 'button', 'Link this to the incident');
+  await Promise.all([button.dispatch('click'), button.dispatch('click')]);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(client.calls.filter(c => c.name === 'incident.link').length, 1);
+  assert.equal(button.disabled, true);
+  await button.dispatch('click');
+  assert.equal(client.calls.filter(c => c.name === 'incident.link').length, 1);
+});
+
+test('the polled list holds no form to lose; a manual incident is opened on its own page', async () => {
+  const client = fakeClient({'incident.list': {ok: true, status: 200, data: {incidents: []}}});
+  const list = await render({client, session, route: route([]), go() {}, refresh() {}});
+  assert.ok(!all(list).some(e => e.name === 'title'), 'no open-incident form on the polled list');
+  assert.ok(all(list).some(e => e.getAttribute('href') === '#/incidents/new'));
+  const page = await render({client, session, route: route(['new']), go() {}, refresh() {}});
+  assert.ok(all(page).some(e => e.name === 'title'));
+});

@@ -18,7 +18,9 @@ const WORKERS = ['operator', 'admin'];
 const MAX_PREFILLED_AGENTS = 20;
 
 export async function render(ctx) {
-  return ctx.route.parts.length > 0 ? detail(ctx, ctx.route.parts[0]) : list(ctx);
+  const [id] = ctx.route.parts;
+  if (id === 'new') return h('div', {}, back('← Incidents', '#/incidents'), openForm(ctx));
+  return id ? detail(ctx, id) : list(ctx);
 }
 
 async function list(ctx) {
@@ -42,7 +44,9 @@ async function list(ctx) {
       ['Opened', i => fmtTime(i.opened_at)],
       ['Assignee', i => i.assignee_id ?? '—'],
     ], res.data.incidents, 'No incidents match.') : notice(res)),
-    session.hasAny(WORKERS) ? openForm(ctx) : null);
+    // The list is polled, so the manual-incident form lives on its own page:
+    // a poll never discards what the operator typed or the server's answer.
+    session.hasAny(WORKERS) ? h('p', {}, link('Open a manual incident…', '#/incidents/new')) : null);
 }
 
 function openForm({client, go}) {
@@ -128,17 +132,28 @@ async function detail(ctx, id) {
   if (!res.ok) return notice(res);
   const i = res.data;
   const out = h('div');
-  // act runs one write; a confirm dialog comes first when opts is given.
+  // act runs one write at a time; a confirm dialog comes first when opts is
+  // given. Notes and links are insert-only journal rows, so a double click
+  // must never send twice.
+  let sending = false;
   const act = async (opts, send) => {
-    let reason = '';
-    if (opts) {
-      const c = await ask(opts);
-      if (!c) return;
-      reason = c.reason;
+    if (sending) return;
+    sending = true;
+    try {
+      let reason = '';
+      if (opts) {
+        const c = await ask(opts);
+        if (!c) return;
+        reason = c.reason;
+      }
+      const r = await send(reason);
+      if (r.ok) ctx.refresh();
+      else replace(out, notice(r));
+    } catch (err) {
+      replace(out, notice({status: 0, error: 'error', detail: String(err?.message ?? err)}));
+    } finally {
+      sending = false;
     }
-    const r = await send(reason);
-    if (r.ok) ctx.refresh();
-    else replace(out, notice(r));
   };
   const worker = session.hasAny(WORKERS);
   const recs = recommendations(i);

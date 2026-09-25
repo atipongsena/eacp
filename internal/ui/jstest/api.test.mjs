@@ -30,6 +30,8 @@ test('buildPath substitutes and validates path parameters', () => {
   assert.throws(() => buildPath('incident.ack', {id: '../soc/summary'}), /invalid id/);
   assert.throws(() => buildPath('incident.ack', {}), /invalid id/);
   assert.throws(() => buildPath('agent.get', {ref: 'a/b'}), /invalid ref/);
+  assert.throws(() => buildPath('agent.get', {ref: '..'}), /invalid ref/);
+  assert.throws(() => buildPath('agent.get', {ref: '.'}), /invalid ref/);
   assert.throws(() => buildPath('nope'), /unknown route/);
 });
 

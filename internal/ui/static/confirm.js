@@ -22,6 +22,7 @@ export function ask({title, lines = [], reason = 'none', typed = null, danger = 
     const typedBox = typed !== null
       ? h('input', {id: 'confirm-typed', name: 'typed', autocomplete: 'off', spellcheck: 'false'}) : null;
     const confirmButton = h('button', {type: 'submit', class: danger ? 'danger' : 'primary', disabled: true}, confirmLabel);
+    const cancelButton = h('button', {type: 'button', onclick: () => finish(null)}, 'Cancel');
     const current = () => canConfirm({reason, typed}, reasonBox?.value ?? '', typedBox?.value ?? '');
     let dialog = null;
     const finish = value => {
@@ -46,7 +47,7 @@ export function ask({title, lines = [], reason = 'none', typed = null, danger = 
     reasonBox,
     typedBox ? h('label', {class: 'field', for: 'confirm-typed'}, `Type ${typed} to confirm`) : null,
     typedBox,
-    h('div', {class: 'actions'}, confirmButton, h('button', {type: 'button', onclick: () => finish(null)}, 'Cancel')));
+    h('div', {class: 'actions'}, confirmButton, cancelButton));
     dialog = h('dialog', {class: 'confirm', 'aria-labelledby': 'confirm-title'}, form);
     dialog.addEventListener('cancel', e => {
       e.preventDefault();
@@ -55,5 +56,8 @@ export function ask({title, lines = [], reason = 'none', typed = null, danger = 
     document.body.append(dialog);
     dialog.showModal();
     confirmButton.disabled = !current();
+    // Start where the operator must type; a danger dialog with nothing to
+    // type starts on Cancel, so a stray Enter never confirms it.
+    (reasonBox ?? typedBox ?? (danger ? cancelButton : null))?.focus();
   });
 }

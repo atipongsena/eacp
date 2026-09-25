@@ -70,7 +70,8 @@ The console is static files that call the existing `/v1` API with the operator's
 
 - Every containment and incident write passes through `confirm.js`. The dialog restates the target and the effect
   as text and collects the reason the API takes.
-- Only one dialog is open at a time, so a double click never sends twice.
+- Only one dialog is open at a time, and a view sends one write at a time (the incident page, "Link this to the incident"), so a double click never sends twice.
+- The polled incident list holds no form: a manual incident is opened on its own page (`#/incidents/new`), so a poll never discards what the operator typed or the server's answer.
 - A `tenant` kill needs the word `tenant` typed.
 - A fleet operation is always run as `dry_run` first. The confirmed request is the previewed one without `dry_run`,
   and the console never sends `selector.all`.
@@ -109,3 +110,4 @@ pages refresh on navigation. There is no websocket and no NATS path to the brows
 | Action resolution, FinOps alert acknowledgement, release management, fleet rollback, registry and bundle editing | Stay in eacpctl. |
 | Showing people | Principals are shown as ids: there is no principal directory route, so assignment is "assign to me" or a pasted id. |
 | Tool listing | Per connector (at most 50 connectors fetched on the Security page); there is no tenant-wide tool route. |
+| A browser offering to save the key | Residual risk. The sign-in field is a password field with `autocomplete="off"`, but a browser may still offer to save it after sign-in. Operators decline; managed browsers should disable the password manager for the console's origin. The console itself never stores the key. |

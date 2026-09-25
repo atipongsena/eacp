@@ -45,7 +45,8 @@ export const ROUTES = [
 ];
 
 const BY_NAME = new Map(ROUTES.map(([name, method, path, query]) => [name, {method, path, query}]));
-const PARAMS = {id: isUUID, ref: v => typeof v === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v)};
+const PARAMS = {id: isUUID,
+  ref: v => typeof v === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v) && v !== '.' && v !== '..'};
 const QUERY_VALUE = /^[^\u0000-\u001f\u007f]{1,256}$/;
 
 export function buildPath(name, params = {}, query = {}) {

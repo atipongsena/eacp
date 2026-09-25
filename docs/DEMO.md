@@ -102,7 +102,13 @@ No worker calls an MCP tool yet (`tools/call` needs its own ADR). The quarantine
 
 ### The operator console
 
-Run the demo with `KEEP=1 DEMO=C scripts/demo.sh` and open `http://127.0.0.1:18080/ui/`. Sign in with a principal key of the tenant. The demo generates its keys in memory and does not print them, so register one of your own with `eacpctl key generate` and an admin's approval (ADR-003 §5).
+Run the demo with `KEEP=1 DEMO=C scripts/demo.sh` and open `http://127.0.0.1:18080/ui/`. The demo generates its keys in memory and never prints them. To sign in, create your own tenant on the kept stack:
+
+1. Generate two admin keys with `eacpctl key generate --kind principal --tenant <uuid>`.
+2. Pass them to `eacpctl tenant create --id <uuid> --admin … --admin …` (see `test/demo` for the flags).
+3. Grant yourself `operator` through the API, with a second admin approving the grant.
+
+The walk-through below is what `docs/reviews/2026-09-26-phase22b-console-e2e.md` recorded.
 
 - **Overview.** The overview shows the SOC counters, and the incidents page lists the drift and kill incidents.
 - **Containment.** The drift incident shows po-assistant as affected. Its "Pause the agents that use this tool" link opens the fleet form, pre-filled. Preview the operation, confirm it, and link it to the incident.
