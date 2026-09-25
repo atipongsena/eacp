@@ -22,8 +22,13 @@ const MaxSteps = 2000
 // Document is a bundle's resolved desired state. eacpctl resolves targets
 // and variables before sending it; the server accepts JSON only.
 type Document struct {
+	Principals map[string]Principal `json:"principals,omitempty"`
+	Groups     map[string]Group     `json:"groups,omitempty"`
 	Connectors map[string]Connector `json:"connectors,omitempty"`
 	Agents     map[string]Agent     `json:"agents,omitempty"`
+	Policy     *Policy              `json:"policy,omitempty"`
+	Budgets    map[string]Budget    `json:"budgets,omitempty"`
+	Prices     map[string]Price     `json:"prices,omitempty"`
 	Imports    []Import             `json:"imports,omitempty"`
 }
 
@@ -84,6 +89,8 @@ const (
 	KindContained           = "contained"
 	KindOrphan              = "orphan"
 	KindUnmanagedReference  = "unmanaged_reference"
+	KindPending             = "pending"
+	KindAdminFloor          = "admin_floor"
 )
 
 // Finding is something a plan reports about an address.
@@ -103,7 +110,7 @@ var (
 	toolNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 	secretRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,127}$`)
 	endpointRE = regexp.MustCompile(`^https?://[^[:space:]]+$`)
-	importRE   = regexp.MustCompile(`^(connector|tool|agent|version)\.`)
+	importRE   = regexp.MustCompile(`^(connector|tool|agent|version|principal|group|budget|price|policy)\.`)
 )
 
 // Decode strictly decodes a desired document: an unknown field (such as a
@@ -196,12 +203,13 @@ func Validate(d Document, raw json.RawMessage) []Finding {
 			seen[ref] = true
 		}
 	}
+	out = append(out, validateGovernance(d)...)
 	seen := map[string]bool{}
 	for _, im := range d.Imports {
 		addr := "import." + im.To
 		switch {
 		case !importRE.MatchString(im.To):
-			bad(addr, "imports adopt a connector, tool, agent or version")
+			bad(addr, "imports adopt a connector, tool, agent, version, principal, group, budget, price or the policy")
 		case !declared(d, im.To):
 			bad(addr, "%s is not declared in this bundle", im.To)
 		case im.ID == uuid.Nil:
@@ -229,7 +237,7 @@ func declared(d Document, addr string) bool {
 		_, ok := d.Agents[name]
 		return ok
 	}
-	return false
+	return declaredGovernance(d, kind, name)
 }
 
 func sortedKeys[V any](m map[string]V) []string {
