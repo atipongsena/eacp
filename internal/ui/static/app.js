@@ -6,14 +6,16 @@ import {createClient} from './api.js';
 import {parse, format} from './router.js';
 import {h, button} from './dom.js';
 import * as overview from './views/overview.js';
+import * as incidents from './views/incidents.js';
 
 const READERS = ['operator', 'auditor', 'admin'];
 // NAV lists the areas that have a view: [area, label, roles that may read it].
 // The roles only hide links; the API answers 403 to anyone else.
 const NAV = [
   ['overview', 'Overview', READERS],
+  ['incidents', 'Incidents', READERS],
 ];
-const VIEWS = {overview};
+const VIEWS = {overview, incidents};
 const POLLED = new Set(['overview', 'incidents']);
 const POLL_MS = 15000;
 const IDLE_CHECK_MS = 30000;
