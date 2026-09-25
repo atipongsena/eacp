@@ -19,6 +19,13 @@ type State struct {
 	Agents           map[string]AgentState     // by name
 	Principals       map[string]uuid.UUID      // enabled principals by name
 	Groups           map[string]uuid.UUID      // by name
+	AddressElsewhere map[string]string         // address -> the other bundle managing it
+	TenantID         uuid.UUID                 // the tenant planned
+	People           map[string]PrincipalState // every principal by name, disabled ones too
+	GroupRows        map[string]GroupState     // by name
+	Policy           PolicyState               // the active policy version, if any
+	Budgets          map[string]BudgetState    // by name
+	Prices           map[string]PriceState     // the price in effect, by provider + " " + model
 }
 
 // ConnectorState is a registered connector and its tools by name.
@@ -58,7 +65,9 @@ type VersionState struct {
 func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 	st := State{Managed: map[string]uuid.UUID{}, ManagedElsewhere: map[uuid.UUID]string{},
 		Connectors: map[string]ConnectorState{}, Agents: map[string]AgentState{},
-		Principals: map[string]uuid.UUID{}, Groups: map[string]uuid.UUID{}}
+		Principals: map[string]uuid.UUID{}, Groups: map[string]uuid.UUID{},
+		AddressElsewhere: map[string]string{}, People: map[string]PrincipalState{}, GroupRows: map[string]GroupState{},
+		Budgets: map[string]BudgetState{}, Prices: map[string]PriceState{}}
 
 	rows, err := tx.Query(ctx, `SELECT br.address, br.object_id, b.name FROM eacp.bundle_resources br
 		JOIN eacp.bundles b ON b.tenant_id = br.tenant_id AND b.id = br.bundle_id`)
@@ -72,6 +81,7 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 			st.Managed[addr] = id
 		} else {
 			st.ManagedElsewhere[id] = owner
+			st.AddressElsewhere[addr] = owner
 		}
 		return nil
 	}); err != nil {
@@ -188,6 +198,8 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 	if err != nil {
 		return st, err
 	}
-	_, err = pgx.ForEachRow(rows, []any{&name, &id}, func() error { st.Groups[name] = id; return nil })
-	return st, err
+	if _, err := pgx.ForEachRow(rows, []any{&name, &id}, func() error { st.Groups[name] = id; return nil }); err != nil {
+		return st, err
+	}
+	return st, loadGovernance(ctx, tx, &st)
 }

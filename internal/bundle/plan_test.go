@@ -40,10 +40,16 @@ func mustDoc(t *testing.T, raw string) Document {
 	return d
 }
 
+var tenantID = uuid.MustParse("00000000-0000-4000-8000-00000000e001")
+
 func empty() State {
 	return State{Managed: map[string]uuid.UUID{}, ManagedElsewhere: map[uuid.UUID]string{},
+		AddressElsewhere: map[string]string{}, TenantID: tenantID,
 		Connectors: map[string]ConnectorState{}, Agents: map[string]AgentState{},
-		Principals: map[string]uuid.UUID{"carol": carol}, Groups: map[string]uuid.UUID{}}
+		Principals: map[string]uuid.UUID{"carol": carol}, Groups: map[string]uuid.UUID{},
+		People: map[string]PrincipalState{"carol": {ID: carol, Kind: "human", Subject: "carol@example.com",
+			DisplayName: "Carol", Grants: map[string]GrantState{}}},
+		GroupRows: map[string]GroupState{}, Budgets: map[string]BudgetState{}, Prices: map[string]PriceState{}}
 }
 
 // applied is the state after the validDoc bundle "ledger" was applied.

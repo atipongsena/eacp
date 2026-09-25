@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"eacp/internal/budget"
+	"eacp/internal/finops"
 	"eacp/internal/registry"
 )
 
@@ -21,6 +23,7 @@ const (
 	OpTransition = "transition"
 	OpRevoke     = "revoke"
 	OpImport     = "import"
+	OpSet        = "set"
 
 	StageSubmit  = "submit"
 	StageApprove = "approve"
@@ -38,7 +41,9 @@ type Step struct {
 
 // Payload is what a step needs. Parent names the object the step acts on
 // or under: ParentID when it exists at plan time, else the address of the
-// step of this change set that creates or imports it.
+// step of this change set that creates or imports it. Other and OtherID name
+// a second object the same way (a membership's principal, an agent's owner,
+// an account's agent).
 type Payload struct {
 	Connector    *registry.NewConnector `json:"connector,omitempty"`
 	Agent        *registry.NewAgent     `json:"agent,omitempty"`
@@ -53,6 +58,22 @@ type Payload struct {
 	To           registry.State         `json:"to,omitempty"`
 	Reason       string                 `json:"reason,omitempty"`
 	ObjectID     *uuid.UUID             `json:"object_id,omitempty"`
+	Principal    *registry.NewPrincipal `json:"principal,omitempty"`
+	Group        *GroupSpec             `json:"group,omitempty"`
+	Policy       json.RawMessage        `json:"policy,omitempty"`
+	Budget       *budget.NewAccount     `json:"budget,omitempty"`
+	Limit        string                 `json:"limit,omitempty"`
+	SoftLimit    *string                `json:"soft_limit,omitempty"`
+	Price        *finops.NewPrice       `json:"price,omitempty"`
+	Other        string                 `json:"other,omitempty"`
+	OtherID      *uuid.UUID             `json:"other_id,omitempty"`
+}
+
+// GroupSpec is a group to create.
+type GroupSpec struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Weight      int    `json:"schedule_weight"`
 }
 
 // Ref is a registry object a plan read; the change set's digest covers it.
@@ -69,16 +90,19 @@ type Diff struct {
 }
 
 type planner struct {
-	doc      Document
-	st       State
-	prune    bool
-	reason   string
-	managed  map[string]uuid.UUID
-	submit   []Step
-	approve  []Step
-	findings []Finding
-	refs     map[Ref]bool
-	declared map[string]bool // "connector.tool" of the tools this plan keeps or creates
+	doc           Document
+	st            State
+	prune         bool
+	reason        string
+	managed       map[string]uuid.UUID
+	submit        []Step
+	approve       []Step
+	findings      []Finding
+	refs          map[Ref]bool
+	declared      map[string]bool // "connector.tool" of the tools this plan keeps or creates
+	late          []Step          // approve-stage prunes of grants and memberships, after every other step
+	admins        int             // admin grants this plan proposes for human principals
+	revokedAdmins []string        // the admin grants this plan revokes, by address
 }
 
 // diff computes the steps that converge st to doc. It is pure: the same
@@ -91,6 +115,12 @@ func diff(bundle string, changeSet uuid.UUID, doc Document, st State, prune bool
 		p.managed[k] = v
 	}
 	p.imports()
+	for _, name := range sortedKeys(doc.Principals) {
+		p.principal(name)
+	}
+	for _, name := range sortedKeys(doc.Groups) {
+		p.group(name)
+	}
 	for _, name := range sortedKeys(doc.Connectors) {
 		p.connector(name)
 	}
@@ -98,8 +128,9 @@ func diff(bundle string, changeSet uuid.UUID, doc Document, st State, prune bool
 		p.agent(name)
 	}
 	p.orphans()
+	p.adminFloor()
 
-	steps := append(p.submit, p.approve...)
+	steps := append(append(p.submit, p.approve...), p.late...)
 	for i := range steps {
 		steps[i].Ordinal = i + 1
 	}
@@ -162,7 +193,7 @@ func (p *planner) owned(addr string, id uuid.UUID) bool {
 func (p *planner) imports() {
 	for _, im := range p.doc.Imports {
 		kind, name, _ := strings.Cut(im.To, ".")
-		if !p.st.names(kind, name, im.ID) {
+		if !p.names(kind, name, im.ID) {
 			p.find(im.To, KindUnresolvedReference, "import id %s is not the %s named %s", im.ID, kind, name)
 			continue
 		}
@@ -181,7 +212,8 @@ func (p *planner) imports() {
 }
 
 // names reports whether id is the object that kind and name denote.
-func (st State) names(kind, name string, id uuid.UUID) bool {
+func (p *planner) names(kind, name string, id uuid.UUID) bool {
+	st := p.st
 	switch kind {
 	case "connector":
 		return st.Connectors[name].ID == id && id != uuid.Nil
@@ -193,6 +225,18 @@ func (st State) names(kind, name string, id uuid.UUID) bool {
 		return st.Agents[name].ID == id && id != uuid.Nil
 	case "version":
 		return slices.ContainsFunc(st.Agents[name].Versions, func(v VersionState) bool { return v.ID == id })
+	case "principal":
+		return st.People[name].ID == id && id != uuid.Nil
+	case "group":
+		return st.GroupRows[name].ID == id && id != uuid.Nil
+	case "budget":
+		return st.Budgets[name].ID == id && id != uuid.Nil
+	case "policy":
+		return name == "tenant" && st.Policy.ID != nil && *st.Policy.ID == id
+	case "price":
+		w := p.doc.Prices[name]
+		cur, ok := st.Prices[w.Provider+" "+w.Model]
+		return ok && cur.ID == id
 	}
 	return false
 }
@@ -273,11 +317,12 @@ func (p *planner) agent(name string) {
 	var id uuid.UUID
 	na := registry.NewAgent{Name: name, DisplayName: want.DisplayName, Environment: want.Environment,
 		RiskClass: want.RiskClass}
-	if !p.owner(addr, want.Owner, &na) {
+	other, ok := p.owner(addr, want.Owner, &na)
+	if !ok {
 		return
 	}
 	if !exists {
-		p.add(StageSubmit, addr, OpCreate, Payload{Agent: &na})
+		p.add(StageSubmit, addr, OpCreate, Payload{Agent: &na, Other: other})
 	} else {
 		if !p.owned(addr, cur.ID) {
 			return
@@ -296,25 +341,33 @@ func (p *planner) agent(name string) {
 	p.version(name, want, cur, id)
 }
 
-func (p *planner) owner(addr string, o Owner, na *registry.NewAgent) bool {
+// owner resolves the agent's owner: an existing principal or group, or one
+// this bundle creates, named by its address until the step runs.
+func (p *planner) owner(addr string, o Owner, na *registry.NewAgent) (string, bool) {
 	if o.Principal != "" {
-		id, ok := p.st.Principals[o.Principal]
-		if !ok {
-			p.find(addr, KindUnresolvedReference, "no enabled principal %q", o.Principal)
-			return false
+		if id, ok := p.st.Principals[o.Principal]; ok {
+			na.OwnerPrincipalID = id
+			p.ref("principal", id)
+			return "", true
 		}
-		na.OwnerPrincipalID = id
-		p.ref("principal", id)
-		return true
+		if _, declared := p.doc.Principals[o.Principal]; declared {
+			if _, exists := p.st.People[o.Principal]; !exists {
+				return "principal." + o.Principal, true
+			}
+		}
+		p.find(addr, KindUnresolvedReference, "no enabled principal %q", o.Principal)
+		return "", false
 	}
-	id, ok := p.st.Groups[o.Group]
-	if !ok {
-		p.find(addr, KindUnresolvedReference, "no group %q", o.Group)
-		return false
+	if id, ok := p.st.Groups[o.Group]; ok {
+		na.OwnerGroupID = id
+		p.ref("group", id)
+		return "", true
 	}
-	na.OwnerGroupID = id
-	p.ref("group", id)
-	return true
+	if _, declared := p.doc.Groups[o.Group]; declared {
+		return "group." + o.Group, true
+	}
+	p.find(addr, KindUnresolvedReference, "no group %q", o.Group)
+	return "", false
 }
 
 func (p *planner) version(name string, want Agent, cur AgentState, agentID uuid.UUID) {
