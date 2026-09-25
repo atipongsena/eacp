@@ -49,3 +49,10 @@ the rendered confirm dialogs. Every step passed:
 A 403 notice led with "Your roles do not allow this." The two-person refusals in steps 5 and 7 are 403s from
 operators who hold the role, so the lead misdirected them. It now reads "The server refused this.", followed by the
 server's detail (`dom.test.mjs`: "a 403 says the server refused, not that a role is missing", red then green).
+
+## Rerun after the final review's fixes
+
+After the fixes in `6e9adc1`, the stack was rebuilt and the whole walk-through ran again. Every step passed, and
+the refusals now read "The server refused this. forbidden: …". The run also checked two of the fixes live:
+- the polled incident list holds no form, and manual incidents are opened at `#/incidents/new`;
+- a note submitted twice in a row appears once on the timeline.
