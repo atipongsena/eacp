@@ -58,6 +58,9 @@ func classify(err error) error {
 	if errors.As(err, &p) && (p.Code == "40001" || p.Code == "40P01") {
 		return &Error{Code: CodeStale, Msg: p.Message + ": plan the bundle again"}
 	}
+	if errors.As(err, &p) && p.Code == "23514" && p.Hint == "admin_floor" {
+		return &Error{Code: CodeStepFailed, Msg: p.Message + ": a tenant keeps at least two admins"}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &registry.Error{Kind: registry.ErrNotFound, Msg: "no such change set"}
 	}

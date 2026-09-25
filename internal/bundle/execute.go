@@ -129,12 +129,11 @@ func run(ctx context.Context, tx pgx.Tx, cs changeSetRow, stage string) error {
 			ids[st.Address] = *st.ObjectID
 		}
 	}
-	rtx := registry.Tx{Tx: tx}
 	for _, st := range steps {
 		if st.Stage != stage {
 			continue
 		}
-		obj, err := apply(ctx, rtx, st, ids, produced)
+		obj, err := apply(ctx, tx, st, ids, produced)
 		if err != nil {
 			mapped := registry.MapErr(err)
 			if st.Op == OpTransition && errors.Is(mapped, registry.ErrConflict) {
@@ -153,8 +152,7 @@ func run(ctx context.Context, tx pgx.Tx, cs changeSetRow, stage string) error {
 			continue
 		}
 		ids[st.Address] = obj
-		if kind, _, _ := strings.Cut(st.Address, "."); kind == "connector" || kind == "tool" || kind == "agent" ||
-			kind == "version" {
+		if kind, _, _ := strings.Cut(st.Address, "."); managedKinds[kind] {
 			if _, err := tx.Exec(ctx, `INSERT INTO eacp.bundle_resources
 				(tenant_id, bundle_id, address, kind, object_id, change_set_id)
 				VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5)
@@ -170,10 +168,16 @@ func run(ctx context.Context, tx pgx.Tx, cs changeSetRow, stage string) error {
 
 var errPayload = errors.New("the step's payload is incomplete")
 
+// managedKinds are the kinds whose created or imported objects a bundle
+// manages (bundle_resources).
+var managedKinds = map[string]bool{"connector": true, "tool": true, "agent": true, "version": true,
+	"principal": true, "group": true, "policy": true, "budget": true, "price": true}
+
 // apply makes one step's registry write and returns the object it produced
 // or acted on.
-func apply(ctx context.Context, rtx registry.Tx, st Step, ids map[string]uuid.UUID,
+func apply(ctx context.Context, tx pgx.Tx, st Step, ids map[string]uuid.UUID,
 	produced map[int]uuid.UUID) (uuid.UUID, error) {
+	rtx := registry.Tx{Tx: tx}
 	p := st.Payload
 	parent := func() (uuid.UUID, error) {
 		if p.ParentID != nil {
@@ -208,7 +212,19 @@ func apply(ctx context.Context, rtx registry.Tx, st Step, ids map[string]uuid.UU
 		if p.Agent == nil {
 			return uuid.Nil, errPayload
 		}
-		ag, err := rtx.RegisterAgent(ctx, *p.Agent)
+		na := *p.Agent
+		if p.Other != "" {
+			id, ok := ids[p.Other]
+			if !ok {
+				return uuid.Nil, fmt.Errorf("owner %q was not created by this change set", p.Other)
+			}
+			if strings.HasPrefix(p.Other, "group.") {
+				na.OwnerGroupID = id
+			} else {
+				na.OwnerPrincipalID = id
+			}
+		}
+		ag, err := rtx.RegisterAgent(ctx, na)
 		return ag.ID, err
 	case "create version":
 		if p.Version == nil {
@@ -259,6 +275,9 @@ func apply(ctx context.Context, rtx registry.Tx, st Step, ids map[string]uuid.UU
 			return uuid.Nil, errPayload
 		}
 		return *p.ObjectID, rtx.RevokeContract(ctx, *p.ObjectID, p.Reason)
+	}
+	if id, ok, err := applyGovernance(ctx, tx, st, ids, produced); ok {
+		return id, err
 	}
 	if st.Op == OpImport && p.ObjectID != nil {
 		return *p.ObjectID, nil
