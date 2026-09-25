@@ -195,3 +195,50 @@ func TestTheAffectedSnapshotAgreesWithTheBlastRadius(t *testing.T) {
 		t.Fatalf("affected %v, blast radius %v", got, want)
 	}
 }
+
+func TestTeamAndActionKillsReportTheirAffectedVersions(t *testing.T) {
+	f := registrytest.New(t)
+	tool := f.ActiveTool(t, "erp", "purchase")
+	team := f.ActiveAgent(t, "buyer", tool.Tool)
+	other := f.ActiveAgent(t, "seller", tool.Tool)
+	g := f.ID(t, "alice", `INSERT INTO eacp.groups (tenant_id, name, display_name)
+		VALUES (eacp.current_tenant_id(), 'buyers', 'Buyers') RETURNING id`)
+	replica(t, f, `UPDATE eacp.agents SET owner_principal_id = NULL, owner_group_id = $2 WHERE id = $1`, team.Agent, g)
+	action := f.ReceivedAction(t, other.Version, "carol", "erp.purchase")
+	ok(t, f.Exec("otto", `SELECT eacp.set_kill('team', $1, true, 'contain the team', 'security_incident')`, g))
+	ok(t, f.Exec("otto", `SELECT eacp.set_kill('action', $1, true, 'stop this one', 'operator_request')`, action))
+	if n := evaluate(t, f); n != 2 {
+		t.Fatalf("opened %d, want 2", n)
+	}
+	want := map[uuid.UUID]string{g: team.Version.String(), action: other.Version.String()}
+	for _, r := range incidents(t, f, "kill") {
+		var target uuid.UUID
+		ok(t, storage.InTenantTx(context.Background(), f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
+			return tx.QueryRow(context.Background(), `SELECT target_id FROM eacp.kill_states WHERE id = $1`, r.SubjectID).Scan(&target)
+		}))
+		if got := confirmedVersions(r); r.Severity != "critical" || !slices.Equal(got, []string{want[target]}) {
+			t.Errorf("kill of %s: severity %s, affected %v, want critical and %s", target, r.Severity, got, want[target])
+		}
+	}
+}
+
+func TestAnOversizedBlastRadiusStillOpensItsIncident(t *testing.T) {
+	f := registrytest.New(t)
+	tool := f.ActiveTool(t, "erp", "purchase")
+	f.ActiveAgent(t, "buyer", tool.Tool)
+	ok(t, f.Exec("erin", `INSERT INTO eacp.tools (tenant_id, connector_id, name)
+		SELECT eacp.current_tenant_id(), $1, 'tool_' || i FROM generate_series(1, 2000) i`, tool.Connector))
+	replica(t, f, `UPDATE eacp.connector_circuits SET open_until = now() + interval '5 minutes', disabled = false,
+		changed_by = NULL, changed_by_worker = 'worker-1', changed_at = now(), reason = 'breaker opened'
+		WHERE connector_id = $1`, tool.Connector)
+	ok(t, f.Exec("otto", `SELECT eacp.set_kill('tool', $1, true, 'contain', 'security_incident')`, tool.Tool))
+	if n := evaluate(t, f); n != 2 {
+		t.Fatalf("opened %d, want 2 (the circuit and the kill)", n)
+	}
+	got := incidents(t, f, "circuit_open")
+	if len(got) != 1 || got[0].Affected["node_count"] != 2001.0 || len(got[0].Affected["nodes"].([]any)) > 100 ||
+		got[0].Affected["confirmed_count"] != 1.0 {
+		t.Fatalf("circuit incident affected = node_count %v, %d nodes, confirmed %v", got[0].Affected["node_count"],
+			len(got[0].Affected["nodes"].([]any)), got[0].Affected["confirmed_count"])
+	}
+}

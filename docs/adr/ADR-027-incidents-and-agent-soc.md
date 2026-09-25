@@ -87,12 +87,21 @@ because the operator has already acted and the change is journaled:
 
 ### 5. One blast-radius rule
 
-The ADR-015 recursive CTE now lives in `eacp.blast_radius_versions(node)`. `registry.BlastRadius` and
+The ADR-015 recursive CTE now lives in `eacp.blast_radius_versions(nodes)`. Reachability from a set of nodes is the
+union of each node's, so one recursive query serves a whole scope. `registry.BlastRadius` (with one node) and
 `eacp.incident_affected(nodes)` both call it, so the rule exists once.
 
-The snapshot holds:
-- the nodes;
-- up to 200 confirmed versions (agent, version, environment, state);
+Each kind of scope maps to nodes:
+- a tool or an agent version: itself;
+- an agent: its versions;
+- a team: the versions of the agents the group owns;
+- an action: its agent version;
+- a connector: its tools, plus `mcp:<id>` for an MCP server;
+- a tenant: no nodes, but its kill is always critical.
+
+The snapshot is bounded, so a large connector or team never fails the 64 KiB check and never stops the evaluator:
+- the first 100 nodes, and `node_count`;
+- up to 100 confirmed versions (agent, version, environment, state);
 - `confirmed_count` and `possible_count`;
 - `production_active`.
 

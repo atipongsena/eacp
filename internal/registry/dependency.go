@@ -153,7 +153,7 @@ func (s *Service) BlastRadius(ctx context.Context, a Actor, target DependencyTar
 		// (eacp.blast_radius_versions, shared with the incident evaluator). A
 		// stale, low-confidence or unknown edge seeds possible impact
 		// regardless of where its target was last reported.
-		rows, err = tx.Query(ctx, `SELECT version_id, confirmed, possible FROM eacp.blast_radius_versions($1)`, key)
+		rows, err = tx.Query(ctx, `SELECT version_id, confirmed, possible FROM eacp.blast_radius_versions(ARRAY[$1::text])`, key)
 		if err != nil {
 			return err
 		}

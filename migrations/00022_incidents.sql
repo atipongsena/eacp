@@ -278,12 +278,14 @@ GRANT UPDATE (state, ack_reason, assignee_id, resolution, resolution_reason) ON 
 REVOKE UPDATE ON eacp.incident_events FROM eacp_app;
 
 -- +goose StatementBegin
--- The ADR-015 blast radius of one graph node ('tool:<id>', 'mcp:<id>',
+-- The ADR-015 blast radius of a set of graph nodes ('tool:<id>', 'mcp:<id>',
 -- 'agent_version:<id>', 'model:<name>', 'system:<name>') for every agent
 -- version: confirmed through trusted edges, possible through any edge, with
 -- every stale, low-confidence or unknown edge widening possible impact.
--- registry.BlastRadius and the incident evaluator share it.
-CREATE FUNCTION eacp.blast_radius_versions(p_node text)
+-- Reachability from a set is the union of each node's, so one recursive
+-- query serves any number of nodes. registry.BlastRadius and the incident
+-- evaluator share it.
+CREATE FUNCTION eacp.blast_radius_versions(p_nodes text[])
     RETURNS TABLE (version_id uuid, confirmed boolean, possible boolean)
     LANGUAGE sql STABLE
     AS $$
@@ -308,9 +310,9 @@ CREATE FUNCTION eacp.blast_radius_versions(p_node text)
         WHERE d.revoked_at IS NULL AND (d.confidence <> 'high' OR d.observed_at > now() OR d.expires_at <= now()
             OR (d.to_id IS NULL AND d.to_name IS NULL))
     ), confirmed(node) AS (
-        SELECT p_node UNION SELECT e.src FROM edges e JOIN confirmed c ON e.dst = c.node WHERE e.trusted
+        SELECT unnest(p_nodes) UNION SELECT e.src FROM edges e JOIN confirmed c ON e.dst = c.node WHERE e.trusted
     ), possible(node) AS (
-        SELECT p_node UNION SELECT node FROM uncertain
+        SELECT unnest(p_nodes) UNION SELECT node FROM uncertain
         UNION SELECT e.src FROM edges e JOIN possible p ON e.dst = p.node
     )
     SELECT v.id, EXISTS (SELECT 1 FROM confirmed c WHERE c.node = 'agent_version:' || v.id::text),
@@ -327,6 +329,11 @@ CREATE FUNCTION eacp.incident_scope_nodes(p_scope text, p_id uuid) RETURNS text[
     SELECT CASE p_scope
         WHEN 'agent_version' THEN ARRAY['agent_version:' || p_id::text]
         WHEN 'tool' THEN ARRAY['tool:' || p_id::text]
+        WHEN 'action' THEN ARRAY(SELECT 'agent_version:' || a.agent_version_id::text FROM eacp.actions a
+                                  WHERE a.id = p_id)
+        WHEN 'team' THEN ARRAY(SELECT 'agent_version:' || v.id::text FROM eacp.agent_versions v
+                                 JOIN eacp.agents ag ON ag.tenant_id = v.tenant_id AND ag.id = v.agent_id
+                                WHERE ag.owner_group_id = p_id ORDER BY 1)
         WHEN 'agent' THEN ARRAY(SELECT 'agent_version:' || v.id::text FROM eacp.agent_versions v
                                  WHERE v.agent_id = p_id ORDER BY v.version)
         WHEN 'connector' THEN ARRAY(SELECT n FROM (
@@ -341,15 +348,15 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
--- The affected snapshot of an incident: the union of the nodes' blast radii.
+-- The affected snapshot of an incident: the blast radius of its nodes. It
+-- stays bounded (at most 100 nodes and 100 confirmed versions, with their
+-- counts) so a large connector or team never fails the size check.
 CREATE FUNCTION eacp.incident_affected(p_nodes text[]) RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
     WITH r AS (
-        SELECT b.version_id, bool_or(b.confirmed) AS confirmed, bool_or(b.possible) AS possible
-          FROM unnest(COALESCE(p_nodes, ARRAY[]::text[])) AS n(node)
-          CROSS JOIN LATERAL eacp.blast_radius_versions(n.node) b
-         GROUP BY b.version_id
+        SELECT b.version_id, b.confirmed, b.possible
+          FROM eacp.blast_radius_versions(COALESCE(p_nodes, ARRAY[]::text[])) b
     ), c AS (
         SELECT v.id AS version_id, v.version, v.state, ag.id AS agent_id, ag.name AS agent, ag.environment
           FROM r JOIN eacp.agent_versions v ON v.id = r.version_id
@@ -357,11 +364,12 @@ CREATE FUNCTION eacp.incident_affected(p_nodes text[]) RETURNS jsonb
          WHERE r.confirmed
     )
     SELECT jsonb_build_object(
-        'nodes', to_jsonb(COALESCE(p_nodes, ARRAY[]::text[])),
+        'nodes', to_jsonb(COALESCE(p_nodes[1:100], ARRAY[]::text[])),
+        'node_count', COALESCE(cardinality(p_nodes), 0),
         'confirmed', COALESCE((SELECT jsonb_agg(jsonb_build_object('agent_id', x.agent_id, 'agent', x.agent,
                                    'version_id', x.version_id, 'version', x.version, 'environment', x.environment,
                                    'state', x.state) ORDER BY x.agent, x.version)
-                                 FROM (SELECT * FROM c ORDER BY agent, version LIMIT 200) x), '[]'::jsonb),
+                                 FROM (SELECT * FROM c ORDER BY agent, version LIMIT 100) x), '[]'::jsonb),
         'confirmed_count', (SELECT count(*) FROM c),
         'possible_count', (SELECT count(*) FROM r WHERE r.possible AND NOT r.confirmed),
         'production_active', (SELECT count(*) FROM c WHERE c.environment = 'production' AND c.state = 'ACTIVE'))
@@ -537,7 +545,7 @@ DROP FUNCTION eacp.incident_micros(timestamptz);
 DROP FUNCTION eacp.incident_severity(text, jsonb);
 DROP FUNCTION eacp.incident_affected(text[]);
 DROP FUNCTION eacp.incident_scope_nodes(text, uuid);
-DROP FUNCTION eacp.blast_radius_versions(text);
+DROP FUNCTION eacp.blast_radius_versions(text[]);
 DROP TABLE eacp.incident_events;
 DROP TABLE eacp.incidents;
 DROP FUNCTION eacp.incident_events_audit();
