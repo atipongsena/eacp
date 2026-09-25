@@ -55,6 +55,10 @@ type Config struct {
 	// evaluator (ADR-027 §4).
 	IncidentInterval time.Duration
 
+	// UI serves the operator console at /ui/ (controlplane-api, ADR-028):
+	// EACP_UI is "on" (default) or "off".
+	UI bool
+
 	// Governance provider (controlplane-api, ADR-002 §8): "local" or
 	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
 	// name a loopback host; https needs the mutual-TLS files. The client
@@ -200,6 +204,14 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	if cfg.IncidentInterval > 0 && cfg.IncidentInterval < 5*time.Second {
 		errs = append(errs, errors.New("EACP_INCIDENT_INTERVAL: must be at least 5s"))
 	}
+	switch get("EACP_UI", "on") {
+	case "on":
+		cfg.UI = true
+	case "off":
+		cfg.UI = false
+	default:
+		errs = append(errs, errors.New(`EACP_UI: must be "on" or "off"`))
+	}
 	cfg.GovernanceProvider = get("EACP_GOVERNANCE_PROVIDER", "local")
 	cfg.AGTPDPURL = get("EACP_AGT_PDP_URL", "")
 	cfg.AGTPDPCAFile = get("EACP_AGT_PDP_CA_FILE", "")
@@ -300,6 +312,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("finops_interval", c.FinOpsInterval),
 		slog.Duration("release_interval", c.ReleaseInterval),
 		slog.Duration("incident_interval", c.IncidentInterval),
+		slog.Bool("ui", c.UI),
 		slog.String("governance_provider", c.GovernanceProvider),
 		slog.String("agt_pdp_url", RedactURL(c.AGTPDPURL)),
 		slog.String("agt_pdp_cert_file", c.AGTPDPCertFile),

@@ -304,3 +304,27 @@ func TestNATSSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestConsoleSetting(t *testing.T) {
+	load := func(v string) (Config, error) {
+		m := map[string]string{"EACP_DATABASE_URL": "postgres://app@localhost/eacp"}
+		if v != "" {
+			m["EACP_UI"] = v
+		}
+		return Load(env(m), Options{RequireDatabase: true})
+	}
+	if cfg, err := load(""); err != nil || !cfg.UI {
+		t.Fatalf("default: UI = %v, err = %v; want on", cfg.UI, err)
+	}
+	if cfg, err := load("on"); err != nil || !cfg.UI {
+		t.Fatalf("on: UI = %v, err = %v", cfg.UI, err)
+	}
+	if cfg, err := load("off"); err != nil || cfg.UI {
+		t.Fatalf("off: UI = %v, err = %v", cfg.UI, err)
+	}
+	for _, bad := range []string{"yes", "OFF", "1"} {
+		if _, err := load(bad); err == nil || !strings.Contains(err.Error(), "EACP_UI") {
+			t.Errorf("EACP_UI=%q: err = %v, want an EACP_UI error", bad, err)
+		}
+	}
+}
