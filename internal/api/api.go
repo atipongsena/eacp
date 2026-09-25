@@ -24,6 +24,7 @@ import (
 	"eacp/internal/approval"
 	"eacp/internal/audit"
 	"eacp/internal/budget"
+	"eacp/internal/bundle"
 	"eacp/internal/finops"
 	"eacp/internal/fleet"
 	"eacp/internal/governance"
@@ -47,6 +48,7 @@ type Server struct {
 	budgets *budget.Service
 	kills   *kill.Service
 	fleet   *fleet.Service
+	bundles *bundle.Service
 	finops  *finops.Service
 
 	actions  *action.Engine
@@ -58,7 +60,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
 	local := governance.LocalProvider{InstanceID: "controlplane-api"}
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
 		appr: approval.New(pool), log: log, budgets: budget.New(pool), kills: kill.New(pool),
-		fleet: fleet.New(pool), finops: finops.New(pool),
+		fleet: fleet.New(pool), finops: finops.New(pool), bundles: bundle.New(pool),
 		actions:  action.New(pool, action.Options{Provider: local, Log: log}),
 		releases: release.New(pool, release.Options{Provider: local, Log: log})}
 }
@@ -136,6 +138,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerDependency(mux)
 	s.registerKill(mux)
 	s.registerFleet(mux)
+	s.registerBundles(mux)
 	s.registerFinOps(mux)
 	s.registerRelease(mux)
 
@@ -211,10 +214,13 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	var br badRequest
+	var be *bundle.Error
 	var re *registry.Error
 	switch {
 	case errors.As(err, &br):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid", "detail": br.msg})
+	case errors.As(err, &be):
+		writeJSON(w, bundleStatus(be.Code), be)
 	case errors.As(err, &re):
 		code := map[error]int{
 			registry.ErrForbidden: http.StatusForbidden, registry.ErrConflict: http.StatusConflict,
