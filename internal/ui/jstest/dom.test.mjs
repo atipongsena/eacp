@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {installFakeDOM, Text} from './fakedom.mjs';
-import {h, replace, fmtTime, cls, badge, table, select, kv} from '../static/dom.js';
+import {h, replace, fmtTime, cls, badge, table, select, kv, notice} from '../static/dom.js';
 
 installFakeDOM();
 
@@ -64,4 +64,11 @@ test('table, select and kv', () => {
   assert.equal(s.childNodes[0].textContent, 'any');
   assert.equal(s.childNodes[1].getAttribute('selected'), '');
   assert.equal(kv([['K', 'v'], null]).childNodes.length, 2);
+});
+
+test('a 403 says the server refused, not that a role is missing: two-person rules answer 403 too', () => {
+  const n = notice({status: 403, error: 'forbidden', detail: 'two-person rule: the actor cannot also be the acknowledger'});
+  assert.match(n.textContent, /^The server refused this\./);
+  assert.doesNotMatch(n.textContent, /roles/);
+  assert.match(n.textContent, /forbidden: two-person rule/);
 });

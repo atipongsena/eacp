@@ -75,7 +75,7 @@ export const json = value => h('pre', {class: 'json'}, JSON.stringify(value ?? n
 
 export const section = (title, ...children) => h('section', {class: 'panel'}, h('h2', {}, title), ...children);
 
-const LEADS = {0: 'The control plane is unreachable.', 403: 'Your roles do not allow this.', 404: 'Not found.',
+const LEADS = {0: 'The control plane is unreachable.', 403: 'The server refused this.', 404: 'Not found.',
   409: 'Conflict: the server refused this change.'};
 
 export function notice(res) {

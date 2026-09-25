@@ -155,7 +155,7 @@ write.
 ## 6. Error handling
 
 - Every failed call renders a notice with the HTTP status and the API's `error`/`detail` text.
-- 403: "Your roles do not allow this" plus the server detail. 409: shown as a conflict (for example the
+- 403: "The server refused this." plus the server detail (a two-person rule also answers 403, so the lead never blames a missing role). 409: shown as a conflict (for example the
   two-person rule or a stale state) with the server detail. 404 on a detail route: "not found".
 - The UI never retries a write automatically.
 
