@@ -92,15 +92,21 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		ORDER BY relname`); !slices.Equal(got, bundles) {
 		t.Errorf("reviewed bundle tables missing: %v", got)
 	}
+	incidents := []string{"incident_events", "incidents"}
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname IN ('incident_events', 'incidents') ORDER BY relname`); !slices.Equal(got, incidents) {
+		t.Errorf("reviewed incident tables missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
-	// 00005-00007, 00010, 00012, 00013, 00014, 00016, 00018 and 00019).
+	// 00005-00007, 00010, 00012, 00013, 00014, 00016, 00018, 00019 and 00022).
 	reviewedPolicies := []string{
 		"actions owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"agent_releases owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"budget_soft_limits owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connector_circuits owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"connectors owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"finops_alerts owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"kill_states owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"kill_tenant_epochs owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"mcp_servers owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -122,13 +128,14 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 
 	// SECURITY DEFINER functions run as the owner and so cross tenants. Each
 	// is reviewed: the journal chain append, and claim, count, outbox and
-	// finops- and release-evaluator hints that return only ids and counts; the caller re-checks everything
+	// finops-, release- and incident-evaluator hints that return only ids and counts; the caller re-checks everything
 	// under RLS (the relay locks and publishes each row in its tenant).
 	reviewedDefiners := []string{
 		"eacp.audit_chain_append()",
 		"eacp.claimable_actions(text[],jsonb,integer,jsonb)",
 		"eacp.finops_tenants()",
 		"eacp.global_queued_count()",
+		"eacp.incident_tenants()",
 		"eacp.mcp_scans_due(jsonb,integer)",
 		"eacp.outbox_pending(text[],integer)",
 		"eacp.outbox_prunable(integer)",

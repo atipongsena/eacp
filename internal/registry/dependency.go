@@ -149,38 +149,11 @@ func (s *Service) BlastRadius(ctx context.Context, a Actor, target DependencyTar
 				return newErr(ErrNotFound, "no such dependency target")
 			}
 		}
-		// PostgreSQL expands both reachable sets with recursive CTEs. A stale,
-		// low-confidence or unknown edge seeds possible impact regardless of
-		// where its target was last reported: it can no longer narrow impact.
-		rows, err = tx.Query(ctx, `WITH RECURSIVE edges(src, dst, trusted) AS (
-			SELECT 'agent_version:' || v.id::text, 'tool:' || t.id::text, true
-			FROM eacp.agent_versions v
-			JOIN eacp.agent_allowlists al ON al.tenant_id = v.tenant_id AND al.id = v.active_allowlist_id
-			JOIN eacp.tools t ON t.tenant_id = al.tenant_id AND t.id = ANY(al.tool_ids)
-			UNION ALL
-			SELECT 'agent_version:' || v.id::text, 'mcp:' || c.id::text, true
-			FROM eacp.agent_versions v
-			JOIN eacp.agent_allowlists al ON al.tenant_id = v.tenant_id AND al.id = v.active_allowlist_id
-			JOIN eacp.tools t ON t.tenant_id = al.tenant_id AND t.id = ANY(al.tool_ids)
-			JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id AND c.protocol = 'mcp'
-			UNION ALL
-			SELECT d.from_kind || ':' || d.from_id::text,
-			       d.to_kind || ':' || COALESCE(d.to_id::text, d.to_name),
-			       d.confidence = 'high' AND d.observed_at <= now() AND d.expires_at > now()
-			FROM eacp.dependency_edges d WHERE d.revoked_at IS NULL AND (d.to_id IS NOT NULL OR d.to_name IS NOT NULL)
-		), uncertain(node) AS (
-			SELECT d.from_kind || ':' || d.from_id::text FROM eacp.dependency_edges d
-			WHERE d.revoked_at IS NULL AND (d.confidence <> 'high' OR d.observed_at > now() OR d.expires_at <= now()
-			    OR (d.to_id IS NULL AND d.to_name IS NULL))
-		), confirmed(node) AS (
-			SELECT $1::text UNION SELECT e.src FROM edges e JOIN confirmed c ON e.dst = c.node WHERE e.trusted
-		), possible(node) AS (
-			SELECT $1::text UNION SELECT node FROM uncertain
-			UNION SELECT e.src FROM edges e JOIN possible p ON e.dst = p.node
-		)
-		SELECT v.id, EXISTS (SELECT 1 FROM confirmed c WHERE c.node = 'agent_version:' || v.id::text),
-		       EXISTS (SELECT 1 FROM possible p WHERE p.node = 'agent_version:' || v.id::text)
-		FROM eacp.agent_versions v`, key)
+		// PostgreSQL expands both reachable sets with recursive CTEs
+		// (eacp.blast_radius_versions, shared with the incident evaluator). A
+		// stale, low-confidence or unknown edge seeds possible impact
+		// regardless of where its target was last reported.
+		rows, err = tx.Query(ctx, `SELECT version_id, confirmed, possible FROM eacp.blast_radius_versions($1)`, key)
 		if err != nil {
 			return err
 		}
