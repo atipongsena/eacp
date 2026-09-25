@@ -85,12 +85,9 @@ var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,14})(\.[0-9]{1,6})?$`)
 func (s *Service) CreateAccount(ctx context.Context, a registry.Actor, n NewAccount) (Account, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `INSERT INTO eacp.budget_accounts (tenant_id, name, unit, parent_id, agent_id)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4) RETURNING id`,
-			n.Name, n.Unit, n.ParentID, n.AgentID).Scan(&id); err != nil {
-			return err
-		}
-		return nil
+		var err error
+		id, err = Tx{tx}.CreateAccount(ctx, n)
+		return err
 	})
 	if err != nil {
 		return Account{}, err
@@ -101,16 +98,10 @@ func (s *Service) CreateAccount(ctx context.Context, a registry.Actor, n NewAcco
 // ChangeLimit sets an account's hard limit (admin). A decrease applies at
 // once; an increase is PROPOSED until a different admin approves it.
 func (s *Service) ChangeLimit(ctx context.Context, a registry.Actor, account uuid.UUID, limit, reason string) (LimitChange, error) {
-	if !amountPattern.MatchString(limit) {
-		return LimitChange{}, &registry.Error{Kind: registry.ErrInvalid,
-			Msg: "limit must be a non-negative decimal below 10^15 with at most 6 decimals"}
-	}
 	var c LimitChange
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		row := tx.QueryRow(ctx, `INSERT INTO eacp.budget_limit_changes (tenant_id, account_id, new_limit, reason)
-			VALUES (eacp.current_tenant_id(), $1, $2::numeric, $3) RETURNING `+changeColumns, account, limit, reason)
 		var err error
-		c, err = scanChange(row)
+		c, err = Tx{tx}.ChangeLimit(ctx, account, limit, reason)
 		return err
 	})
 	return c, err
@@ -120,16 +111,10 @@ func (s *Service) ChangeLimit(ctx context.Context, a registry.Actor, account uui
 // Approval needs an admin other than the proposer, and the limit must still
 // be the one the proposal started from.
 func (s *Service) DecideLimitChange(ctx context.Context, a registry.Actor, change uuid.UUID, apply bool, reason string) (LimitChange, error) {
-	state := "REJECTED"
-	if apply {
-		state = "APPLIED"
-	}
 	var c LimitChange
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		row := tx.QueryRow(ctx, `UPDATE eacp.budget_limit_changes SET state = $2, decision_reason = $3
-			WHERE id = $1 RETURNING `+changeColumns, change, state, reason)
 		var err error
-		c, err = scanChange(row)
+		c, err = Tx{tx}.DecideLimitChange(ctx, change, apply, reason)
 		return err
 	})
 	return c, err

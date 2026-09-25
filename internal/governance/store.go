@@ -32,15 +32,13 @@ func (s *Store) CreatePolicy(ctx context.Context, actor registry.Actor, content 
 	if actor.TenantID == uuid.Nil || actor.PrincipalID == uuid.Nil {
 		return out, &registry.Error{Kind: registry.ErrForbidden, Msg: "no actor"}
 	}
-	if err := ValidatePolicy(content); err != nil {
-		return out, &registry.Error{Kind: registry.ErrInvalid, Msg: err.Error()}
-	}
 	err := storage.InTenantTx(ctx, s.pool, actor.TenantID.String(), func(tx pgx.Tx) error {
 		if err := storage.SetActor(ctx, tx, actor.PrincipalID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO eacp.policy_bundles (tenant_id, content)
-			VALUES (eacp.current_tenant_id(), $1::jsonb) RETURNING id, version`, content).Scan(&out.ID, &out.Version)
+		var err error
+		out, err = Tx{tx}.CreatePolicy(ctx, content)
+		return err
 	})
 	out.Content = content
 	return out, storeErr(err)
@@ -54,16 +52,7 @@ func (s *Store) ActivatePolicy(ctx context.Context, actor registry.Actor, id uui
 		if err := storage.SetActor(ctx, tx, actor.PrincipalID); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `UPDATE eacp.tenant_policy_pointer
-			SET current_bundle_id = $1, activation_reason = $2
-			WHERE tenant_id = eacp.current_tenant_id()`, id, reason)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return pgx.ErrNoRows
-		}
-		return nil
+		return Tx{tx}.ActivatePolicy(ctx, id, reason)
 	})
 	return storeErr(err)
 }

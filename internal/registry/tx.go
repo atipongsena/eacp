@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -141,4 +142,57 @@ func (t Tx) TransitionVersionFrom(ctx context.Context, versionID uuid.UUID, from
 		return newErr(ErrConflict, "version is no longer %s", from)
 	}
 	return nil
+}
+
+// CreatePrincipal inserts a principal; it holds no roles until two admins
+// grant one. A human's subject is canonicalised to lower case.
+func (t Tx) CreatePrincipal(ctx context.Context, p NewPrincipal) (Principal, error) {
+	out := Principal{Kind: p.Kind, Name: p.Name, DisplayName: p.DisplayName,
+		Subject: strings.ToLower(strings.TrimSpace(p.Subject))}
+	err := t.QueryRow(ctx, `
+		INSERT INTO eacp.principals (tenant_id, kind, name, subject, display_name)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4) RETURNING id`,
+		out.Kind, out.Name, nullStr(out.Subject), out.DisplayName).Scan(&out.ID)
+	return out, err
+}
+
+// ProposeRole proposes granting role to a principal; a second admin approves.
+func (t Tx) ProposeRole(ctx context.Context, principalID uuid.UUID, role string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := t.QueryRow(ctx, `INSERT INTO eacp.role_grants (tenant_id, principal_id, role)
+		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, principalID, role).Scan(&id)
+	return id, err
+}
+
+// ApproveRole makes a proposed grant effective.
+func (t Tx) ApproveRole(ctx context.Context, grantID uuid.UUID) error {
+	return execOne(ctx, t.Tx, `UPDATE eacp.role_grants SET approved_at = now() WHERE id = $1`, grantID)
+}
+
+// RevokeRole permanently revokes a grant.
+func (t Tx) RevokeRole(ctx context.Context, grantID uuid.UUID, reason string) error {
+	return execOne(ctx, t.Tx, `UPDATE eacp.role_grants SET revoked_at = now(), revoke_reason = $2 WHERE id = $1`,
+		grantID, reason)
+}
+
+// CreateGroup inserts a group with its scheduler claim quantum.
+func (t Tx) CreateGroup(ctx context.Context, name, displayName string, weight int) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := t.QueryRow(ctx, `INSERT INTO eacp.groups (tenant_id, name, display_name, schedule_weight)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3) RETURNING id`, name, displayName, weight).Scan(&id)
+	return id, err
+}
+
+// AddMember adds a principal to a group and returns the membership id.
+func (t Tx) AddMember(ctx context.Context, groupID, principalID uuid.UUID) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := t.QueryRow(ctx, `INSERT INTO eacp.group_memberships (tenant_id, group_id, principal_id)
+		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, groupID, principalID).Scan(&id)
+	return id, err
+}
+
+// RemoveMember closes a membership.
+func (t Tx) RemoveMember(ctx context.Context, membershipID uuid.UUID, reason string) error {
+	return execOne(ctx, t.Tx, `UPDATE eacp.group_memberships SET removed_at = now(), remove_reason = $2 WHERE id = $1`,
+		membershipID, reason)
 }

@@ -97,19 +97,10 @@ func scanPrice(r pgx.Row) (Price, error) {
 
 // AddPrice adds a rate-card entry (admin, journaled).
 func (s *Service) AddPrice(ctx context.Context, a registry.Actor, n NewPrice) (Price, error) {
-	for _, v := range []*string{&n.InputPerMTok, n.CachedPerMTok, &n.OutputPerMTok} {
-		if v != nil && !amountPattern.MatchString(*v) {
-			return Price{}, invalid("prices must be non-negative decimals below 10^15 with at most 6 decimals")
-		}
-	}
 	var p Price
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
 		var err error
-		p, err = scanPrice(tx.QueryRow(ctx, `INSERT INTO eacp.model_prices (tenant_id, provider, model, unit,
-			input_per_mtok, cached_input_per_mtok, output_per_mtok, effective_from, reason)
-			VALUES (eacp.current_tenant_id(), $1, $2, $3, $4::numeric, $5::numeric, $6::numeric, COALESCE($7, now()), $8)
-			RETURNING `+priceColumns,
-			n.Provider, n.Model, n.Unit, n.InputPerMTok, n.CachedPerMTok, n.OutputPerMTok, n.EffectiveFrom, n.Reason))
+		p, err = Tx{tx}.AddPrice(ctx, n)
 		return err
 	})
 	return p, err
@@ -348,16 +339,7 @@ type SoftLimit struct {
 // SetSoftLimit sets or clears (limit nil) an account's soft limit (admin,
 // journaled). It never blocks an action.
 func (s *Service) SetSoftLimit(ctx context.Context, a registry.Actor, account uuid.UUID, limit *string, reason string) (SoftLimit, error) {
-	if limit != nil && !amountPattern.MatchString(*limit) {
-		return SoftLimit{}, invalid("monthly_limit must be a positive decimal with at most 6 decimals")
-	}
-	err := s.change(ctx, a, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO eacp.budget_soft_limits (tenant_id, account_id, monthly_limit, reason)
-			VALUES (eacp.current_tenant_id(), $1, $2::numeric, $3)
-			ON CONFLICT (tenant_id, account_id) DO UPDATE SET monthly_limit = EXCLUDED.monthly_limit,
-			reason = EXCLUDED.reason`, account, limit, reason)
-		return err
-	})
+	err := s.change(ctx, a, func(tx pgx.Tx) error { return Tx{tx}.SetSoftLimit(ctx, account, limit, reason) })
 	if err != nil {
 		return SoftLimit{}, err
 	}
