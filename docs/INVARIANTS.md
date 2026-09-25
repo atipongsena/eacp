@@ -22,6 +22,8 @@ Phase 20 adds Governance-as-Code (ADR-026): bundles planned into change sets, tw
 
 Phase 21 extends it to identity, the tenant policy, budgets and prices (ADR-026 Rev 1.1). Every step writes through the domain Tx types, so the existing triggers decide it, and no change set leaves fewer than two admins. `internal/bundle/schema_phase21_test.go` checks the new kinds, the policy owner, the admin floor at commit and the digest rows in raw SQL; `plan_identity_test.go` and `plan_governance_test.go` check the ordered diff; `service_governance_test.go` checks two-admin application, the admin floor, staleness and drift.
 
+Phase 22a adds incidents and the Agent SOC read model (ADR-027). An incident observes and never decides. Its tests join invariant 17. `internal/incident/schema_test.go` also checks every guard in raw SQL (automatic incidents only from the `incident` system actor, manual ones by operators, the one-move lifecycle, two-person critical resolution, an insert-only timeline, tenant isolation). `evaluate_test.go` checks one incident per signal occurrence, operator containment opening nothing, and the affected snapshot agreeing with `registry.BlastRadius`.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -220,6 +222,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/finops` TestSoftLimitsAreAdminOnlyAndJournaled — soft limits, prices and billing imports are journaled with their actor and the row's reason
 - `internal/finops` TestAlertsAreRaisedByFinOpsAndAcknowledgedOnce — an alert's creation (the finops system actor) and its single acknowledgement are journaled
 - `internal/bundle` TestClosedChangeSetsAreTerminalAndRejectionNeedsAReason — every change-set move is journaled with its actor, a rejection with its reason
+- `internal/incident` TestTheIncidentLifecycle — every incident event (opened, acknowledged, resolved) is journaled with its actor and reason
 - `internal/bundle` TestApprovalIsASecondPersonAgainstTheSealedDigest — plan, submission and approval are journaled; the approver is a second person
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment

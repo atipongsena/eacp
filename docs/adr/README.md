@@ -20,6 +20,7 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 | [ADR-024](ADR-024-fleet-operations.md) | Fleet Operations over the Registry Lifecycle | Accepted (Rev 1.0) | Phase 17 |
 | [ADR-025](ADR-025-agent-finops.md) | Agent FinOps: Cost Ingest, Chargeback, Soft Budgets and Alerts | Accepted (Rev 1.0) | Phase 18 |
 | [ADR-026](ADR-026-governance-as-code.md) | Governance-as-Code: Bundles, Plans, Change Sets and Drift | Accepted (Rev 1.1) | Phases 20–21 |
+| [ADR-027](ADR-027-incidents-and-agent-soc.md) | Incidents and the Agent SOC Read Model | Accepted (Rev 1.0) | Phase 22a |
 | ADR-006 … ADR-021 (others, except 011, 012, 014, 015 and 016) | See MASTER_PLAN §74 | Not started | |
 
 ADR-007 to ADR-010 and ADR-013 must conform to ADR-004.

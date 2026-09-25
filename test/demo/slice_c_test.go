@@ -73,10 +73,13 @@ func TestSliceCDemo(t *testing.T) {
 	d.step("C6. Trace and audit evidence")
 	d.incidentEvidence(before, held)
 
-	d.step("C7. Governance-as-Code: registry (erin, rita), people and budgets (alice, bob), drift")
+	d.step("C7. Incidents: the SOC shows the drift and the kill; otto acknowledges, opal resolves")
+	d.incidents(version)
+
+	d.step("C8. Governance-as-Code: registry (erin, rita), people and budgets (alice, bob), drift")
 	d.governanceAsCode()
 
-	d.step("C8. Scan responses, logs and the database for the ERP and MCP credentials")
+	d.step("C9. Scan responses, logs and the database for the ERP and MCP credentials")
 	d.secretScan()
 
 	d.step("Slice C demo complete")
@@ -380,4 +383,51 @@ func (d *demo) governanceAsCode() {
 	applied = d.must(200, "bob", "POST", "/v1/change-sets/"+id+"/approve", nil)
 	d.logf("people bundle: alice granted dana auditor and funded ledger (500 USD, soft 400); bob approved: %s",
 		applied["state"])
+}
+
+// incidents shows the SOC's view of the drift and the kill (ADR-027). The
+// evaluator opened both, with po-assistant in the drift's blast radius.
+// otto acknowledges the critical drift incident and links his kill; he
+// cannot resolve it himself (two-person), so opal does.
+func (d *demo) incidents(version string) {
+	d.t.Helper()
+	var drift, killed map[string]any
+	deadline := time.Now().Add(90 * time.Second)
+	for drift == nil || killed == nil {
+		if time.Now().After(deadline) {
+			d.t.Fatalf("the evaluator opened no drift and kill incidents")
+		}
+		time.Sleep(2 * time.Second)
+		list := d.must(200, "otto", "GET", "/v1/incidents?state=OPEN", nil)
+		for _, x := range list["incidents"].([]any) {
+			switch i := x.(map[string]any); i["kind"] {
+			case "mcp_drift":
+				drift = i
+			case "kill":
+				killed = i
+			}
+		}
+	}
+	confirmed := drift["affected"].(map[string]any)["confirmed"].([]any)
+	if drift["severity"] != "critical" ||
+		!slices.ContainsFunc(confirmed, func(x any) bool { return x.(map[string]any)["version_id"] == version }) {
+		d.t.Fatalf("drift incident = %v", drift)
+	}
+	d.logf("incident %.8s [%v] %v: %d confirmed affected version(s)", drift["id"], drift["severity"], drift["title"],
+		len(confirmed))
+	d.logf("incident %.8s [%v] %v", killed["id"], killed["severity"], killed["title"])
+	id := drift["id"].(string)
+	d.must(200, "otto", "POST", "/v1/incidents/"+id+"/acknowledge", map[string]any{"reason": "po-assistant contained"})
+	d.must(201, "otto", "POST", "/v1/incidents/"+id+"/links", map[string]any{"kind": "kill_state", "id": killed["subject_id"]})
+	resolve := map[string]any{"resolution": "contained", "reason": "po-assistant killed; get_po stays quarantined"}
+	if res := d.must(403, "otto", "POST", "/v1/incidents/"+id+"/resolve", resolve); res["error"] == nil {
+		d.t.Fatalf("otto resolved his own critical incident: %v", res)
+	}
+	done := d.must(200, "opal", "POST", "/v1/incidents/"+id+"/resolve", resolve)
+	d.logf("otto acknowledged and linked the kill, could not resolve it himself; opal resolved it: %v (%d events)",
+		done["state"], len(done["events"].([]any)))
+	sum := d.must(200, "audra", "GET", "/v1/soc/summary", nil)
+	sec := sum["security"].(map[string]any)
+	d.logf("SOC: open incidents %v, quarantined tools %v, active kills %v, queued actions %v",
+		sec["open_incidents"], sec["quarantined_tools"], sec["active_kills"], sum["execution"].(map[string]any)["queued"])
 }

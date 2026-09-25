@@ -21,6 +21,7 @@ import (
 	"eacp/internal/finops"
 	"eacp/internal/fleet"
 	"eacp/internal/identity"
+	"eacp/internal/incident"
 	"eacp/internal/messaging"
 	"eacp/internal/registry"
 	"eacp/internal/release"
@@ -209,6 +210,17 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	if cs, err := gac.Approve(ctx, registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["rita"]}, cs.ID); err != nil ||
 		cs.State != "APPLIED" {
 		t.Fatalf("bundle approve = %+v, %v", cs, err)
+	}
+
+	// Phase 22a: a manual incident with a note (ADR-027).
+	inc := incident.New(v.f.App)
+	otto := registry.Actor{TenantID: v.f.Tenant, PrincipalID: v.f.P["otto"]}
+	triage, err := inc.Open(ctx, otto, incident.NewIncident{Title: "odd purchases", Severity: "medium", Reason: "triage"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inc.Note(ctx, otto, triage.ID, "looking into it"); err != nil {
+		t.Fatal(err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member
