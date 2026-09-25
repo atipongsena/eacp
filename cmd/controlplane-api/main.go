@@ -11,6 +11,7 @@
 // EACP_NATS_URL set, relays it to NATS JetStream as work hints and dashboard
 // events (ADR-014); NATS is never an authority or a readiness dependency.
 // It runs the FinOps alert evaluator every EACP_FINOPS_INTERVAL (ADR-025).
+// It serves the operator console at /ui/ unless EACP_UI=off (ADR-028).
 package main
 
 import (
@@ -29,6 +30,7 @@ import (
 	"eacp/internal/messaging"
 	"eacp/internal/release"
 	"eacp/internal/service"
+	"eacp/internal/ui"
 )
 
 // relayInterval is the idle wait between outbox relay passes.
@@ -51,6 +53,7 @@ func main() {
 			releases := release.New(d.DB, release.Options{Provider: provider, Log: d.Log,
 				EvaluationTimeout: d.Config.PDPTimeout})
 			api.New(d.DB, d.Log).WithActions(engine).WithReleases(releases).Register(mux)
+			mountUI(d.Config, mux)
 			sweeper := action.NewSweeper(engine)
 			sweeper.ReconcileMaxAge = d.Config.ReconcileMaxAge
 			d.Background(func(ctx context.Context) { sweeper.Run(ctx, d.Config.SweepInterval) })
@@ -60,6 +63,14 @@ func main() {
 			d.Background(func(ctx context.Context) { incident.New(d.DB).Run(ctx, d.Config.IncidentInterval, d.Log) })
 			return startRelay(d)
 		})
+}
+
+// mountUI serves the operator console unless EACP_UI=off (ADR-028). The
+// console is static files calling the same API; it adds no authority.
+func mountUI(cfg config.Config, mux *http.ServeMux) {
+	if cfg.UI {
+		ui.Register(mux)
+	}
 }
 
 // startRelay runs the outbox relay when EACP_NATS_URL is set. An
