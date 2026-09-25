@@ -236,3 +236,45 @@ func TestABundleNeverRedirectsTheAPIKey(t *testing.T) {
 		t.Fatalf("agreeing api: %v, %d requests", err, other)
 	}
 }
+
+func TestBundleGovernanceSectionsAndPolicyFile(t *testing.T) {
+	const yml = `bundle:
+  name: people
+resources:
+  principals:
+    dana: {kind: human, subject: dana@example.com, display_name: Dana, roles: [auditor]}
+  policy: {file: policies/tenant.json}
+  budgets:
+    ops: {unit: USD, hard_limit: 50}
+`
+	const policy = `{"format_version": 1, "rules": [{"id": "all", "verdict": "allow", "reason": "permitted"}]}`
+	dir := writeBundle(t, map[string]string{"eacp.yml": yml, "policies/tenant.json": policy,
+		"resources/more.yml": "resources:\n  groups:\n    ops: {display_name: Ops, members: [dana]}\n" +
+			"  prices:\n    gpt: {provider: openai, model: gpt-4.1, unit: USD, input_per_mtok: 2.5, output_per_mtok: 10}\n"})
+	b, err := loadBundle(dir, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"principals", "groups", "budgets", "prices"} {
+		if _, ok := b.desired[k]; !ok {
+			t.Fatalf("no %s in %v", k, b.desired)
+		}
+	}
+	pol, _ := b.desired["policy"].(map[string]any)
+	content, _ := pol["content"].(map[string]any)
+	if content["format_version"] != json.Number("1") {
+		t.Fatalf("policy = %v", b.desired["policy"])
+	}
+	for name, file := range map[string]string{"outside": "../tenant.json",
+		"absolute": filepath.Join(dir, "policies", "tenant.json")} {
+		bad := writeBundle(t, map[string]string{"eacp.yml": strings.Replace(yml, "policies/tenant.json", file, 1)})
+		if _, err := loadBundle(bad, "", nil); err == nil || !strings.Contains(err.Error(), "policy") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	twice := writeBundle(t, map[string]string{"eacp.yml": yml, "policies/tenant.json": policy,
+		"resources/p.yml": "resources:\n  policy: {file: policies/tenant.json}\n"})
+	if _, err := loadBundle(twice, "", nil); err == nil || !strings.Contains(err.Error(), "twice") {
+		t.Fatalf("a policy declared twice: %v", err)
+	}
+}

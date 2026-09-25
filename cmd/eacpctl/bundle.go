@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,8 +54,30 @@ type bundleVariable struct {
 }
 
 type bundleResources struct {
+	Principals map[string]any `yaml:"principals"`
+	Groups     map[string]any `yaml:"groups"`
 	Connectors map[string]any `yaml:"connectors"`
 	Agents     map[string]any `yaml:"agents"`
+	Budgets    map[string]any `yaml:"budgets"`
+	Prices     map[string]any `yaml:"prices"`
+	Policy     *bundlePolicy  `yaml:"policy"`
+}
+
+// bundlePolicy names the tenant policy's JSON file, relative to the bundle
+// directory.
+type bundlePolicy struct {
+	File string `yaml:"file"`
+}
+
+type section struct {
+	key string
+	m   *map[string]any
+}
+
+// sections are the mergeable resources: blocks, by their document key.
+func (r *bundleResources) sections() []section {
+	return []section{{"principals", &r.Principals}, {"groups", &r.Groups}, {"connectors", &r.Connectors},
+		{"agents", &r.Agents}, {"budgets", &r.Budgets}, {"prices", &r.Prices}}
 }
 
 type bundleImport struct {
@@ -102,20 +125,30 @@ func loadBundle(dir, targetName string, vars map[string]string) (loadedBundle, e
 	if cfg.Bundle.Name == "" {
 		return loadedBundle{}, errors.New("eacp.yml: bundle.name is required")
 	}
-	res := bundleResources{Connectors: map[string]any{}, Agents: map[string]any{}}
-	merge := func(dst, src map[string]any, kind, file string) error {
-		for k, v := range src {
-			if _, dup := dst[k]; dup {
-				return fmt.Errorf("%s: %s %q is declared twice", file, kind, k)
+	var res bundleResources
+	var policy *bundlePolicy
+	merge := func(src *bundleResources, file string) error {
+		dst := res.sections()
+		for i, s := range src.sections() {
+			if *dst[i].m == nil {
+				*dst[i].m = map[string]any{}
 			}
-			dst[k] = v
+			for k, v := range *s.m {
+				if _, dup := (*dst[i].m)[k]; dup {
+					return fmt.Errorf("%s: %s %q is declared twice", file, strings.TrimSuffix(s.key, "s"), k)
+				}
+				(*dst[i].m)[k] = v
+			}
+		}
+		if src.Policy != nil {
+			if policy != nil {
+				return fmt.Errorf("%s: the policy is declared twice", file)
+			}
+			policy = src.Policy
 		}
 		return nil
 	}
-	if err := merge(res.Connectors, cfg.Resources.Connectors, "connector", "eacp.yml"); err != nil {
-		return loadedBundle{}, err
-	}
-	if err := merge(res.Agents, cfg.Resources.Agents, "agent", "eacp.yml"); err != nil {
+	if err := merge(&cfg.Resources, "eacp.yml"); err != nil {
 		return loadedBundle{}, err
 	}
 	files, err := filepath.Glob(filepath.Join(dir, "resources", "*.yml"))
@@ -130,10 +163,7 @@ func loadBundle(dir, targetName string, vars map[string]string) (loadedBundle, e
 		if err := decodeYAMLFile(f, &rf); err != nil {
 			return loadedBundle{}, err
 		}
-		if err := merge(res.Connectors, rf.Resources.Connectors, "connector", f); err != nil {
-			return loadedBundle{}, err
-		}
-		if err := merge(res.Agents, rf.Resources.Agents, "agent", f); err != nil {
+		if err := merge(&rf.Resources, f); err != nil {
 			return loadedBundle{}, err
 		}
 	}
@@ -173,11 +203,17 @@ func loadBundle(dir, targetName string, vars map[string]string) (loadedBundle, e
 	}
 
 	desired := map[string]any{}
-	if len(res.Connectors) > 0 {
-		desired["connectors"] = res.Connectors
+	for _, s := range res.sections() {
+		if len(*s.m) > 0 {
+			desired[s.key] = *s.m
+		}
 	}
-	if len(res.Agents) > 0 {
-		desired["agents"] = res.Agents
+	if policy != nil {
+		content, err := readPolicy(dir, policy.File)
+		if err != nil {
+			return b, err
+		}
+		desired["policy"] = map[string]any{"content": content}
 	}
 	if len(cfg.Import) > 0 {
 		imports := make([]any, 0, len(cfg.Import))
@@ -192,6 +228,37 @@ func loadBundle(dir, targetName string, vars map[string]string) (loadedBundle, e
 	}
 	b.desired = resolved.(map[string]any)
 	return b, nil
+}
+
+// readPolicy reads the policy file as JSON with its numbers intact. The file
+// stays inside the bundle directory and under 1 MiB.
+func readPolicy(dir, file string) (any, error) {
+	if file == "" || filepath.IsAbs(file) {
+		return nil, fmt.Errorf("policy.file %q: give a path relative to the bundle directory", file)
+	}
+	path := filepath.Join(dir, file)
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("policy.file %q: stays inside the bundle directory", file)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("policy.file: %v", err)
+	}
+	if info.Size() > 1<<20 {
+		return nil, fmt.Errorf("policy.file %q: over 1 MiB", file)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("policy.file: %v", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, fmt.Errorf("policy.file %q: %v", file, err)
+	}
+	return v, nil
 }
 
 func substitute(v any, values map[string]string) (any, error) {

@@ -135,3 +135,27 @@ func TestChangeSetsOfOtherTenantsAreNotFound(t *testing.T) {
 		t.Fatalf("tenant B lists %v", cs)
 	}
 }
+
+func TestAnIdentityBundleThroughTheAPI(t *testing.T) {
+	h := newHarness(t)
+	doc := `{"principals": {"dana": {"kind": "human", "subject": "dana@example.com", "display_name": "Dana",
+	  "roles": ["auditor"]}},
+	 "budgets": {"ops": {"unit": "USD", "hard_limit": 50}}}`
+	code, body := h.as("alice", "POST", "/v1/change-sets", map[string]any{"bundle": "people", "desired": json.RawMessage(doc)})
+	h.want(201, code, body)
+	id, _ := body["id"].(string)
+	code, body = h.as("alice", "POST", "/v1/change-sets/"+id+"/submit", nil)
+	h.want(200, code, body)
+	code, body = h.as("alice", "POST", "/v1/change-sets/"+id+"/approve", nil)
+	h.want(403, code, body)
+	code, body = h.as("bob", "POST", "/v1/change-sets/"+id+"/approve", nil)
+	h.want(200, code, body)
+	if body["state"] != "APPLIED" {
+		t.Fatalf("approve = %v", body)
+	}
+	code, body = h.as("audra", "GET", "/v1/bundles/people/drift", nil)
+	h.want(200, code, body)
+	if entries, _ := body["entries"].([]any); len(entries) != 2 {
+		t.Fatalf("drift = %v", body)
+	}
+}
