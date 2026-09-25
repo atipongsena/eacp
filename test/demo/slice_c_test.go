@@ -73,7 +73,7 @@ func TestSliceCDemo(t *testing.T) {
 	d.step("C6. Trace and audit evidence")
 	d.incidentEvidence(before, held)
 
-	d.step("C7. Governance-as-Code: plan a bundle, submit (erin), approve (rita), check drift")
+	d.step("C7. Governance-as-Code: registry (erin, rita), people and budgets (alice, bob), drift")
 	d.governanceAsCode()
 
 	d.step("C8. Scan responses, logs and the database for the ERP and MCP credentials")
@@ -340,7 +340,8 @@ func (d *demo) incidentEvidence(before, held string) {
 
 // governanceAsCode declares a ledger connector and a ledger agent as a
 // bundle (ADR-026): a plan writes nothing, erin submits, rita approves, a
-// replan is empty, and drift is in sync until an operator pauses the agent.
+// replan is empty and drift is in sync. Then an admin declares a principal
+// with a role and a funded budget, and a second admin approves them.
 func (d *demo) governanceAsCode() {
 	desired := json.RawMessage(`{
 	 "connectors": {"ledger": {"protocol": "http", "endpoint": "http://fakeerp:8090", "secret_ref": "erp",
@@ -366,4 +367,17 @@ func (d *demo) governanceAsCode() {
 	}
 	drift := d.must(200, "audra", "GET", "/v1/bundles/ledger/drift", nil)
 	d.logf("replan: no changes; drift: %d addresses in sync", len(drift["entries"].([]any)))
+	// Phase 21: people and money as code. An admin plans and submits; a
+	// second admin approves the grant and the budget increase.
+	people := json.RawMessage(`{
+	 "principals": {"dana": {"kind": "human", "subject": "dana@globex.example", "display_name": "Dana",
+	   "roles": ["auditor"]}},
+	 "budgets": {"ledger": {"unit": "USD", "hard_limit": 500, "soft_limit": 400}}}`)
+	plan = d.must(201, "alice", "POST", "/v1/change-sets", map[string]any{"bundle": "people", "desired": people})
+	id = plan["id"].(string)
+	d.must(200, "alice", "POST", "/v1/change-sets/"+id+"/submit", nil)
+	d.must(403, "alice", "POST", "/v1/change-sets/"+id+"/approve", nil)
+	applied = d.must(200, "bob", "POST", "/v1/change-sets/"+id+"/approve", nil)
+	d.logf("people bundle: alice granted dana auditor and funded ledger (500 USD, soft 400); bob approved: %s",
+		applied["state"])
 }

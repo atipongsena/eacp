@@ -1,6 +1,6 @@
 # ADR-026 — Governance-as-Code: Bundles, Plans, Change Sets and Drift
 
-Status: Accepted (Rev 1.0) · Phase 20 · Date: 2026-09-25
+Status: Accepted (Rev 1.1) · Phases 20–21 · Date: 2026-09-25
 
 ## Context
 
@@ -66,4 +66,38 @@ write (ADR-003 §8), and two-person rules stay two-person.
 | Proposals of a rejected submission | They stay pending and inert; activating one still needs a second person. |
 | Scope of the digest | The plan's refs and the bundle's managed objects, not the whole tenant. |
 | Credentials in bundles | Excluded: they expire within 90 days and use bring-your-own-key hashes. |
-| Principals, roles, policies and budgets | Phase 21, on the same engine. |
+| Principals, roles, policies and budgets | Phase 21, on the same engine (Revision 1.1). |
+| A limit change or grant left open outside the bundle | It blocks the plan (`pending`); a person decides it through the API. A bundle never approves someone else's proposal. |
+| Fewer than two admins | Never: the planner blocks it and `change_sets_commit` refuses the stage (HINT `admin_floor`). |
+
+## Revision 1.1 (Phase 21): identity, policy, budgets and prices
+
+A bundle may also declare `principals` (kind, subject, display name, roles), `groups` (display name,
+schedule weight, members), the tenant `policy` (a local policy bundle), `budgets` (unit, parent, agent,
+hard limit, soft limit) and `prices` (provider, model, unit and rates, keyed by a slug name because model
+names contain dots). Their addresses are `principal.x`, `role.x.r`, `group.x`, `member.g.p`,
+`policy.tenant`, `budget.x` and `price.x`; the address prefix is the ref kind the seal records.
+
+- **Steps through the domain Tx types.** Every step writes through `registry.Tx`, `governance.Tx`,
+  `budget.Tx` or `finops.Tx`, the same code the API services use, so the existing triggers decide it:
+  every identity, policy, budget and price write needs an admin. A grant is proposed by the submitter and
+  approved by the approver, who must be an admin other than the grantee. A policy version is created at
+  submit and activated at approval. A limit decrease applies at submit and an increase is proposed at
+  submit and applied at approval (parents first, so escrow holds). A soft limit is set at submit. A price
+  is added, effective when the stage commits; it is never removed or backdated.
+- **Order.** Submit: principals then their role proposals, groups then members, Phase 20 objects, the
+  policy version, account creations (parents first), decreases (children first), increase proposals, soft
+  limits, prices. Approval: role activations, Phase 20 activations, the policy activation, limit increases,
+  Phase 20 prunes, then identity prunes.
+- **Ownership.** A bundle manages the grants of the principals it manages and the memberships of the
+  groups it manages. One bundle owns the tenant policy (`bundle_resources_one_policy`). A declared owner,
+  member, parent account or budget agent may be created by the same change set (`Other`/`OtherID`).
+- **Prune** revokes undeclared grants and removes undeclared memberships only; it never disables or
+  enables a principal, clears a soft limit or removes a price.
+- **Admin floor.** A plan that revokes an admin grant must leave at least two approved admins on enabled
+  human principals; `change_sets_commit` checks the same at the stage's commit, so a concurrent API
+  revoke cannot break it.
+- **Digest.** Principal refs cover live grants, group refs live memberships, budget refs the limits, soft
+  limit and open proposal, never the counters that move with every action. The policy ref of a tenant
+  without a policy is the tenant's pointer, so any activation makes the plan stale. Amounts and policies
+  are compared by value (numeric and canonical JSON), so reformatting plans nothing.

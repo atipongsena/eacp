@@ -3683,6 +3683,11 @@ Rollback
 
 # 93b. Phase 21 — Governance-as-Code: identity, policy and budgets (Later)
 
+> **Status (2026-09-25): delivered.** Bundles declare principals, roles, groups and members, the tenant
+> policy, budget accounts with hard and soft limits, and model prices (ADR-026 Rev 1.1). Every step
+> writes through the same Tx types as the API, so the existing two-admin triggers decide it; prune never
+> leaves fewer than two admins, and budget counters never make a plan stale.
+
 Principals, groups, memberships and role grants; governance policy versions; budget accounts and limit changes (raising stays two-person); FinOps soft limits and forward-only prices. They use the Phase 20 engine.
 
 ---

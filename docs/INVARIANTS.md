@@ -20,6 +20,8 @@ Phase 18 (Slice C) adds Agent FinOps (ADR-025): LLM usage ingest over OTLP/HTTP 
 
 Phase 20 adds Governance-as-Code (ADR-026): bundles planned into change sets, two-person submit and approve through the registry triggers, and read-only drift. It grants nothing a registry write through the API could not. Its tests join invariants 8 and 17. `internal/bundle/schema_test.go` also checks every change-set rule in raw SQL; `internal/bundle/plan_test.go` checks the ordered diff, releases, containment, imports and prune; `internal/bundle/service_test.go` checks staleness, atomic stages and drift.
 
+Phase 21 extends it to identity, the tenant policy, budgets and prices (ADR-026 Rev 1.1). Every step writes through the domain Tx types, so the existing triggers decide it, and no change set leaves fewer than two admins. `internal/bundle/schema_phase21_test.go` checks the new kinds, the policy owner, the admin floor at commit and the digest rows in raw SQL; `plan_identity_test.go` and `plan_governance_test.go` check the ordered diff; `service_governance_test.go` checks two-admin application, the admin floor, staleness and drift.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -58,6 +60,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/budget` TestSettlementNeverWaitsForTheAccount — settling touches only the reservation, never the account row
 - `internal/budget` TestALeafReservationDoesNotWaitForItsParent — a reservation locks only its leaf
 - `internal/action` TestSettlementFollowsTheOutcome — success commits, no effect releases, an unknown outcome holds until a human resolves it
+- `internal/bundle` TestABudgetIsCreatedAndRaisedInOneChangeSet — a bundle's limit increase is proposed by one admin, escrowed from its parent and applied by a second
 - `internal/action` TestAnExpiredReleaseGivesItsBudgetBack — the reservation TTL: expiry at `not_after` releases it
 - `internal/action` TestABudgetDenialNeverSpendsTheApproval — the budget is checked before the grant is consumed
 - `internal/action` TestBudgetFailuresDenyClosed — no account or an invalid cost denies
@@ -208,6 +211,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestEvidenceReconstructsTheWholeActionFromItsID — tampering is reported by the evidence chain
 - `internal/budget` TestRaisingALimitIsTwoPersonAndLoweringIsNot — every limit proposal, application and rejection is journaled
 - `internal/action` TestSettlementFollowsTheOutcome — a reservation and its settlement are journaled with their actors
+- `internal/bundle` TestAnIdentityBundleIsAppliedByTwoAdmins — a bundle's grant is proposed by the submitter and approved by a second admin; the change set's moves are journaled
 - `internal/worker` TestCircuitChangesAreGuardedAndJournaled — every circuit trip, disable and enable is journaled with its actor and reason
 - `internal/registry` TestScanActivityIsJournaled — every scan, recorded definition, rescan request and quarantine is journaled with its actor and reason
 - `internal/registry` TestDependencyWritesAreGuardedAndTenantScoped — dependency evidence insertion and revocation are journaled with the editor actor
