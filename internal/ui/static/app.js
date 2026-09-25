@@ -12,6 +12,8 @@ import * as execution from './views/execution.js';
 import * as dependencies from './views/dependencies.js';
 import * as cost from './views/cost.js';
 import * as security from './views/security.js';
+import * as fleet from './views/fleet.js';
+import * as approvals from './views/approvals.js';
 
 const READERS = ['operator', 'auditor', 'admin'];
 // NAV lists the areas that have a view: [area, label, roles that may read it].
@@ -20,12 +22,14 @@ const NAV = [
   ['overview', 'Overview', READERS],
   ['incidents', 'Incidents', READERS],
   ['security', 'Security', ['operator', 'auditor', 'registry_approver']],
-  ['inventory', 'Inventory', null],
+  ['fleet', 'Fleet', ['operator', 'auditor', 'registry_approver']],
+  ['approvals', 'Approvals', ['approver']],
   ['execution', 'Execution', ['operator', 'auditor']],
+  ['inventory', 'Inventory', null],
   ['dependencies', 'Dependencies', ['operator', 'auditor']],
   ['cost', 'Cost', READERS],
 ];
-const VIEWS = {overview, incidents, security, inventory, execution, dependencies, cost};
+const VIEWS = {overview, incidents, security, fleet, approvals, execution, inventory, dependencies, cost};
 const POLLED = new Set(['overview', 'incidents']);
 const POLL_MS = 15000;
 const IDLE_CHECK_MS = 30000;
