@@ -133,3 +133,180 @@ func TestReplanningSupersedesAPlannedChangeSet(t *testing.T) {
 		t.Fatalf("carol planned: %v", err)
 	}
 }
+
+// apply plans ledgerDoc as erin, submits it as erin and approves it as rita.
+func apply(t *testing.T, f *registrytest.Fixture, s *bundle.Service, doc string) bundle.ChangeSet {
+	t.Helper()
+	ctx := context.Background()
+	p, err := s.Plan(ctx, as(f, "erin"), req(doc))
+	ok(t, err)
+	_, err = s.Submit(ctx, as(f, "erin"), p.ID)
+	ok(t, err)
+	cs, err := s.Approve(ctx, as(f, "rita"), p.ID)
+	ok(t, err)
+	return cs
+}
+
+func TestSubmitAndApproveApplyTheBundle(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	p, err := s.Plan(ctx, as(f, "erin"), req(ledgerDoc))
+	ok(t, err)
+	sub, err := s.Submit(ctx, as(f, "erin"), p.ID)
+	ok(t, err)
+	if sub.State != "SUBMITTED" || len(sub.SealedDigest) != 64 || *sub.SubmittedBy != f.P["erin"] {
+		t.Fatalf("submitted = %+v", sub)
+	}
+	if n := count(t, f, `SELECT count(*) FROM eacp.agent_versions v JOIN eacp.agents a ON a.id = v.agent_id
+		WHERE a.name = 'ledger-bot' AND v.state = 'REGISTERED' AND v.active_allowlist_id IS NULL`); n != 1 {
+		t.Fatalf("after submit: %d registered versions without an allowlist", n)
+	}
+	_, err = s.Submit(ctx, as(f, "erin"), p.ID)
+	if !errors.Is(err, registry.ErrConflict) {
+		t.Fatalf("second submit: %v", err)
+	}
+
+	cs, err := s.Approve(ctx, as(f, "rita"), p.ID)
+	ok(t, err)
+	if cs.State != "APPLIED" || *cs.ApprovedBy != f.P["rita"] {
+		t.Fatalf("applied = %+v", cs)
+	}
+	for _, st := range cs.Steps {
+		if st.ObjectID == nil {
+			t.Fatalf("step %d did not run", st.Ordinal)
+		}
+	}
+	if n := count(t, f, `SELECT count(*) FROM eacp.agent_versions v JOIN eacp.agents a ON a.id = v.agent_id
+		WHERE a.name = 'ledger-bot' AND v.state = 'ACTIVE' AND v.active_allowlist_id IS NOT NULL`); n != 1 {
+		t.Fatal("the version is not ACTIVE with an allowlist")
+	}
+	if n := count(t, f, `SELECT count(*) FROM eacp.bundle_resources`); n != 4 {
+		t.Fatalf("managed objects = %d, want connector, tool, agent and version", n)
+	}
+	_, err = s.Approve(ctx, as(f, "ravi"), p.ID)
+	if !errors.Is(err, registry.ErrConflict) {
+		t.Fatalf("second approve: %v", err)
+	}
+	again, err := s.Plan(ctx, as(f, "erin"), req(ledgerDoc))
+	ok(t, err)
+	if again.ID != uuid.Nil || len(again.Steps) != 0 {
+		t.Fatalf("replan after apply = %+v", again)
+	}
+}
+
+// grant gives name an approved role, as the schema owner (bootstrap path).
+func grant(t *testing.T, f *registrytest.Fixture, name, role string) {
+	t.Helper()
+	ok(t, storage.InTenantTx(context.Background(), f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `INSERT INTO eacp.role_grants (tenant_id, principal_id, role, approved_at)
+			VALUES (eacp.current_tenant_id(), $1, $2, now())`, f.P[name], role)
+		return err
+	}))
+}
+
+func TestTheSubmitterCannotApprove(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	grant(t, f, "rita", "registry_editor") // an approver who also writes the registry
+	p, err := s.Plan(ctx, as(f, "rita"), req(ledgerDoc))
+	ok(t, err)
+	_, err = s.Submit(ctx, as(f, "rita"), p.ID)
+	ok(t, err)
+	_, err = s.Approve(ctx, as(f, "rita"), p.ID)
+	wantCode(t, err, bundle.CodeSamePrincipal)
+	_, err = s.Approve(ctx, as(f, "erin"), p.ID) // an editor is not an approver
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("editor approve: %v", err)
+	}
+	_, err = s.Approve(ctx, as(f, "ravi"), p.ID)
+	ok(t, err)
+}
+
+func TestAStaleChangeSetRunsNothing(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	p, err := s.Plan(ctx, as(f, "erin"), req(ledgerDoc))
+	ok(t, err)
+	ok(t, f.Exec("alice", `UPDATE eacp.principals SET disabled_at = now(), disable_reason = 'left'
+		WHERE name = 'carol'`))
+	_, err = s.Submit(ctx, as(f, "erin"), p.ID)
+	wantCode(t, err, bundle.CodeStale)
+	if n := count(t, f, `SELECT count(*) FROM eacp.connectors WHERE name = 'ledger'`); n != 0 {
+		t.Fatal("a stale change set created the connector")
+	}
+
+	// Stale at approval: an operator quarantines the new version meanwhile.
+	f2, s2 := setup(t)
+	p, err = s2.Plan(ctx, as(f2, "erin"), req(ledgerDoc))
+	ok(t, err)
+	_, err = s2.Submit(ctx, as(f2, "erin"), p.ID)
+	ok(t, err)
+	ok(t, f2.Exec("otto", `UPDATE eacp.agent_versions SET state = 'QUARANTINED', state_reason = 'incident'`))
+	_, err = s2.Approve(ctx, as(f2, "rita"), p.ID)
+	wantCode(t, err, bundle.CodeStale)
+}
+
+func TestAFailingStepRollsBackTheStage(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	// Native idempotency without a key field: the contract CHECK refuses it.
+	doc := strings.Replace(ledgerDoc, `"idempotency_mode": "none"`, `"idempotency_mode": "native"`, 1)
+	p, err := s.Plan(ctx, as(f, "erin"), req(doc))
+	ok(t, err)
+	_, err = s.Submit(ctx, as(f, "erin"), p.ID)
+	be := wantCode(t, err, bundle.CodeStepFailed)
+	if be.Address != "contract.ledger.post_entry" || !errors.Is(err, registry.ErrInvalid) {
+		t.Fatalf("step failure = %+v", be)
+	}
+	if n := count(t, f, `SELECT count(*) FROM eacp.connectors WHERE name = 'ledger'`); n != 0 {
+		t.Fatal("the stage was not rolled back")
+	}
+	got, err := s.Get(ctx, as(f, "erin"), p.ID)
+	ok(t, err)
+	if got.State != "PLANNED" {
+		t.Fatalf("state after a failed submit = %s", got.State)
+	}
+}
+
+func TestRejectAndTheOpenChangeSetLock(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	p, err := s.Plan(ctx, as(f, "erin"), req(ledgerDoc))
+	ok(t, err)
+	_, err = s.Submit(ctx, as(f, "erin"), p.ID)
+	ok(t, err)
+	_, err = s.Plan(ctx, as(f, "erin"), req(ledgerDoc))
+	wantCode(t, err, bundle.CodeOpen)
+	_, err = s.Reject(ctx, as(f, "rita"), p.ID, " ")
+	if !errors.Is(err, registry.ErrInvalid) {
+		t.Fatalf("reject without reason: %v", err)
+	}
+	cs, err := s.Reject(ctx, as(f, "rita"), p.ID, "wrong owner")
+	ok(t, err)
+	if cs.State != "REJECTED" || cs.CloseReason != "wrong owner" {
+		t.Fatalf("rejected = %+v", cs)
+	}
+	// The proposals stay inert; a new plan starts from what the submit created.
+	next, err := s.Plan(ctx, as(f, "erin"), req(ledgerDoc))
+	ok(t, err)
+	if next.ID == uuid.Nil {
+		t.Fatal("no plan after rejection")
+	}
+}
+
+func TestAnObjectBelongsToOneBundle(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	apply(t, f, s, ledgerDoc)
+	var conn uuid.UUID
+	ok(t, storage.InTenantTx(ctx, f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT id FROM eacp.connectors WHERE name = 'ledger'`).Scan(&conn)
+	}))
+	other := `{"connectors": {"ledger": {"protocol": "http", "endpoint": "http://fakeerp:8090", "secret_ref": "ledger"}},
+		"imports": [{"to": "connector.ledger", "id": "` + conn.String() + `"}]}`
+	_, err := s.Plan(ctx, as(f, "erin"), bundle.Request{Bundle: "finance", Desired: json.RawMessage(other)})
+	be := wantCode(t, err, bundle.CodePlanBlocked)
+	if be.Findings[0].Kind != bundle.KindUnmanaged || !strings.Contains(be.Findings[0].Detail, "ledger") {
+		t.Fatalf("findings = %+v", be.Findings)
+	}
+}
