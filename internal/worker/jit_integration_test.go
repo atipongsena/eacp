@@ -3,6 +3,8 @@ package worker_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -66,11 +68,17 @@ func newJIT(t *testing.T, ttl time.Duration, timeoutMS int) *jitEnv {
 // oauth2 client fields (everything but token_url) chosen by the test.
 func newJITWith(t *testing.T, erp fakeerp.Options, client string, timeoutMS int) *jitEnv {
 	t.Helper()
+	return newJITFor(t, func(string) fakeerp.Options { return erp }, func(string) string { return client }, timeoutMS)
+}
+
+// newJITFor is newJITWith for options that name the token endpoint's URL
+// (a private_key_jwt audience): both are built from it.
+func newJITFor(t *testing.T, erpFor func(tokenURL string) fakeerp.Options, clientFor func(tokenURL string) string,
+	timeoutMS int) *jitEnv {
+	t.Helper()
 	v := &jitEnv{t: t, clock: &clock{t: time.Now()}, logs: &bytes.Buffer{}, logMu: &sync.Mutex{}}
-	h, err := fakeerp.NewWithOptions(jitStatic, filepath.Join(t.TempDir(), "erp.log"), erp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	var handler atomic.Value // the Fake ERP, built once the server's URL is known
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.Load().(http.Handler).ServeHTTP(w, r) })
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/execute" && v.refuse.Load() {
 			w.Header().Set("Content-Type", "application/json")
@@ -103,6 +111,12 @@ func newJITWith(t *testing.T, erp fakeerp.Options, client string, timeoutMS int)
 		_, _ = w.Write(rec.Body.Bytes())
 	}))
 	t.Cleanup(v.srv.Close)
+	tokenURL := v.srv.URL + "/oauth/token"
+	erp, err := fakeerp.NewWithOptions(jitStatic, filepath.Join(t.TempDir(), "erp.log"), erpFor(tokenURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.Store(erp)
 	u, _ := url.Parse(v.srv.URL)
 	v.f = registrytest.New(t)
 	connID := v.f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
@@ -128,7 +142,7 @@ func newJITWith(t *testing.T, erp fakeerp.Options, client string, timeoutMS int)
 	logger := logging.NewWithSet(syncWriter{v.logs, v.logMu}, slog.LevelDebug, "json", set)
 	v.logger = logger
 	v.secrets, err = worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,
-		"oauth2":{"token_url":%q,%s}}]}`, pgtest.TenantA, u.Host, v.srv.URL+"/oauth/token", client)),
+		"oauth2":{"token_url":%q,%s}}]}`, pgtest.TenantA, u.Host, tokenURL, clientFor(tokenURL))),
 		worker.AllowPlainTokenURL(), worker.WithRedaction(set), worker.WithClock(v.clock.now), worker.WithLogger(logger))
 	if err != nil {
 		t.Fatal(err)
@@ -325,6 +339,63 @@ func TestTheWorkerExecutesThroughWorkloadIdentityFederation(t *testing.T) {
 	if len(values) != 2 {
 		t.Fatalf("issued %d tokens, want one reused", len(values)-1)
 	}
+	v.assertNotPersisted(values...)
+}
+
+// TestTheWorkerExecutesWithPrivateKeyJWT: the binding holds the worker's own
+// signing key; each mint presents a fresh assertion signed with it and the ERP
+// verifies it against the client's registered certificate (ADR-019 Rev 1.2).
+func TestTheWorkerExecutesWithPrivateKeyJWT(t *testing.T) {
+	key := rsaKey(t, 2048)
+	keyPEM := pkcs8PEM(t, key)
+	now := time.Now()
+	cert, certPEM := selfSigned(t, key, now.Add(-time.Hour), now.Add(24*time.Hour))
+	sum := sha256.Sum256(cert.Raw)
+	thumb := base64.RawURLEncoding.EncodeToString(sum[:])
+	v := newJITFor(t, func(tokenURL string) fakeerp.Options {
+		return fakeerp.Options{TokenTTL: 10 * time.Minute, KeyClient: &fakeerp.KeyClient{ClientID: "eacp-pkjwt",
+			Audience: tokenURL, Keys: []fakeerp.PublicKey{{X5TS256: thumb, Key: &key.PublicKey}}}}
+	}, func(string) string {
+		k, _ := json.Marshal(keyPEM)
+		c, _ := json.Marshal(certPEM)
+		return fmt.Sprintf(`"client_id":"eacp-pkjwt","private_key_jwt":{"alg":"PS256","key":%s,"certificate":%s}`, k, c)
+	}, 100)
+	ids := []uuid.UUID{v.submit("").ID, v.submit("").ID}
+	for claimed, tries := 0, 0; claimed < 2; tries++ {
+		n, err := v.w.RunOnce(context.Background())
+		if err != nil || tries == 5 {
+			t.Fatalf("claimed %d of 2 (err %v)", claimed, err)
+		}
+		claimed += n
+	}
+	for _, id := range ids {
+		if got := v.get(id); got.State != "SUCCEEDED" || got.AttemptCount != 1 {
+			t.Fatalf("action = %+v", got)
+		}
+	}
+	executes, issued := 0, 0
+	for _, e := range v.audit() {
+		switch e["path"] {
+		case "/v1/execute":
+			executes++
+			if e["principal"] != "oauth:eacp-pkjwt" {
+				t.Fatalf("an execute used principal %v, not a private_key_jwt token", e["principal"])
+			}
+		case "/oauth/token":
+			if e["outcome"] == "token_issued" {
+				issued++
+				if jti, _ := e["assertion_jti"].(string); jti == "" {
+					t.Fatalf("the issuance audit lacks the assertion's jti: %v", e)
+				}
+			}
+		}
+	}
+	if executes != 2 || issued != 1 {
+		t.Fatalf("%d executes and %d issued tokens, want 2 and one reused", executes, issued)
+	}
+	v.mu.Lock()
+	values := append([]string{keyPEM, strings.Split(strings.TrimSpace(keyPEM), "\n")[1]}, v.tokens...)
+	v.mu.Unlock()
 	v.assertNotPersisted(values...)
 }
 
