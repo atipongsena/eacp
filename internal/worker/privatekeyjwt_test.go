@@ -1,6 +1,7 @@
 package worker_test
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -14,9 +15,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -254,7 +258,6 @@ func TestInvalidPrivateKeyJWTEntriesRejectTheWholeFile(t *testing.T) {
 	rsa2048, p256 := rsaKey(t, 2048), ecKey(t)
 	good := pkcs8PEM(t, rsa2048)
 	_, otherCert := selfSigned(t, rsaKey(t, 2048), now.Add(-time.Hour), now.Add(time.Hour))
-	_, expired := selfSigned(t, rsa2048, now.Add(-2*time.Hour), now.Add(-time.Hour))
 	_, edPriv, _ := ed25519GenerateKey()
 	encrypted := strings.Replace(good, "-----BEGIN PRIVATE KEY-----\n",
 		"-----BEGIN PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00000000000000000000000000000000\n\n", 1)
@@ -272,7 +275,9 @@ func TestInvalidPrivateKeyJWTEntriesRejectTheWholeFile(t *testing.T) {
 		"no key":                   `{"alg":"RS256"}`,
 		"unreadable key_file":      `{"alg":"RS256","key_file":"/absent/key.pem"}`,
 		"certificate of other key": fmt.Sprintf(`{"alg":"RS256","key":%q,"certificate":%q}`, good, otherCert),
-		"expired certificate":      fmt.Sprintf(`{"alg":"RS256","key":%q,"certificate":%q}`, good, expired),
+		"empty certificate":        fmt.Sprintf(`{"alg":"RS256","key":%q,"certificate":""}`, good),
+		"empty certificate_file":   fmt.Sprintf(`{"alg":"RS256","key":%q,"certificate_file":%q}`, good, secretsFile(t, "")),
+		"empty key_id":             fmt.Sprintf(`{"alg":"RS256","key":%q,"key_id":""}`, good),
 		"key id with a space":      fmt.Sprintf(`{"alg":"RS256","key":%q,"key_id":"a b"}`, good),
 		"unknown member":           fmt.Sprintf(`{"alg":"RS256","key":%q,"x5c":"x"}`, good),
 	}
@@ -296,4 +301,48 @@ func TestInvalidPrivateKeyJWTEntriesRejectTheWholeFile(t *testing.T) {
 
 func ed25519GenerateKey() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 	return ed25519.GenerateKey(rand.Reader)
+}
+
+// TestACertificateOutsideItsValidityFailsTheMintNotTheFile: a certificate
+// that has expired (or is not yet valid) is a time-based condition, like an
+// expired platform assertion: it must not stop every other binding at the
+// worker's next start. The binding's mints fail and back off until it is
+// valid; nothing is sent meanwhile (ADR-019 §3b).
+func TestACertificateOutsideItsValidityFailsTheMintNotTheFile(t *testing.T) {
+	for name, window := range map[string][2]time.Duration{
+		"expired":       {-2 * time.Hour, -time.Hour},
+		"not yet valid": {time.Hour, 2 * time.Hour},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newIDP(t)
+			c := &clock{t: time.Now()}
+			key := rsaKey(t, 2048)
+			_, cert := selfSigned(t, key, c.now().Add(window[0]), c.now().Add(window[1]))
+			var logs bytes.Buffer
+			var mu sync.Mutex
+			s := pkjwtStore(t, p.srv.URL, c, map[string]any{"alg": "PS256", "key": pkcs8PEM(t, key), "certificate": cert},
+				worker.WithLogger(slog.New(slog.NewJSONHandler(syncWriter{&logs, &mu}, nil))))
+			if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Minute); !errors.Is(err, worker.ErrCredentialUnavailable) {
+				t.Fatalf("err = %v, want ErrCredentialUnavailable", err)
+			}
+			if p.mints.Load() != 0 {
+				t.Fatal("a token request was made with a certificate outside its validity")
+			}
+			if len(s.Available()) != 0 {
+				t.Fatal("the binding did not back off")
+			}
+			mu.Lock()
+			logged := logs.String()
+			mu.Unlock()
+			if !strings.Contains(logged, `"class":"certificate_not_valid"`) {
+				t.Fatalf("the failure class was not logged: %s", logged)
+			}
+			if name == "not yet valid" { // once it is valid, the binding mints
+				c.add(time.Hour + 2*time.Minute)
+				if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Minute); err != nil {
+					t.Fatalf("a valid certificate still fails: %v", err)
+				}
+			}
+		})
+	}
 }

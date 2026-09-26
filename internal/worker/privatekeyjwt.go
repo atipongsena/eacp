@@ -37,7 +37,7 @@ type privateKeyJWTEntry struct {
 	Key             *string `json:"key"`
 	CertificateFile *string `json:"certificate_file"`
 	Certificate     *string `json:"certificate"`
-	KeyID           string  `json:"key_id"`
+	KeyID           *string `json:"key_id"`
 }
 
 // assertionSigner signs private_key_jwt client assertions with the worker's
@@ -47,15 +47,18 @@ type assertionSigner struct {
 	key      crypto.Signer
 	kid, x5t string
 	pem      string // the key's PEM text, redacted permanently and never sent
+	// The certificate's validity, checked at every mint (zero without one).
+	notBefore, notAfter time.Time
 }
 
 // newAssertionSigner validates e. Its errors name the field at fault, never
-// a value from it.
-func newAssertionSigner(e privateKeyJWTEntry, now time.Time) (*assertionSigner, error) {
+// a value from it. A certificate outside its validity is accepted here and
+// refused at each mint: the clock, not the file, is at fault.
+func newAssertionSigner(e privateKeyJWTEntry) (*assertionSigner, error) {
 	if e.Alg != "RS256" && e.Alg != "PS256" && e.Alg != "ES256" {
 		return nil, errors.New("private_key_jwt alg must be RS256, PS256 or ES256")
 	}
-	if e.KeyID != "" && !keyIDPattern.MatchString(e.KeyID) {
+	if e.KeyID != nil && !keyIDPattern.MatchString(*e.KeyID) {
 		return nil, errors.New("private_key_jwt key_id must be 1-256 printable characters without spaces")
 	}
 	keyPEM, err := oneOf(e.Key, e.KeyFile, "key", true)
@@ -80,7 +83,10 @@ func newAssertionSigner(e privateKeyJWTEntry, now time.Time) (*assertionSigner, 
 	if err != nil {
 		return nil, errors.New("private_key_jwt key must be an unencrypted PKCS #8, PKCS #1 or SEC 1 private key")
 	}
-	s := &assertionSigner{alg: e.Alg, kid: e.KeyID, pem: keyPEM}
+	s := &assertionSigner{alg: e.Alg, pem: keyPEM}
+	if e.KeyID != nil {
+		s.kid = *e.KeyID
+	}
 	switch k := parsed.(type) {
 	case *rsa.PrivateKey:
 		if e.Alg == "ES256" || k.N.BitLen() < minRSABits {
@@ -95,9 +101,12 @@ func newAssertionSigner(e privateKeyJWTEntry, now time.Time) (*assertionSigner, 
 	default:
 		return nil, errors.New("private_key_jwt key must be RSA or ECDSA P-256")
 	}
+	if e.Certificate == nil && e.CertificateFile == nil {
+		return s, nil
+	}
 	certPEM, err := oneOf(e.Certificate, e.CertificateFile, "certificate", false)
-	if err != nil || certPEM == "" {
-		return s, err
+	if err != nil {
+		return nil, err
 	}
 	cblock, err := singlePEM(certPEM, "certificate")
 	if err != nil || cblock.Type != "CERTIFICATE" {
@@ -110,9 +119,7 @@ func newAssertionSigner(e privateKeyJWTEntry, now time.Time) (*assertionSigner, 
 	if pub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool }); !ok || !pub.Equal(s.key.Public()) {
 		return nil, errors.New("private_key_jwt certificate is not the key's")
 	}
-	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
-		return nil, errors.New("private_key_jwt certificate is not valid now")
-	}
+	s.notBefore, s.notAfter = cert.NotBefore, cert.NotAfter
 	sum := sha256.Sum256(cert.Raw)
 	s.x5t = base64.RawURLEncoding.EncodeToString(sum[:])
 	return s, nil
@@ -149,6 +156,11 @@ func singlePEM(text, name string) (*pem.Block, error) {
 		return nil, bad
 	}
 	return block, nil
+}
+
+// validAt reports whether the certificate, if any, is valid at now.
+func (s *assertionSigner) validAt(now time.Time) bool {
+	return s.notAfter.IsZero() || (!now.Before(s.notBefore) && !now.After(s.notAfter))
 }
 
 // sign returns a fresh client assertion for clientID at audience (the token

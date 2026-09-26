@@ -120,7 +120,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	switch {
 	case e.PrivateKeyJWT != nil:
 		var err error
-		if signer, err = newAssertionSigner(*e.PrivateKeyJWT, c.now()); err != nil {
+		if signer, err = newAssertionSigner(*e.PrivateKeyJWT); err != nil {
 			return nil, bad(err.Error())
 		}
 	case e.ClientSecret != nil:
@@ -326,6 +326,9 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 func (p *oauthProvider) clientAssertion(now time.Time) (Secret, time.Time, string) {
 	if p.signer == nil {
 		return readAssertion(p.assertionFile, now)
+	}
+	if !p.signer.validAt(now) {
+		return Secret{}, time.Time{}, "certificate_not_valid"
 	}
 	a, exp, err := p.signer.sign(p.clientID, p.tokenURL, now)
 	if err != nil {
