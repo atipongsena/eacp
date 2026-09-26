@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -144,6 +145,40 @@ func TestInvalidOAuthEntriesRejectTheWholeFile(t *testing.T) {
 		} else if strings.Contains(err.Error(), "idp.example") {
 			t.Errorf("%s: error repeats the configuration: %v", name, err)
 		}
+	}
+	dir := t.TempDir()
+	jwtFile := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	seg := func(v string) string { return base64.RawURLEncoding.EncodeToString([]byte(v)) }
+	header := seg(`{"alg":"RS256"}`)
+	for name, file := range map[string]string{
+		"unreadable assertion":  "/absent/file",
+		"empty assertion":       jwtFile("empty", "\n"),
+		"oversized assertion":   jwtFile("big", header+"."+seg(`{"exp":1}`)+"."+strings.Repeat("a", 16<<10)),
+		"two segments":          jwtFile("two", header+"."+seg(`{"exp":1}`)),
+		"empty signature":       jwtFile("nosig", header+"."+seg(`{"exp":1}`)+"."),
+		"padded segment":        jwtFile("pad", header+"."+seg(`{"exp":1}`)+"=.c2ln"),
+		"payload not an object": jwtFile("array", header+"."+seg(`[]`)+".c2ln"),
+		"header not JSON":       jwtFile("hdr", seg(`alg`)+"."+seg(`{"exp":1}`)+".c2ln"),
+		"no exp":                jwtFile("noexp", header+"."+seg(`{"sub":"`+canary+`"}`)+".c2ln"),
+		"exp as a string":       jwtFile("strexp", header+"."+seg(`{"exp":"1"}`)+".c2ln"),
+	} {
+		body := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","oauth2":{"token_url":"https://idp.example/token","client_id":"eacp","client_assertion_file":%q}}]}`, tenant, file)
+		if _, err := worker.LoadSecrets(secretsFile(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), "c2ln") {
+			t.Errorf("%s: error repeats the assertion: %v", name, err)
+		}
+	}
+	valid := jwtFile("valid", header+"."+seg(`{"exp":1}`)+".c2ln")
+	secretAndAssertion := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","oauth2":{%s,"client_assertion_file":%q}}]}`, tenant, good, valid)
+	if _, err := worker.LoadSecrets(secretsFile(t, secretAndAssertion)); err == nil {
+		t.Error("an entry with a client secret and an assertion was accepted")
 	}
 	both := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","value":"v","oauth2":{%s}}]}`, tenant, good)
 	if _, err := worker.LoadSecrets(secretsFile(t, both)); err == nil {

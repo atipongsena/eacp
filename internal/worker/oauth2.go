@@ -45,8 +45,11 @@ type oauthEntry struct {
 	ClientID         string  `json:"client_id"`
 	ClientSecret     *string `json:"client_secret"`
 	ClientSecretFile *string `json:"client_secret_file"`
-	Scope            string  `json:"scope"`
-	Resource         string  `json:"resource"`
+	// A platform-issued JWT (RFC 7523), re-read at every mint: workload
+	// identity federation, with no client secret at all.
+	ClientAssertionFile *string `json:"client_assertion_file"`
+	Scope               string  `json:"scope"`
+	Resource            string  `json:"resource"`
 }
 
 type heldToken struct {
@@ -60,7 +63,8 @@ type heldToken struct {
 type oauthProvider struct {
 	binding            Binding
 	tokenURL, clientID string
-	clientSecret       Secret
+	clientSecret       Secret // empty when the client authenticates with an assertion
+	assertionFile      string
 	scope, resource    string
 	client             *http.Client
 	now                func() time.Time
@@ -75,6 +79,8 @@ type oauthProvider struct {
 	realExpiry   time.Time     // it authorises at the target until then, so it is scrubbed until then
 	lifetime     time.Duration // usable lifetime of the last token minted: a longer call cannot be served
 	retired      []heldToken   // replaced or dropped tokens that still authorise, newest last
+	assertion    Secret        // the client assertion last read, kept for scrubbing until assertionExp
+	assertionExp time.Time
 	backoff      time.Duration
 	backoffUntil time.Time
 }
@@ -94,20 +100,37 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	if !clientIDPattern.MatchString(e.ClientID) {
 		return nil, bad("client_id must be 1-256 printable characters without spaces or ':'")
 	}
-	if (e.ClientSecret == nil) == (e.ClientSecretFile == nil) {
-		return nil, bad("needs exactly one of client_secret and client_secret_file")
+	kinds := 0
+	for _, set := range []bool{e.ClientSecret != nil, e.ClientSecretFile != nil, e.ClientAssertionFile != nil} {
+		if set {
+			kinds++
+		}
 	}
-	var secret string
-	if e.ClientSecret != nil {
+	if kinds != 1 {
+		return nil, bad("needs exactly one of client_secret, client_secret_file and client_assertion_file")
+	}
+	var secret, assertionFile string
+	var assertion Secret
+	var assertionExp time.Time
+	switch {
+	case e.ClientSecret != nil:
 		secret = *e.ClientSecret
-	} else {
+	case e.ClientSecretFile != nil:
 		raw, err := os.ReadFile(*e.ClientSecretFile)
 		if err != nil {
 			return nil, bad("client_secret_file cannot be read")
 		}
 		secret = strings.TrimRight(string(raw), "\r\n")
+	default:
+		// Only the file's shape is checked here: an expired assertion is
+		// accepted, because the kubelet may be about to rotate it.
+		assertionFile = *e.ClientAssertionFile
+		var class string
+		if assertion, assertionExp, class = readAssertion(assertionFile, time.Time{}); class != "" {
+			return nil, bad("client_assertion_file must hold a compact JWS with a numeric exp (" + class + ")")
+		}
 	}
-	if secret == "" || len(secret) > maxSecret {
+	if assertionFile == "" && (secret == "" || len(secret) > maxSecret) {
 		return nil, bad(fmt.Sprintf("client secret must be 1-%d bytes", maxSecret))
 	}
 	if e.Scope != "" && (len(e.Scope) > 1024 || !scopePattern.MatchString(e.Scope)) {
@@ -120,13 +143,16 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 		}
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	return &oauthProvider{
+	p := &oauthProvider{
 		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
+		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp,
 		scope: e.Scope, resource: e.Resource, now: c.now, redact: c.redact, log: c.log,
 		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
-			// A redirect could carry the client secret to another host.
+			// A redirect could carry the client secret or assertion to another host.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-	}, nil
+	}
+	p.redactUntil(assertion, assertionExp)
+	return p, nil
 }
 
 // cached returns the held token when it outlives validFor.
@@ -205,7 +231,7 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 }
 
 func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
-	if p.redact != nil {
+	if p.redact != nil && tok.v != "" {
 		p.redact.Add(tok.v, expiry.Add(redactAfterExpiry))
 	}
 }
@@ -222,6 +248,21 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	if p.resource != "" {
 		form.Set("resource", p.resource)
 	}
+	if p.assertionFile != "" {
+		// Read at every mint: the platform rotates the file (ADR-019 §3).
+		assertion, exp, class := readAssertion(p.assertionFile, p.now())
+		if class != "" {
+			return Secret{}, time.Time{}, time.Time{}, 0, class
+		}
+		p.redactUntil(assertion, exp)
+		p.mu.Lock()
+		p.assertion, p.assertionExp = assertion, exp
+		p.mu.Unlock()
+		// RFC 7523 §2.2, with client_id as Entra ID requires; no Basic auth.
+		form.Set("client_id", p.clientID)
+		form.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+		form.Set("client_assertion", assertion.v)
+	}
 	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
@@ -230,8 +271,10 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	// RFC 6749 §2.3.1: the id and secret are form-urlencoded before Basic auth.
-	req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(p.clientSecret.v))
+	if p.assertionFile == "" {
+		// RFC 6749 §2.3.1: the id and secret are form-urlencoded before Basic auth.
+		req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(p.clientSecret.v))
+	}
 	start := p.now()
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -289,13 +332,20 @@ func (p *oauthProvider) retire() {
 	}
 }
 
-// live returns the client secret and every token, held or retired, until
-// its real expiry: a token authorises at the target until then.
+// live returns the client secret, the last client assertion until it
+// expires, and every token, held or retired, until its real expiry: a token
+// authorises at the target until then.
 func (p *oauthProvider) live() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	out := []string{p.clientSecret.v}
+	var out []string
+	if p.clientSecret.v != "" {
+		out = append(out, p.clientSecret.v)
+	}
+	if p.assertion.v != "" && now.Before(p.assertionExp) {
+		out = append(out, p.assertion.v)
+	}
 	if p.token.v != "" && now.Before(p.realExpiry) {
 		out = append(out, p.token.v)
 	}
