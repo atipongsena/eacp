@@ -35,3 +35,6 @@ graphify-out/
 # Python
 __pycache__/
 *.pyc
+
+# Pinned local tools (Helm), downloaded and checksum-verified per docs/KUBERNETES.md
+/.tools/
