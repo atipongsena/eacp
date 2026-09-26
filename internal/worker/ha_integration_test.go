@@ -150,8 +150,9 @@ func TestReplicasShareTheWorkAndSurviveLosingOne(t *testing.T) {
 	actor := action.Agent(v.f.Tenant, v.agent.Agent, v.agent.Version)
 	var ids []uuid.UUID
 	keys := map[uuid.UUID]string{}
+	const stopAt = 10
 	for i := range 30 {
-		if i == 10 {
+		if i == stopAt {
 			apis[0].stop()
 			workers[0].stop()
 		}
@@ -161,7 +162,7 @@ func TestReplicasShareTheWorkAndSurviveLosingOne(t *testing.T) {
 		}
 		b, _ := json.Marshal(payload)
 		via := apis[i%3]
-		if i >= 10 {
+		if i >= stopAt {
 			via = apis[1+i%2]
 		}
 		a, err := via.engine.Submit(ctx, actor, action.Submission{IdempotencyKey: uuid.NewString(),
@@ -186,15 +187,22 @@ func TestReplicasShareTheWorkAndSurviveLosingOne(t *testing.T) {
 	// Let every evaluator run a few more passes over the standing kill.
 	time.Sleep(500 * time.Millisecond)
 
-	var kills, workersUsed int
+	var kills, workersUsed, stoppedAttempts int
 	err := storage.InTenantTx(ctx, v.f.Owner, v.f.Tenant.String(), func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.incidents WHERE kind = 'kill'`).Scan(&kills); err != nil {
+			return err
+		}
+		// The stopped worker was really working when it stopped.
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM eacp.action_attempts WHERE worker_id = 'w-ha-0'`).Scan(&stoppedAttempts); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT count(DISTINCT worker_id) FROM eacp.actions WHERE id = ANY($1)`, ids).Scan(&workersUsed)
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if stoppedAttempts == 0 {
+		t.Error("the stopped worker made no attempt: losing it proved nothing")
 	}
 	if kills != 1 {
 		t.Errorf("kill incidents = %d, want 1", kills)

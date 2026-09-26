@@ -172,7 +172,8 @@ func (d *Deps) Serve(ctx context.Context, h http.Handler) error {
 }
 
 // ServeOn serves h on ln until ctx is cancelled, then drains (ADR-029):
-// /readyz fails at once, background tasks are cancelled, the listener keeps
+// /readyz fails at once, responses close their connections, background
+// tasks are cancelled, the listener keeps
 // serving for EACP_SHUTDOWN_DELAY so a load balancer can stop routing here,
 // and the graceful shutdown then waits up to EACP_SHUTDOWN_TIMEOUT for
 // in-flight requests. A listener failure returns at once.
@@ -192,6 +193,9 @@ func (d *Deps) ServeOn(ctx context.Context, ln net.Listener, h http.Handler) err
 			return
 		}
 		d.draining.Store(true)
+		// Responses now say Connection: close, so clients leave kept-alive
+		// connections before the shutdown closes them under a request.
+		srv.SetKeepAlivesEnabled(false)
 		d.bgCancel()
 		if delay := d.Config.ShutdownDelay; delay > 0 {
 			d.Log.Info("draining: not ready, still serving", "delay", delay)

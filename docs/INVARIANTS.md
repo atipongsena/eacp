@@ -24,7 +24,7 @@ Phase 21 extends it to identity, the tenant policy, budgets and prices (ADR-026 
 
 Phase 22a adds incidents and the Agent SOC read model (ADR-027). An incident observes and never decides. Its tests join invariant 17. `internal/incident/schema_test.go` also checks every guard in raw SQL (automatic incidents only from the `incident` system actor, manual ones by operators, the one-move lifecycle, two-person critical resolution, an insert-only timeline, tenant isolation). `evaluate_test.go` checks one incident per signal occurrence, operator containment opening nothing, and the affected snapshot agreeing with `registry.BlastRadius`.
 
-Phase 23a adds high availability without a leader (ADR-029). `internal/worker` TestReplicasShareTheWorkAndSurviveLosingOne (three API loop sets, three workers, one of each stopped mid-run) joins invariants 1, 4 and 16; the two-sweeper races in `internal/action/ha_test.go` join invariant 4.
+Phase 23a adds high availability without a leader (ADR-029). `internal/worker` TestReplicasShareTheWorkAndSurviveLosingOne (three API loop sets, three workers, one of each stopped mid-run) joins invariants 4 and 16, and `internal/action` TestTwoSweepersReclaimEachLapsedLeaseOnce joins invariant 4.
 
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
@@ -45,7 +45,6 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestStaleScannerCannotRecord — a scanner whose scan lease was taken over records nothing
 - `internal/worker` TestRawDispatchIntentIsDatabaseFencedByKill — raw T16 cannot commit an attempt under a killed scope
 - `internal/registry` TestScanLeaseFencesStaleScanners — the database fences scan records by worker, generation and expiry
-- `internal/worker` TestReplicasShareTheWorkAndSurviveLosingOne — three workers and three sweepers, one of each stopped mid-run: one ERP record per operation key
 
 ## 2 [A] One-time approval cannot release two execution claims
 

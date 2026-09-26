@@ -59,7 +59,8 @@ action and re-checks it; when another replica moved it first the step does nothi
 `service.Deps.ServeOn` runs this sequence when the signal context ends:
 
 1. `/readyz` fails with the check `draining` (it exists for every service, with or without a database);
-   `/healthz` stays 200.
+   `/healthz` stays 200. Keep-alives are switched off, so every response now says `Connection: close` and
+   clients move to other pods before the shutdown closes their connections.
 2. Background loops are cancelled at once (the worker stops claiming; in-flight calls still finish).
 3. The listener keeps serving for `EACP_SHUTDOWN_DELAY` (default `0s`, `0s`–`60s`).
 4. The graceful HTTP shutdown waits up to `EACP_SHUTDOWN_TIMEOUT`; `stop` then waits for the loops and closes
@@ -75,7 +76,7 @@ database, a real Fake ERP and the real HTTP connector. One API replica and one w
 through 30 submissions across the Fake ERP failure scenarios. Every action ends `SUCCEEDED` with one ERP record
 per operation key (effectively-once where reconcilable, MASTER_PLAN §21), a standing kill opens one incident
 although three evaluators saw it, no loop logs an error, more than one worker executed actions, and the audit
-chain verifies. Its workers' breakers are set out of reach: most scenarios fail at the ERP on purpose, and the
+chain verifies. The stopped worker must have made attempts before it stopped, so losing it is tested, not assumed. Its workers' breakers are set out of reach: most scenarios fail at the ERP on purpose, and the
 breaker is ADR-022's subject.
 
 The test found the sweeper's NULL re-check (§2); `internal/action` `TestTwoSweepersMoveEachActionOnceAndCountIt`,
@@ -91,6 +92,11 @@ that both select the same actions before either moves them.
   in-flight call into an unknown outcome (still safe, but slower to settle).
 - Evaluator and sweeper intervals are per replica, so N replicas look at the database N times per interval;
   the loop lock makes the extra looks cheap, not absent.
+- The sweeper's advance step (T2a retries and releases after approval) calls the PDP with no transaction
+  open (ADR-005 §5a), so no transaction-scoped lock can cover it: every replica may call the PDP for the same
+  pending action each interval, and PDP load grows with the number of API replicas, most during a PDP outage.
+  The PDP is stateless and the release is still decided once, under the action's row lock; 23b sizes the PDP
+  for it.
 
 ## Unresolved assumptions (conservative choices)
 
@@ -102,4 +108,4 @@ that both select the same actions before either moves them.
 | Sweeper duplicates | Allowed: row locks decide; only counters change. |
 | Shutdown delay default | `0s` (compose unchanged); the 23b chart sets it. Upper bound 60 s. |
 | Background loops on SIGTERM | Stop at once, before the listener drains; other replicas continue. |
-| Hash collision of lock keys | Accepted (2⁻⁶⁴): worst case one skipped pass, or a blocking kill lock waiting for one evaluation. |
+| Hash collision of lock keys | Accepted (2⁻⁶⁴): worst case one skipped pass, or a blocking advisory lock (kill, scheduler capacity group, release guard) waiting for one evaluation. |

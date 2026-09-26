@@ -65,8 +65,26 @@ func get(t *testing.T, url string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
+// closes reports whether a kept-alive request to url is answered with
+// Connection: close.
+func closes(t *testing.T, url string) bool {
+	t.Helper()
+	c := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{}}
+	defer c.CloseIdleConnections()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.Close
+}
+
 func TestDrainReportsNotReadyAndKeepsServing(t *testing.T) {
 	s := serveWith(t, "600ms")
+	if closes(t, s.base+"/healthz") {
+		t.Fatal("a response before the signal closed its kept-alive connection")
+	}
 	start := time.Now()
 	s.cancel()
 	select {
@@ -80,6 +98,11 @@ func TestDrainReportsNotReadyAndKeepsServing(t *testing.T) {
 	}
 	if code, _ := get(t, s.base+"/healthz"); code != http.StatusOK {
 		t.Fatalf("/healthz while draining = %d", code)
+	}
+	// A client on a kept-alive connection is told to reconnect, so it moves
+	// to a pod still in the Service before this one closes its connections.
+	if !closes(t, s.base+"/healthz") {
+		t.Fatal("a response while draining did not close its kept-alive connection")
 	}
 	select {
 	case err := <-s.done:
