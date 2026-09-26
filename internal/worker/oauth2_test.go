@@ -121,8 +121,50 @@ func TestAReusedTokenMustOutliveTheCall(t *testing.T) {
 		return 200, map[string]any{"access_token": "short-" + canary, "token_type": "Bearer", "expires_in": 30}
 	})
 	c.add(9*time.Minute + 30*time.Second)
-	if _, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); !errors.Is(err, worker.ErrCredentialUnavailable) {
+	if _, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); !errors.Is(err, worker.ErrCredentialTooShort) ||
+		!errors.Is(err, worker.ErrCredentialUnavailable) {
 		t.Fatalf("a token living 30 s was used for a 60 s call: %v", err)
+	}
+}
+
+// The IdP answering with tokens too short for one call is not an outage: the
+// binding stays available, shorter calls use the token, and longer calls are
+// refused at once without minting again.
+func TestATokenTooShortForOneCallDoesNotSuspendTheBinding(t *testing.T) {
+	p := newIDP(t)
+	p.set(func(n int64) (int, any) {
+		return 200, map[string]any{"access_token": fmt.Sprintf("tok-%d", n), "token_type": "Bearer", "expires_in": 30}
+	})
+	c := &clock{t: time.Now()}
+	s := oauthStore(t, p.srv.URL, c, "")
+	ctx := context.Background()
+	if _, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); !errors.Is(err, worker.ErrCredentialTooShort) {
+		t.Fatalf("err = %v, want ErrCredentialTooShort", err)
+	}
+	if len(s.Available()) != 1 {
+		t.Fatal("the binding backs off although its IdP answered")
+	}
+	if tok, err := s.Credential(ctx, tenant, "erp", erpEndpoint, 5*time.Second); err != nil || tok.Reveal() != "tok-1" {
+		t.Fatalf("a shorter call did not get the token: %v", err)
+	}
+	for range 3 {
+		if _, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); !errors.Is(err, worker.ErrCredentialTooShort) {
+			t.Fatal(err)
+		}
+	}
+	if p.mints.Load() != 1 {
+		t.Fatalf("%d mints: a call longer than the IdP's tokens minted again", p.mints.Load())
+	}
+	// Once the token has expired, the next mint learns the IdP's lifetime anew.
+	p.set(func(n int64) (int, any) {
+		return 200, map[string]any{"access_token": fmt.Sprintf("tok-%d", n), "token_type": "Bearer", "expires_in": 600}
+	})
+	c.add(time.Minute)
+	if _, err := s.Credential(ctx, tenant, "erp", erpEndpoint, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); err != nil || tok.Reveal() != "tok-2" {
+		t.Fatalf("a longer token lifetime was not learned: %v", err)
 	}
 }
 

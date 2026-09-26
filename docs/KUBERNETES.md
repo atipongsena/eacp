@@ -43,9 +43,10 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   **only** way out to them. The chart refuses to render when it is empty, unless
   `worker.allowNoConnectorEgress=true`.
 - Just-in-time credentials (ADR-019): an `oauth2` entry in `worker.connectorSecrets` makes the worker call its
-  `token_url`, so that host belongs in `worker.connectorEgress` too. The chart mounts the manifest as one file:
-  give the client secret inline (`client_secret`), or mount another Secret and name it in
-  `client_secret_file`. A plain `http` token URL is accepted only when `environment` is `development` or `test`.
+  `token_url`, so that host belongs in `worker.connectorEgress` too. The chart mounts only the manifest file,
+  so give the client secret inline (`client_secret`); a `client_secret_file` path would not exist in the pod
+  and the worker would refuse to start. A plain `http` token URL is accepted only when `environment` is
+  `development` or `test`.
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.

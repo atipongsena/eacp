@@ -47,7 +47,8 @@ exactly one of `value`, `value_file` (a static credential, as before) or `oauth2
 - `Rejected(tenant, ref, secret)`: when a call ends with error class `unauthorized`, the worker (and the MCP
   scanner) tell the provider, which drops the token so the next attempt mints another. The attempt's outcome
   is classified exactly as before (ADR-004).
-- `Values()` returns every live value (static secrets, client secrets, unexpired tokens) for the scrubbers.
+- `Values()` returns every live value (static secrets, client secrets, unexpired tokens). The scrubbers use it
+  together with the value actually sent, which the cache may already have replaced or dropped.
 
 ### 3. The OAuth 2.0 client-credentials provider
 
@@ -63,8 +64,12 @@ client: 10 s timeout, **no redirects** (a redirect could carry the client secret
 
 Only this response is a token: HTTP 200, a JSON object, `access_token` of 1–8192 printable ASCII characters
 without spaces, `token_type` `Bearer` (case-insensitive, RFC 6750) and `expires_in` a bare JSON integer from 1
-to 3600. Anything else is a failed mint, and so is a token whose lifetime is shorter than the call's
-`validFor` (it is kept for shorter calls).
+to 3600. Anything else is a failed mint.
+
+A token that lives shorter than the call's `validFor` is not a failed mint: the IdP works, the call is simply
+longer than its tokens. The token is kept for shorter calls, the provider remembers the lifetime and answers
+`ErrCredentialTooShort` (an `ErrCredentialUnavailable`) for this and any call as long, at once and without
+minting again, until a later mint shows a longer lifetime. The binding does not back off.
 
 - The expiry is measured from before the request, so network time never extends a token.
 - A cached token is reused only while `now + validFor` is before its expiry. Tokens live in worker memory only.
@@ -84,7 +89,9 @@ most 10 000 temporary values (the oldest go first).
 
 - **Worker.** Without a credential the lease is released before the dispatch intent, with reason
   `credential unavailable` (or `worker cannot serve this connector` for a missing binding). No call is made,
-  no attempt is recorded and the circuit is unchanged: the target was never contacted.
+  no attempt is recorded and the circuit is unchanged: the target was never contacted. For
+  `ErrCredentialTooShort` the reason is `credential lifetime shorter than the call`, and that worker leaves the
+  action alone for a minute while it keeps serving the binding's other actions.
 - **Reconciler.** Nothing is looked up and no check is recorded; the lease lapses and the action waits for its
   next reconciliation (T33). An unavailable credential never counts as evidence.
 - **MCP scanner.** The scan is not recorded (not even as failed); its lease expires and it is retried.
@@ -107,7 +114,9 @@ the default 30 s call plus the 30 s skew.
   cap, dropping a rejected token, redaction, host binding; `TestInvalidOAuthEntriesRejectTheWholeFile`.
 - `internal/worker` PostgreSQL tests (`jit_integration_test.go`) with the real HTTP connector and Fake ERP:
   three calls with one minted token and no token or client secret in the database or logs; a token shorter
-  than the call never dispatches; a failing token endpoint withholds claims until the back-off passes; a
+  than the call never dispatches, and a long call does not hold up short calls on the same binding
+  (`TestALongCallDoesNotHoldUpShortCallsOnTheSameBinding`); the token sent is scrubbed even after the cache
+  rotated (`TestTheTokenSentIsScrubbedEvenAfterTheCacheRotates`); a failing token endpoint withholds claims until the back-off passes; a
   refused token is replaced; the reconciler looks up with a minted token and records nothing while the
   credential is unavailable; `TestAScanWithoutACredentialIsNotRecorded`.
 - `internal/fakeerp`: issuance, expiry, refused clients and grants, tokens across a restart.
@@ -135,7 +144,8 @@ the default 30 s call plus the 30 s skew.
 | Client authentication | `client_secret_basic` only; `private_key_jwt` and mTLS are deferred. |
 | Token lifetime | `expires_in` is required and at most 3600 s; longer or missing is refused. |
 | Reuse | Only while the token outlives the whole call (`validFor`); never persisted. |
-| A token shorter than the call | Unavailable for that call, and the binding backs off (a misconfigured IdP is not hammered). |
+| A token shorter than the call | Unavailable for that call only: no back-off, no new mint for calls as long, the action deferred by that worker for a minute, logged at error level with both durations. |
+| Reconciling while the credential is unavailable | Nothing is looked up; the lapsed lease still counts as a reconciliation attempt (T33), so a long IdP outage can hand an unknown outcome to a human sooner (T34). |
 | Token endpoint failure | No dispatch, lease released, binding withheld from claims with a 1–60 s back-off. |
 | The target rejects a token | Classified as before (ADR-004); the worker and scanner drop the token. The reconciler's lookup carries no error class, so a refused token is reused for lookups until it expires. |
 | Redirects from the token endpoint | Refused. |

@@ -49,6 +49,7 @@ type jitEnv struct {
 	mu      sync.Mutex
 	tokens  []string // every token the endpoint issued
 	clock   *clock
+	logger  *slog.Logger
 }
 
 const jitStatic = canary + "-jit-static"
@@ -104,10 +105,19 @@ func newJIT(t *testing.T, ttl time.Duration, timeoutMS int) *jitEnv {
 	if err := v.f.Exec("rita", `UPDATE eacp.tools SET active_contract_id = $1 WHERE id = $2`, contractID, toolID); err != nil {
 		t.Fatal(err)
 	}
-	v.agent = v.f.ActiveAgent(t, "buyer", toolID)
+	// A second tool on the same connector (and credential binding) whose calls
+	// may take 400 s: longer than any token the ERP issues in these tests.
+	longID := v.f.ID(t, "erin", `INSERT INTO eacp.tools (tenant_id, connector_id, name)
+		VALUES (eacp.current_tenant_id(), $1, 'create_po_eventual') RETURNING id`, connID)
+	longContract := v.f.ID(t, "erin", strings.Replace(httpContractSQL, "2, 100)", "2, 300000)", 1), longID)
+	if err := v.f.Exec("rita", `UPDATE eacp.tools SET active_contract_id = $1 WHERE id = $2`, longContract, longID); err != nil {
+		t.Fatal(err)
+	}
+	v.agent = v.f.ActiveAgent(t, "buyer", toolID, longID)
 	v.f.ActivatePolicy(t, registrytest.AllowPolicy)
 	set := logging.NewSecretSet()
 	logger := logging.NewWithSet(syncWriter{v.logs, v.logMu}, slog.LevelDebug, "json", set)
+	v.logger = logger
 	v.secrets, err = worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,
 		"oauth2":{"token_url":%q,"client_id":"eacp-worker","client_secret":%q,"scope":"erp.purchase"}}]}`,
 		pgtest.TenantA, u.Host, v.srv.URL+"/oauth/token", canary+"-client")),
@@ -127,6 +137,11 @@ func newJIT(t *testing.T, ttl time.Duration, timeoutMS int) *jitEnv {
 
 func (v *jitEnv) submit(scenario string) action.View {
 	v.t.Helper()
+	return v.submitTool("erp.create_po", scenario)
+}
+
+func (v *jitEnv) submitTool(tool, scenario string) action.View {
+	v.t.Helper()
 	payload := map[string]any{"amount": 7, "currency": "THB"}
 	if scenario != "" {
 		payload["scenario"], payload["delay_ms"] = scenario, 300
@@ -134,7 +149,7 @@ func (v *jitEnv) submit(scenario string) action.View {
 	b, _ := json.Marshal(payload)
 	view, err := v.engine.Submit(context.Background(), action.Agent(v.f.Tenant, v.agent.Agent, v.agent.Version),
 		action.Submission{IdempotencyKey: uuid.NewString(), Subject: "carol@tenant-a.test", Operation: "post",
-			Target: "erp", Tool: "erp.create_po", ToolSchemaVersion: "1", Resource: "po", Payload: b})
+			Target: "erp", Tool: tool, ToolSchemaVersion: "1", Resource: "po", Payload: b})
 	if err != nil || view.State != "QUEUED" {
 		v.t.Fatalf("submit = %+v, %v", view, err)
 	}
@@ -248,13 +263,88 @@ func TestATokenShorterThanTheCallNeverDispatches(t *testing.T) {
 	view := v.submit("")
 	v.run(1)
 	got := v.get(view.ID)
-	if got.State != "QUEUED" || got.StateReason != "credential unavailable" || got.AttemptCount != 0 {
+	if got.State != "QUEUED" || got.StateReason != "credential lifetime shorter than the call" || got.AttemptCount != 0 {
 		t.Fatalf("action = %+v", got)
 	}
 	for _, e := range v.audit() {
 		if e["path"] == "/v1/execute" {
 			t.Fatal("a call was made with a token that could expire during it")
 		}
+	}
+}
+
+// A call longer than any token the IdP issues must not hold up the shorter
+// calls on the same binding, nor make the worker mint over and over.
+func TestALongCallDoesNotHoldUpShortCallsOnTheSameBinding(t *testing.T) {
+	v := newJIT(t, 5*time.Minute, 100)
+	long := v.submitTool("erp.create_po_eventual", "") // needs 300 s + 30 s of token life
+	v.run(1)
+	if got := v.get(long.ID); got.State != "QUEUED" || got.StateReason != "credential lifetime shorter than the call" {
+		t.Fatalf("long action = %+v", got)
+	}
+	if len(v.secrets.Available()) != 1 {
+		t.Fatal("a token too short for one call suspended the whole binding")
+	}
+	for range 3 {
+		short := v.submit("")
+		v.run(1)
+		if got := v.get(short.ID); got.State != "SUCCEEDED" {
+			t.Fatalf("short action = %+v", got)
+		}
+	}
+	if got := v.get(long.ID); got.State != "QUEUED" || got.AttemptCount != 0 {
+		t.Fatalf("long action = %+v", got)
+	}
+	if v.mints.Load() != 1 {
+		t.Fatalf("%d mints: the long call made the worker mint again", v.mints.Load())
+	}
+}
+
+// echoConnector is a careless connector: its result echoes the credential it
+// was given. Before returning, the binding's cached token rotates (here by a
+// rejection), so the store no longer lists the value that was sent.
+type echoConnector struct{ secrets *worker.SecretStore }
+
+func (e echoConnector) Execute(_ context.Context, c worker.Call) worker.Result {
+	e.secrets.Rejected(c.TenantID, "erp-jit", c.Secret)
+	return worker.Result{Outcome: worker.Ambiguous, ErrorClass: c.Secret.Reveal(), ExternalReference: c.Secret.Reveal()}
+}
+
+func (e echoConnector) Lookup(context.Context, worker.LookupCall) worker.LookupResult {
+	return worker.LookupResult{Status: worker.LookupUnknown}
+}
+
+func TestTheTokenSentIsScrubbedEvenAfterTheCacheRotates(t *testing.T) {
+	v := newJIT(t, 10*time.Minute, 100)
+	ctx := context.Background()
+	w, err := worker.New(v.f.App, worker.Options{ID: "echo", Lease: 5 * time.Second, Log: v.logger,
+		Connectors: map[string]worker.Connector{"http": echoConnector{v.secrets}}, Secrets: v.secrets,
+		Backoff: func(int) time.Duration { return 100 * time.Millisecond }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := v.submit("")
+	if n, err := w.RunOnce(ctx); err != nil || n != 1 {
+		t.Fatalf("claimed %d, %v", n, err)
+	}
+	v.mu.Lock()
+	sent := v.tokens[0]
+	v.mu.Unlock()
+	for _, sql := range []string{
+		`SELECT count(*) FROM eacp.actions WHERE to_jsonb(actions)::text LIKE '%' || $1 || '%'`,
+		`SELECT count(*) FROM eacp.action_attempts WHERE to_jsonb(action_attempts)::text LIKE '%' || $1 || '%'`,
+		`SELECT count(*) FROM eacp.audit_events WHERE convert_from(payload, 'UTF8') LIKE '%' || $1 || '%'`,
+		`SELECT count(*) FROM eacp.outbox_events WHERE to_jsonb(outbox_events)::text LIKE '%' || $1 || '%'`,
+	} {
+		var count int
+		if err := storage.InTenantTx(ctx, v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, sql, sent).Scan(&count)
+		}); err != nil || count != 0 {
+			t.Fatalf("the token sent was stored after the cache rotated (count=%d err=%v): %s", count, err, sql)
+		}
+	}
+	if got := v.get(view.ID); strings.Contains(got.ExternalReference+got.StateReason, sent) {
+		t.Fatal("the token sent reaches the action API")
 	}
 }
 

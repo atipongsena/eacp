@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"eacp/internal/governance"
@@ -75,7 +76,8 @@ type Worker struct {
 	breaker   *breaker
 
 	mu       sync.Mutex
-	inflight map[Skip]int // leased actions per tenant and capacity group
+	inflight map[Skip]int            // leased actions per tenant and capacity group
+	deferred map[uuid.UUID]time.Time // actions no credential here can serve, until then (ADR-019)
 	killMu   sync.Mutex
 	killWake chan struct{}
 }
@@ -121,7 +123,7 @@ func New(pool *pgxpool.Pool, o Options) (*Worker, error) {
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	w := &Worker{store: NewStore(pool, o.ID), o: o, inflight: map[Skip]int{}, killWake: make(chan struct{}),
+	w := &Worker{store: NewStore(pool, o.ID), o: o, inflight: map[Skip]int{}, deferred: map[uuid.UUID]time.Time{}, killWake: make(chan struct{}),
 		breaker: newBreaker(o.BreakerFailures, o.BreakerCooldown, time.Now)}
 	for p := range o.Connectors {
 		w.protocols = append(w.protocols, p)
@@ -199,7 +201,7 @@ func (w *Worker) claim(ctx context.Context, n int) ([]claimed, error) {
 		var next Candidate
 		found := false
 		for _, c := range cands {
-			if !attempted[c] {
+			if !attempted[c] && !w.isDeferred(c.ActionID) {
 				next, found = c, true
 				break
 			}
@@ -219,6 +221,31 @@ func (w *Worker) claim(ctx context.Context, n int) ([]claimed, error) {
 		}
 	}
 	return leases, nil
+}
+
+// credentialDeferral is how long this worker leaves alone an action whose
+// call is longer than its credential provider's tokens live.
+const credentialDeferral = time.Minute
+
+// deferAction keeps this worker from claiming the action for a while.
+// Other actions on the same binding are still claimed.
+func (w *Worker) deferAction(id uuid.UUID) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := time.Now()
+	for k, until := range w.deferred {
+		if !now.Before(until) {
+			delete(w.deferred, k)
+		}
+	}
+	w.deferred[id] = now.Add(credentialDeferral)
+}
+
+func (w *Worker) isDeferred(id uuid.UUID) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	until, ok := w.deferred[id]
+	return ok && time.Now().Before(until)
 }
 
 // RunOnce claims up to Concurrency actions, executes them concurrently and
@@ -299,7 +326,11 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	secret, err := w.o.Secrets.Credential(exec, l.TenantID, job.SecretRef, job.Endpoint, job.CallTimeout+CredentialSkew)
 	if err != nil {
 		reason := "worker cannot serve this connector"
-		if errors.Is(err, ErrCredentialUnavailable) {
+		switch {
+		case errors.Is(err, ErrCredentialTooShort):
+			reason = "credential lifetime shorter than the call"
+			w.deferAction(l.ActionID)
+		case errors.Is(err, ErrCredentialUnavailable):
 			reason = "credential unavailable"
 		}
 		log.WarnContext(exec, "no credential for this call; releasing", "reason", reason)
@@ -377,7 +408,8 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	})
 	cancel()
 	stop()
-	res = classify(scrub(res, w.o.Secrets.Values()), job.Contract)
+	// Scrub the value that was sent too: the store may have rotated it away.
+	res = classify(scrub(res, append(w.o.Secrets.Values(), secret.Reveal())), job.Contract)
 	if res.ErrorClass == "unauthorized" {
 		// The target refused the credential: a minted token is dropped so
 		// the next attempt mints another. The outcome stays as classified.

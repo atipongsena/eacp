@@ -64,6 +64,7 @@ type oauthProvider struct {
 	mu           sync.Mutex
 	token        Secret
 	expiry       time.Time
+	lifetime     time.Duration // of the last token minted: a longer call cannot be served
 	backoff      time.Duration
 	backoffUntil time.Time
 }
@@ -135,9 +136,19 @@ func (p *oauthProvider) available(now time.Time) bool {
 	return !now.Before(p.backoffUntil)
 }
 
+// tooShort reports whether the last token minted lived no longer than
+// validFor, so minting again cannot serve the call.
+func (p *oauthProvider) tooShort(validFor time.Duration) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lifetime > 0 && validFor >= p.lifetime
+}
+
 // credential returns a token valid for at least validFor, minting one when
 // the held token would expire sooner. It fails with ErrCredentialUnavailable
-// during a back-off and when a mint fails or yields a shorter-lived token.
+// during a back-off and when a mint fails, and with ErrCredentialTooShort
+// when the IdP's tokens live shorter than the call: that is not an outage,
+// so it neither backs off nor mints again for such a call.
 func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) (Secret, error) {
 	if s, ok := p.cached(validFor); ok {
 		return s, nil
@@ -147,10 +158,13 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 	if s, ok := p.cached(validFor); ok {
 		return s, nil
 	}
+	if p.tooShort(validFor) {
+		return Secret{}, ErrCredentialTooShort
+	}
 	if !p.available(p.now()) {
 		return Secret{}, ErrCredentialUnavailable
 	}
-	tok, expiry, class := p.request(ctx)
+	tok, expiry, lifetime, class := p.request(ctx)
 	if class == "" {
 		p.redactUntil(tok, expiry)
 	}
@@ -158,9 +172,13 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 	defer p.mu.Unlock()
 	now := p.now()
 	if class == "" {
-		p.token, p.expiry = tok, expiry // usable for shorter calls even if not this one
+		p.token, p.expiry, p.lifetime = tok, expiry, lifetime
+		p.backoff, p.backoffUntil = 0, time.Time{}
 		if !now.Add(validFor).Before(expiry) {
-			class = "lifetime_shorter_than_call"
+			// Kept for shorter calls; this one cannot be served.
+			p.log.ErrorContext(ctx, "credential lifetime shorter than the call", "tenant", p.binding.TenantID.String(),
+				"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "lifetime", lifetime, "needed", validFor)
+			return Secret{}, ErrCredentialTooShort
 		}
 	}
 	if class != "" {
@@ -170,7 +188,6 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 			"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "class", class, "retry_after", p.backoff)
 		return Secret{}, ErrCredentialUnavailable
 	}
-	p.backoff, p.backoffUntil = 0, time.Time{}
 	p.log.InfoContext(ctx, "credential minted", "tenant", p.binding.TenantID.String(),
 		"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "expires_in", expiry.Sub(now).Round(time.Second))
 	return tok, nil
@@ -182,9 +199,10 @@ func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
 	}
 }
 
-// request performs one token request. It returns a failure class, never a
-// response body or secret. The expiry is measured from before the request.
-func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, string) {
+// request performs one token request. It returns the token, its expiry and
+// lifetime, or a failure class, never a response body or secret. The expiry
+// is measured from before the request.
+func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Duration, string) {
 	form := url.Values{"grant_type": {"client_credentials"}}
 	if p.scope != "" {
 		form.Set("scope", p.scope)
@@ -196,7 +214,7 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, string)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Secret{}, time.Time{}, "request"
+		return Secret{}, time.Time{}, 0, "request"
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -205,15 +223,15 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, string)
 	start := p.now()
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return Secret{}, time.Time{}, "transport"
+		return Secret{}, time.Time{}, 0, "transport"
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponse+1))
 	if err != nil || len(body) > maxTokenResponse {
-		return Secret{}, time.Time{}, "response_unreadable"
+		return Secret{}, time.Time{}, 0, "response_unreadable"
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Secret{}, time.Time{}, fmt.Sprintf("http_%d", resp.StatusCode)
+		return Secret{}, time.Time{}, 0, fmt.Sprintf("http_%d", resp.StatusCode)
 	}
 	var tr struct {
 		AccessToken string          `json:"access_token"`
@@ -221,19 +239,20 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, string)
 		ExpiresIn   json.RawMessage `json:"expires_in"` // a bare JSON integer
 	}
 	if err := json.Unmarshal(body, &tr); err != nil {
-		return Secret{}, time.Time{}, "invalid_json"
+		return Secret{}, time.Time{}, 0, "invalid_json"
 	}
 	if len(tr.AccessToken) > maxAccessToken || !tokenPattern.MatchString(tr.AccessToken) {
-		return Secret{}, time.Time{}, "invalid_access_token"
+		return Secret{}, time.Time{}, 0, "invalid_access_token"
 	}
 	if !strings.EqualFold(tr.TokenType, "Bearer") {
-		return Secret{}, time.Time{}, "not_bearer"
+		return Secret{}, time.Time{}, 0, "not_bearer"
 	}
 	n, err := strconv.ParseInt(string(tr.ExpiresIn), 10, 64)
 	if err != nil || n < 1 || n > maxTokenLifetime {
-		return Secret{}, time.Time{}, "invalid_expires_in"
+		return Secret{}, time.Time{}, 0, "invalid_expires_in"
 	}
-	return Secret{tr.AccessToken}, start.Add(time.Duration(n) * time.Second), ""
+	lifetime := time.Duration(n) * time.Second
+	return Secret{tr.AccessToken}, start.Add(lifetime), lifetime, ""
 }
 
 // rejected drops the held token when it is s.

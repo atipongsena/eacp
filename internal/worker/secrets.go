@@ -28,6 +28,11 @@ var ErrNoCredential = errors.New("worker: no credential for this connector endpo
 // token mint). Nothing is dispatched; the work waits (ADR-019).
 var ErrCredentialUnavailable = errors.New("worker: credential unavailable")
 
+// ErrCredentialTooShort (an ErrCredentialUnavailable): the provider works,
+// but its credentials live shorter than this call needs. Shorter calls on
+// the same binding are still served.
+var ErrCredentialTooShort = fmt.Errorf("%w: its lifetime is shorter than the call", ErrCredentialUnavailable)
+
 // CredentialSkew is added to every call budget when asking for a
 // credential, so a token never expires during a call.
 const CredentialSkew = 30 * time.Second
