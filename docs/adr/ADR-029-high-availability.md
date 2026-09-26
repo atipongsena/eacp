@@ -1,7 +1,7 @@
 # ADR-029: High availability — replicas without a leader
 
-Status: Accepted (Rev 1.0, 2026-09-26). Scope: Phase 23a (MASTER_PLAN §95). Phase 23b (Helm, NetworkPolicies,
-disruption budgets, autoscaling, a real cluster run) extends this ADR.
+Status: Accepted (Rev 1.1, 2026-09-26). Rev 1.0: Phase 23a, the binaries (§1–§4). Rev 1.1: Phase 23b, the
+Kubernetes deployment (§5). Scope: MASTER_PLAN §95.
 Related: ADR-004 (leases, fencing, unknown outcomes), ADR-011 (scheduler), ADR-014 (PostgreSQL is the authority,
 NATS carries signals), ADR-022 (bulkheads, circuits), ADR-025/-027/-018 (the FinOps, incident and release
 evaluators).
@@ -83,6 +83,40 @@ The test found the sweeper's NULL re-check (§2); `internal/action` `TestTwoSwee
 `TestTwoSweepersReclaimEachLapsedLeaseOnce` and `TestTwoSweepersRetryEachActionOnce` pin it with two sweepers
 that both select the same actions before either moves them.
 
+### 5. Kubernetes (Rev 1.1, Phase 23b)
+
+The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the binaries of §1–§4 unchanged.
+
+- **Shape.** Deployments for the API, the worker and the PDP sidecar (2 replicas each), Services for the API
+  and the PDP, a migrate Job as a `pre-install,pre-upgrade` hook with the owner DSN, and one ServiceAccount with
+  no token. No RBAC object, no operator, no cluster API access. PostgreSQL and NATS are external.
+- **Secret custody.** Values only name Secrets with fixed keys; the chart renders no secret value. The worker
+  alone mounts the connector secrets, the API alone the PDP client key, the PDP alone its server key, and the
+  migrate Job alone the owner DSN (ADR-001).
+- **Hardening.** Every pod runs as 65532, non-root, with a read-only root filesystem, no privilege escalation,
+  all capabilities dropped, `RuntimeDefault` seccomp, a `/tmp` emptyDir and no service links. The release
+  namespace enforces the `restricted` Pod Security Standard.
+- **Fail closed at render time.** `helm template` stops with a message for a missing Secret name, a connector
+  secret file, database URL or password-bearing URL in any `env`, replicas below 1, a short grace period, an
+  unknown governance provider, empty PostgreSQL or NATS peers, or no connector egress without an explicit
+  opt-out.
+- **NetworkPolicies** repeat the compose networks: default deny in the namespace, DNS egress, API ingress on
+  8080 only, the PDP reachable only from the API, the worker the only pod with egress to enterprise systems
+  (`worker.connectorEgress`), and the migrate Job reaching only PostgreSQL. The dev dependencies protect
+  themselves the same way, so every target decides who reaches it.
+- **Availability.** PodDisruptionBudgets `maxUnavailable: 1`; rolling updates `maxUnavailable: 0`,
+  `maxSurge: 1`; pods spread across nodes (`ScheduleAnyway`). `EACP_SHUTDOWN_DELAY` 10 s and
+  `EACP_SHUTDOWN_TIMEOUT` 15 s; the chart refuses a worker grace period below delay + timeout +
+  `worker.maxCallSeconds` (default 30 s) and an API grace below delay + timeout.
+- **Autoscaling.** CPU HPAs for the API and the worker exist but are off by default. Queue-depth scaling is
+  deferred: it needs a new dependency (KEDA or a metrics adapter) and a read-only queue metric.
+- **Proof.** `test/helm` renders the chart and checks each rule above, including every refused value
+  (`EACP_HELM_REQUIRED=1` fails instead of skipping without Helm). `scripts/k8s-e2e.sh` installs it on a 2-node
+  minikube cluster with Calico and runs the Slice A demo unchanged and `TestKubernetesDisruption`: 30 purchases
+  while the API rolls, the workers scale to 3 and a node drains all end `SUCCEEDED` with one ERP record each; a
+  `/healthz` probe through the Service every 100 ms never fails; the stand-in agent reaches the API and nothing
+  else; every pod is non-root with a read-only root filesystem.
+
 ## Consequences
 
 - Scaling the API or the workers needs no configuration beyond a unique worker id (the default host name).
@@ -106,6 +140,16 @@ that both select the same actions before either moves them.
 | Lock scope | Transaction-scoped, per loop and tenant; never session-scoped (pooler-safe, crash-safe). |
 | A skipped tenant | Waits for the next interval (at most one evaluator interval late). |
 | Sweeper duplicates | Allowed: row locks decide; only counters change. |
-| Shutdown delay default | `0s` (compose unchanged); the 23b chart sets it. Upper bound 60 s. |
+| Shutdown delay default | `0s` (compose unchanged); the chart sets 10 s. Upper bound 60 s. |
 | Background loops on SIGTERM | Stop at once, before the listener drains; other replicas continue. |
 | Hash collision of lock keys | Accepted (2⁻⁶⁴): worst case one skipped pass, or a blocking advisory lock (kill, scheduler capacity group, release guard) waiting for one evaluation. |
+| PostgreSQL and NATS in the chart (Rev 1.1) | No: external services; dev-only manifests for the e2e. |
+| Secrets (Rev 1.1) | Referenced by name only; never rendered from values. |
+| API ingress default (Rev 1.1) | Any source, port 8080 only; narrowing is per deployment. |
+| Worker egress default (Rev 1.1) | None; the chart refuses to render without an allow-list or an explicit opt-out. |
+| Autoscaling (Rev 1.1) | CPU HPAs, off by default; queue-depth scaling deferred. |
+| PDB (Rev 1.1) | `maxUnavailable: 1` for api, worker and pdp. |
+| Shutdown timing (Rev 1.1) | Delay 10 s, timeout 15 s; worker grace ≥ delay + timeout + longest call (default 30 s). |
+| PDP probes (Rev 1.1) | TCP connects, since its HTTP health needs a client certificate; each logs an `SSLEOFError` line. |
+| Namespace (Rev 1.1) | Dedicated, `restricted` Pod Security Standard; the default deny covers the whole namespace. |
+| Slice C on Kubernetes (Rev 1.1) | Not run (a file copy into a distroless pod); compose keeps it. |

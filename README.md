@@ -181,9 +181,11 @@ A release moves an agent from its `ACTIVE` (stable) version to a candidate: `EVA
 - **Incidents.** Every `EACP_INCIDENT_INTERVAL` (default 15s) the control plane opens incidents from existing signals: MCP drift, kills, open circuits, unknown outcomes, canary rollbacks and FinOps overspend, each with its blast radius. Operators acknowledge, assign, note, link and resolve them (`/v1/incidents`, `eacpctl incident`); a critical incident is resolved by a second person. `GET /v1/soc/summary` (`eacpctl soc summary`) serves the SOC counters.
 - **Console.** Open `http://localhost:8080/ui/` and sign in with a principal API key. The key stays in the tab's memory only; a reload or 30 minutes without activity signs you out. The console shows the overview, incidents, security (kills, circuits, quarantined tools), fleet, approvals, execution, inventory, dependencies and cost, and runs the incident lifecycle and containment through the same API, behind a confirm dialog. It holds no authority of its own (ADR-028). Set `EACP_UI=off` to disable it.
 
-## Phase 23a: running several replicas
+## Phase 23: running several replicas and Kubernetes
 
 Run as many `controlplane-api` and `execution-worker` replicas as you like against one database: there is no leader, and PostgreSQL arbitrates every background loop (ADR-029). The incident, FinOps and release evaluators skip a tenant another replica is evaluating, the sweeper tolerates actions another replica moved first, and each worker needs a unique `EACP_WORKER_ID` (the host name by default). Set `EACP_SHUTDOWN_DELAY` (0s–60s, default 0s) behind a load balancer: on SIGTERM the service fails `/readyz`, closes kept-alive connections after each response, stops its loops and keeps serving for that long before shutting down. `internal/worker` `TestReplicasShareTheWorkAndSurviveLosingOne` runs three API loop sets and three workers and stops one of each mid-run.
+
+On Kubernetes, install the Helm chart `deployments/helm/eacp` (Phase 23b, ADR-029 Rev 1.1): hardened, replicated Deployments for the API, the worker and the PDP, the compose network boundary as NetworkPolicies, Secrets referenced by name only, migrations as a hook, disruption budgets and optional CPU autoscaling. PostgreSQL and NATS stay external. See [docs/KUBERNETES.md](docs/KUBERNETES.md); `bash scripts/k8s-e2e.sh` proves it on a 2-node minikube cluster.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
