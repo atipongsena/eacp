@@ -181,6 +181,15 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			}
 			if c.redact != nil {
 				c.redact.AddPermanent(p.clientSecret.v)
+				if p.signer != nil {
+					// The key, and each line of it, so a partial leak is redacted too.
+					c.redact.AddPermanent(p.signer.pem)
+					for _, line := range strings.Split(strings.ReplaceAll(p.signer.pem, "\r\n", "\n"), "\n") {
+						if len(line) >= 16 && !strings.HasPrefix(line, "-----") {
+							c.redact.AddPermanent(line)
+						}
+					}
+				}
 			}
 			store.m[k] = secretEntry{host: e.Host, oauth: p}
 			continue

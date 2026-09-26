@@ -48,8 +48,10 @@ type oauthEntry struct {
 	// A platform-issued JWT (RFC 7523), re-read at every mint: workload
 	// identity federation, with no client secret at all.
 	ClientAssertionFile *string `json:"client_assertion_file"`
-	Scope               string  `json:"scope"`
-	Resource            string  `json:"resource"`
+	// An assertion the worker signs with its own key (private_key_jwt).
+	PrivateKeyJWT *privateKeyJWTEntry `json:"private_key_jwt"`
+	Scope         string              `json:"scope"`
+	Resource      string              `json:"resource"`
 }
 
 type heldToken struct {
@@ -65,6 +67,7 @@ type oauthProvider struct {
 	tokenURL, clientID string
 	clientSecret       Secret // empty when the client authenticates with an assertion
 	assertionFile      string
+	signer             *assertionSigner // private_key_jwt
 	scope, resource    string
 	client             *http.Client
 	now                func() time.Time
@@ -101,18 +104,25 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 		return nil, bad("client_id must be 1-256 printable characters without spaces or ':'")
 	}
 	kinds := 0
-	for _, set := range []bool{e.ClientSecret != nil, e.ClientSecretFile != nil, e.ClientAssertionFile != nil} {
+	for _, set := range []bool{e.ClientSecret != nil, e.ClientSecretFile != nil, e.ClientAssertionFile != nil,
+		e.PrivateKeyJWT != nil} {
 		if set {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return nil, bad("needs exactly one of client_secret, client_secret_file and client_assertion_file")
+		return nil, bad("needs exactly one of client_secret, client_secret_file, client_assertion_file and private_key_jwt")
 	}
 	var secret, assertionFile string
 	var assertion Secret
 	var assertionExp time.Time
+	var signer *assertionSigner
 	switch {
+	case e.PrivateKeyJWT != nil:
+		var err error
+		if signer, err = newAssertionSigner(*e.PrivateKeyJWT, c.now()); err != nil {
+			return nil, bad(err.Error())
+		}
 	case e.ClientSecret != nil:
 		secret = *e.ClientSecret
 	case e.ClientSecretFile != nil:
@@ -130,7 +140,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 			return nil, bad("client_assertion_file must hold a compact JWS with a numeric exp (" + class + ")")
 		}
 	}
-	if assertionFile == "" && (secret == "" || len(secret) > maxSecret) {
+	if assertionFile == "" && signer == nil && (secret == "" || len(secret) > maxSecret) {
 		return nil, bad(fmt.Sprintf("client secret must be 1-%d bytes", maxSecret))
 	}
 	if e.Scope != "" && (len(e.Scope) > 1024 || !scopePattern.MatchString(e.Scope)) {
@@ -145,7 +155,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	p := &oauthProvider{
 		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
-		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp,
+		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp, signer: signer,
 		scope: e.Scope, resource: e.Resource, now: c.now, redact: c.redact, log: c.log,
 		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
 			// A redirect could carry the client secret or assertion to another host.
@@ -248,9 +258,8 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	if p.resource != "" {
 		form.Set("resource", p.resource)
 	}
-	if p.assertionFile != "" {
-		// Read at every mint: the platform rotates the file (ADR-019 §3a).
-		assertion, exp, class := readAssertion(p.assertionFile, p.now())
+	if p.assertionFile != "" || p.signer != nil {
+		assertion, exp, class := p.clientAssertion(p.now())
 		if class != "" {
 			return Secret{}, time.Time{}, time.Time{}, 0, class
 		}
@@ -271,7 +280,7 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	if p.assertionFile == "" {
+	if !form.Has("client_assertion") {
 		// RFC 6749 §2.3.1: the id and secret are form-urlencoded before Basic auth.
 		req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(p.clientSecret.v))
 	}
@@ -308,6 +317,21 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	}
 	lifetime := min(time.Duration(n)*time.Second, maxTokenUse)
 	return Secret{tr.AccessToken}, start.Add(lifetime), start.Add(time.Duration(n) * time.Second), lifetime, ""
+}
+
+// clientAssertion returns the client assertion of this mint and its expiry,
+// or a failure class: the platform-issued file, read again because the
+// platform rotates it (§3a), or a fresh one signed with the worker's key
+// (§3b).
+func (p *oauthProvider) clientAssertion(now time.Time) (Secret, time.Time, string) {
+	if p.signer == nil {
+		return readAssertion(p.assertionFile, now)
+	}
+	a, exp, err := p.signer.sign(p.clientID, p.tokenURL, now)
+	if err != nil {
+		return Secret{}, time.Time{}, "assertion_signing"
+	}
+	return a, exp, ""
 }
 
 // rejected drops the held token when it is s.
