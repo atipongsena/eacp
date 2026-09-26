@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,13 +12,48 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+
+	"eacp/internal/logging"
 )
 
 // ErrNoCredential: the worker holds no credential for this tenant, secret
 // reference and endpoint host. The action is never dispatched without one.
 var ErrNoCredential = errors.New("worker: no credential for this connector endpoint")
+
+// ErrCredentialUnavailable: the binding exists but its provider cannot
+// produce a credential that outlives the call now (a failed or backing-off
+// token mint). Nothing is dispatched; the work waits (ADR-019).
+var ErrCredentialUnavailable = errors.New("worker: credential unavailable")
+
+// CredentialSkew is added to every call budget when asking for a
+// credential, so a token never expires during a call.
+const CredentialSkew = 30 * time.Second
+
+// LoadOption configures LoadSecrets.
+type LoadOption func(*loadConfig)
+
+type loadConfig struct {
+	allowPlain bool
+	redact     *logging.SecretSet
+	now        func() time.Time
+	log        *slog.Logger
+}
+
+// AllowPlainTokenURL lets an oauth2 token_url use http. The worker passes it
+// only in development and test.
+func AllowPlainTokenURL() LoadOption { return func(c *loadConfig) { c.allowPlain = true } }
+
+// WithRedaction adds every client secret and minted token to set.
+func WithRedaction(set *logging.SecretSet) LoadOption { return func(c *loadConfig) { c.redact = set } }
+
+// WithClock replaces the clock providers use for expiry and back-off.
+func WithClock(now func() time.Time) LoadOption { return func(c *loadConfig) { c.now = now } }
+
+// WithLogger sets the logger that records mints (never their values).
+func WithLogger(log *slog.Logger) LoadOption { return func(c *loadConfig) { c.log = log } }
 
 const redacted = "[REDACTED]"
 
@@ -53,13 +89,15 @@ type secretKey struct {
 
 type secretEntry struct {
 	host   string
-	secret Secret
+	secret Secret         // a static credential, or
+	oauth  *oauthProvider // tokens minted just in time
 }
 
 // SecretStore holds the worker's connector credentials, keyed by tenant and
 // secret reference so a tenant can never name another tenant's secret.
 type SecretStore struct {
-	m map[secretKey]secretEntry
+	m   map[secretKey]secretEntry
+	now func() time.Time
 }
 
 var (
@@ -72,22 +110,30 @@ const maxSecret = 4096
 // LoadSecrets reads the secrets file at path:
 //
 //	{"secrets": [{"tenant_id": "...", "secret_ref": "erp", "host": "erp.internal:8443",
-//	              "value": "..." | "value_file": "/run/secrets/erp"}]}
+//	              "value": "..." | "value_file": "/run/secrets/erp" |
+//	              "oauth2": {"token_url": "https://idp/token", "client_id": "...",
+//	                         "client_secret": "..." | "client_secret_file": "...",
+//	                         "scope": "...", "resource": "https://..."}}]}
 //
 // Any invalid entry rejects the whole file (fail closed). Errors never
 // include secret values.
-func LoadSecrets(path string) (*SecretStore, error) {
+func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
+	c := loadConfig{now: time.Now, log: slog.New(slog.DiscardHandler)}
+	for _, o := range opts {
+		o(&c)
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("worker: read secrets file: %w", err)
 	}
 	var file struct {
 		Secrets []struct {
-			TenantID  string  `json:"tenant_id"`
-			Ref       string  `json:"secret_ref"`
-			Host      string  `json:"host"`
-			Value     *string `json:"value"`
-			ValueFile *string `json:"value_file"`
+			TenantID  string      `json:"tenant_id"`
+			Ref       string      `json:"secret_ref"`
+			Host      string      `json:"host"`
+			Value     *string     `json:"value"`
+			ValueFile *string     `json:"value_file"`
+			OAuth2    *oauthEntry `json:"oauth2"`
 		} `json:"secrets"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -98,7 +144,7 @@ func LoadSecrets(path string) (*SecretStore, error) {
 	if len(file.Secrets) == 0 {
 		return nil, errors.New("worker: secrets file lists no secrets")
 	}
-	store := &SecretStore{m: map[secretKey]secretEntry{}}
+	store := &SecretStore{m: map[secretKey]secretEntry{}, now: c.now}
 	for i, e := range file.Secrets {
 		tenant, err := uuid.Parse(e.TenantID)
 		if err != nil || tenant == uuid.Nil {
@@ -110,8 +156,29 @@ func LoadSecrets(path string) (*SecretStore, error) {
 		if !hostPattern.MatchString(e.Host) {
 			return nil, fmt.Errorf("worker: secret %d: host must be a lowercase host[:port]", i)
 		}
-		if (e.Value == nil) == (e.ValueFile == nil) {
-			return nil, fmt.Errorf("worker: secret %d: exactly one of value and value_file is required", i)
+		k := secretKey{tenant, e.Ref}
+		if _, dup := store.m[k]; dup {
+			return nil, fmt.Errorf("worker: secret %d: duplicate tenant and secret_ref", i)
+		}
+		kinds := 0
+		for _, set := range []bool{e.Value != nil, e.ValueFile != nil, e.OAuth2 != nil} {
+			if set {
+				kinds++
+			}
+		}
+		if kinds != 1 {
+			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file and oauth2 is required", i)
+		}
+		if e.OAuth2 != nil {
+			p, err := newOAuthProvider(i, *e.OAuth2, Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, c)
+			if err != nil {
+				return nil, err
+			}
+			if c.redact != nil {
+				c.redact.AddPermanent(p.clientSecret.v)
+			}
+			store.m[k] = secretEntry{host: e.Host, oauth: p}
+			continue
 		}
 		var value string
 		if e.Value != nil {
@@ -125,10 +192,6 @@ func LoadSecrets(path string) (*SecretStore, error) {
 		}
 		if value == "" || len(value) > maxSecret {
 			return nil, fmt.Errorf("worker: secret %d: value must be 1-%d bytes", i, maxSecret)
-		}
-		k := secretKey{tenant, e.Ref}
-		if _, dup := store.m[k]; dup {
-			return nil, fmt.Errorf("worker: secret %d: duplicate tenant and secret_ref", i)
 		}
 		store.m[k] = secretEntry{host: e.Host, secret: Secret{value}}
 	}
@@ -145,10 +208,13 @@ func endpointHost(endpoint string) string {
 	return strings.ToLower(u.Host)
 }
 
-// Resolve returns the credential of tenant's secret reference for endpoint.
-// It fails with ErrNoCredential unless the secret exists and is bound to the
-// endpoint's exact host and port.
-func (s *SecretStore) Resolve(tenant uuid.UUID, ref, endpoint string) (Secret, error) {
+// Credential returns the credential of tenant's secret reference for
+// endpoint, valid for at least validFor (ADR-019). It fails with
+// ErrNoCredential unless the secret exists and is bound to the endpoint's
+// exact host and port, and with ErrCredentialUnavailable when its provider
+// cannot produce one now.
+func (s *SecretStore) Credential(ctx context.Context, tenant uuid.UUID, ref, endpoint string,
+	validFor time.Duration) (Secret, error) {
 	if s == nil {
 		return Secret{}, ErrNoCredential
 	}
@@ -156,7 +222,40 @@ func (s *SecretStore) Resolve(tenant uuid.UUID, ref, endpoint string) (Secret, e
 	if !ok || e.host != endpointHost(endpoint) {
 		return Secret{}, ErrNoCredential
 	}
+	if e.oauth != nil {
+		return e.oauth.credential(ctx, validFor)
+	}
 	return e.secret, nil
+}
+
+// Resolve is Credential for a credential that only needs to be valid now.
+func (s *SecretStore) Resolve(tenant uuid.UUID, ref, endpoint string) (Secret, error) {
+	return s.Credential(context.Background(), tenant, ref, endpoint, 0)
+}
+
+// Available lists the bindings the worker can serve now, as Bindings does:
+// every static one and each OAuth binding outside a mint back-off. Claims
+// use it so a failing token endpoint withholds work instead of churning it.
+func (s *SecretStore) Available() []Binding {
+	var out []Binding
+	for _, b := range s.Bindings() {
+		if e := s.m[secretKey{b.TenantID, b.Ref}]; e.oauth == nil || e.oauth.available(s.now()) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// Rejected tells the provider the target refused secret (error class
+// "unauthorized"); an OAuth provider drops it so the next attempt mints a
+// new one. The attempt's outcome is unchanged.
+func (s *SecretStore) Rejected(tenant uuid.UUID, ref string, secret Secret) {
+	if s == nil {
+		return
+	}
+	if e, ok := s.m[secretKey{tenant, ref}]; ok && e.oauth != nil {
+		e.oauth.rejected(secret)
+	}
 }
 
 // Bindings lists the held credentials without values, ordered by tenant,
@@ -178,14 +277,19 @@ func (s *SecretStore) Bindings() []Binding {
 	return out
 }
 
-// Values returns every secret value, for registration with the log
-// redactor (internal/logging) only.
+// Values returns every live credential value (static secrets, client
+// secrets and unexpired minted tokens), for the log redactor and for
+// scrubbing connector results only.
 func (s *SecretStore) Values() []string {
 	if s == nil {
 		return nil
 	}
 	out := make([]string, 0, len(s.m))
 	for _, e := range s.m {
+		if e.oauth != nil {
+			out = append(out, e.oauth.live()...)
+			continue
+		}
 		out = append(out, e.secret.v)
 	}
 	return out

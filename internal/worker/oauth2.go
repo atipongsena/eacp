@@ -1,0 +1,265 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"eacp/internal/logging"
+)
+
+const (
+	tokenRequestTimeout = 10 * time.Second
+	maxTokenResponse    = 64 << 10
+	maxTokenLifetime    = 3600 // seconds
+	maxAccessToken      = 8192
+	minMintBackoff      = time.Second
+	maxMintBackoff      = time.Minute
+	// minted tokens stay in the redaction set this long after they expire,
+	// for late log lines.
+	redactAfterExpiry = 24 * time.Hour
+)
+
+var (
+	clientIDPattern = regexp.MustCompile(`^[\x21-\x39\x3b-\x7e]{1,256}$`) // printable, no space or ':'
+	scopePattern    = regexp.MustCompile(`^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$`)
+	tokenPattern    = regexp.MustCompile(`^[\x21-\x7e]+$`) // at most maxAccessToken bytes
+)
+
+// oauthEntry is the "oauth2" object of a secrets file entry.
+type oauthEntry struct {
+	TokenURL         string  `json:"token_url"`
+	ClientID         string  `json:"client_id"`
+	ClientSecret     *string `json:"client_secret"`
+	ClientSecretFile *string `json:"client_secret_file"`
+	Scope            string  `json:"scope"`
+	Resource         string  `json:"resource"`
+}
+
+// oauthProvider mints OAuth 2.0 client-credentials tokens (RFC 6749 §4.4)
+// for one binding and keeps the latest in memory until it expires. It never
+// persists a token (ADR-019).
+type oauthProvider struct {
+	binding            Binding
+	tokenURL, clientID string
+	clientSecret       Secret
+	scope, resource    string
+	client             *http.Client
+	now                func() time.Time
+	redact             *logging.SecretSet
+	log                *slog.Logger
+
+	mint sync.Mutex // one mint at a time; callers waiting on it reuse its token
+
+	mu           sync.Mutex
+	token        Secret
+	expiry       time.Time
+	backoff      time.Duration
+	backoffUntil time.Time
+}
+
+// newOAuthProvider validates entry i. Its errors never repeat a value from
+// the entry.
+func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvider, error) {
+	bad := func(what string) error { return fmt.Errorf("worker: secret %d: oauth2 %s", i, what) }
+	u, err := url.Parse(e.TokenURL)
+	if err != nil || !u.IsAbs() || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		strings.Contains(e.TokenURL, "#") || !hostPattern.MatchString(u.Host) {
+		return nil, bad("token_url must be an absolute URL with a lowercase host and no user info, query or fragment")
+	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && c.allowPlain) {
+		return nil, bad("token_url must be https (http only in development or test)")
+	}
+	if !clientIDPattern.MatchString(e.ClientID) {
+		return nil, bad("client_id must be 1-256 printable characters without spaces or ':'")
+	}
+	if (e.ClientSecret == nil) == (e.ClientSecretFile == nil) {
+		return nil, bad("needs exactly one of client_secret and client_secret_file")
+	}
+	var secret string
+	if e.ClientSecret != nil {
+		secret = *e.ClientSecret
+	} else {
+		raw, err := os.ReadFile(*e.ClientSecretFile)
+		if err != nil {
+			return nil, bad("client_secret_file cannot be read")
+		}
+		secret = strings.TrimRight(string(raw), "\r\n")
+	}
+	if secret == "" || len(secret) > maxSecret {
+		return nil, bad(fmt.Sprintf("client secret must be 1-%d bytes", maxSecret))
+	}
+	if e.Scope != "" && (len(e.Scope) > 1024 || !scopePattern.MatchString(e.Scope)) {
+		return nil, bad("scope must be scope tokens separated by single spaces")
+	}
+	if e.Resource != "" {
+		r, err := url.Parse(e.Resource)
+		if err != nil || !r.IsAbs() || r.Fragment != "" || strings.Contains(e.Resource, "#") || len(e.Resource) > 2048 {
+			return nil, bad("resource must be an absolute URL without a fragment")
+		}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	return &oauthProvider{
+		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
+		scope: e.Scope, resource: e.Resource, now: c.now, redact: c.redact, log: c.log,
+		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
+			// A redirect could carry the client secret to another host.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+	}, nil
+}
+
+// cached returns the held token when it outlives validFor.
+func (p *oauthProvider) cached(validFor time.Duration) (Secret, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.token.v != "" && p.now().Add(validFor).Before(p.expiry) {
+		return p.token, true
+	}
+	return Secret{}, false
+}
+
+// available reports whether the provider is outside a back-off.
+func (p *oauthProvider) available(now time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return !now.Before(p.backoffUntil)
+}
+
+// credential returns a token valid for at least validFor, minting one when
+// the held token would expire sooner. It fails with ErrCredentialUnavailable
+// during a back-off and when a mint fails or yields a shorter-lived token.
+func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) (Secret, error) {
+	if s, ok := p.cached(validFor); ok {
+		return s, nil
+	}
+	p.mint.Lock()
+	defer p.mint.Unlock()
+	if s, ok := p.cached(validFor); ok {
+		return s, nil
+	}
+	if !p.available(p.now()) {
+		return Secret{}, ErrCredentialUnavailable
+	}
+	tok, expiry, class := p.request(ctx)
+	if class == "" {
+		p.redactUntil(tok, expiry)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	if class == "" {
+		p.token, p.expiry = tok, expiry // usable for shorter calls even if not this one
+		if !now.Add(validFor).Before(expiry) {
+			class = "lifetime_shorter_than_call"
+		}
+	}
+	if class != "" {
+		p.backoff = min(max(2*p.backoff, minMintBackoff), maxMintBackoff)
+		p.backoffUntil = now.Add(p.backoff)
+		p.log.WarnContext(ctx, "credential mint failed", "tenant", p.binding.TenantID.String(),
+			"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "class", class, "retry_after", p.backoff)
+		return Secret{}, ErrCredentialUnavailable
+	}
+	p.backoff, p.backoffUntil = 0, time.Time{}
+	p.log.InfoContext(ctx, "credential minted", "tenant", p.binding.TenantID.String(),
+		"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "expires_in", expiry.Sub(now).Round(time.Second))
+	return tok, nil
+}
+
+func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
+	if p.redact != nil {
+		p.redact.Add(tok.v, expiry.Add(redactAfterExpiry))
+	}
+}
+
+// request performs one token request. It returns a failure class, never a
+// response body or secret. The expiry is measured from before the request.
+func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, string) {
+	form := url.Values{"grant_type": {"client_credentials"}}
+	if p.scope != "" {
+		form.Set("scope", p.scope)
+	}
+	if p.resource != "" {
+		form.Set("resource", p.resource)
+	}
+	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return Secret{}, time.Time{}, "request"
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	// RFC 6749 §2.3.1: the id and secret are form-urlencoded before Basic auth.
+	req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(p.clientSecret.v))
+	start := p.now()
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return Secret{}, time.Time{}, "transport"
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponse+1))
+	if err != nil || len(body) > maxTokenResponse {
+		return Secret{}, time.Time{}, "response_unreadable"
+	}
+	if resp.StatusCode != http.StatusOK {
+		return Secret{}, time.Time{}, fmt.Sprintf("http_%d", resp.StatusCode)
+	}
+	var tr struct {
+		AccessToken string          `json:"access_token"`
+		TokenType   string          `json:"token_type"`
+		ExpiresIn   json.RawMessage `json:"expires_in"` // a bare JSON integer
+	}
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return Secret{}, time.Time{}, "invalid_json"
+	}
+	if len(tr.AccessToken) > maxAccessToken || !tokenPattern.MatchString(tr.AccessToken) {
+		return Secret{}, time.Time{}, "invalid_access_token"
+	}
+	if !strings.EqualFold(tr.TokenType, "Bearer") {
+		return Secret{}, time.Time{}, "not_bearer"
+	}
+	n, err := strconv.ParseInt(string(tr.ExpiresIn), 10, 64)
+	if err != nil || n < 1 || n > maxTokenLifetime {
+		return Secret{}, time.Time{}, "invalid_expires_in"
+	}
+	return Secret{tr.AccessToken}, start.Add(time.Duration(n) * time.Second), ""
+}
+
+// rejected drops the held token when it is s.
+func (p *oauthProvider) rejected(s Secret) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if s.v != "" && p.token.v == s.v {
+		p.token, p.expiry = Secret{}, time.Time{}
+	}
+}
+
+// live returns the client secret and the held token while it is unexpired.
+func (p *oauthProvider) live() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := []string{p.clientSecret.v}
+	if p.token.v != "" && p.now().Before(p.expiry) {
+		out = append(out, p.token.v)
+	}
+	return out
+}
+
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}

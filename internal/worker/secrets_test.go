@@ -114,3 +114,55 @@ func TestSecretNeverPrintsLogsOrMarshals(t *testing.T) {
 		t.Fatal("Values must return the raw values for the log redactor")
 	}
 }
+
+func TestInvalidOAuthEntriesRejectTheWholeFile(t *testing.T) {
+	good := `"token_url":"https://idp.example/token","client_id":"eacp","client_secret":"s"`
+	for name, oauth := range map[string]string{
+		"plain http":        `"token_url":"http://idp.example/token","client_id":"eacp","client_secret":"s"`,
+		"user info":         `"token_url":"https://u:p@idp.example/token","client_id":"eacp","client_secret":"s"`,
+		"query":             `"token_url":"https://idp.example/token?x=1","client_id":"eacp","client_secret":"s"`,
+		"fragment":          `"token_url":"https://idp.example/token#x","client_id":"eacp","client_secret":"s"`,
+		"relative":          `"token_url":"/token","client_id":"eacp","client_secret":"s"`,
+		"other scheme":      `"token_url":"ftp://idp.example/token","client_id":"eacp","client_secret":"s"`,
+		"upper-case host":   `"token_url":"https://IDP.example/token","client_id":"eacp","client_secret":"s"`,
+		"client id colon":   `"token_url":"https://idp.example/token","client_id":"a:b","client_secret":"s"`,
+		"client id space":   `"token_url":"https://idp.example/token","client_id":"a b","client_secret":"s"`,
+		"no client id":      `"token_url":"https://idp.example/token","client_secret":"s"`,
+		"no client secret":  `"token_url":"https://idp.example/token","client_id":"eacp"`,
+		"empty secret":      `"token_url":"https://idp.example/token","client_id":"eacp","client_secret":""`,
+		"both secrets":      good + `,"client_secret_file":"/x"`,
+		"unreadable file":   `"token_url":"https://idp.example/token","client_id":"eacp","client_secret_file":"/absent/file"`,
+		"double space":      good + `,"scope":"a  b"`,
+		"quoted scope":      good + `,"scope":"a\"b"`,
+		"resource fragment": good + `,"resource":"https://erp.example#x"`,
+		"relative resource": good + `,"resource":"erp"`,
+		"unknown field":     good + `,"audience":"x"`,
+	} {
+		body := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","oauth2":{%s}}]}`, tenant, oauth)
+		if _, err := worker.LoadSecrets(secretsFile(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if strings.Contains(err.Error(), "idp.example") {
+			t.Errorf("%s: error repeats the configuration: %v", name, err)
+		}
+	}
+	both := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","value":"v","oauth2":{%s}}]}`, tenant, good)
+	if _, err := worker.LoadSecrets(secretsFile(t, both)); err == nil {
+		t.Error("an entry with a value and oauth2 was accepted")
+	}
+	ok := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","oauth2":{%s,"scope":"a b","resource":"https://erp.example/api"}}]}`, tenant, good)
+	if _, err := worker.LoadSecrets(secretsFile(t, ok)); err != nil {
+		t.Errorf("a valid entry was refused: %v", err)
+	}
+	file := filepath.Join(t.TempDir(), "client")
+	if err := os.WriteFile(file, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fromFile := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":"erp.example","oauth2":{"token_url":"https://idp.example/token","client_id":"eacp","client_secret_file":%q}}]}`, tenant, file)
+	s, err := worker.LoadSecrets(secretsFile(t, fromFile))
+	if err != nil {
+		t.Fatalf("client_secret_file: %v", err)
+	}
+	if v := strings.Join(s.Values(), ","); !strings.Contains(v, "from-file") || strings.Contains(v, "from-file\n") {
+		t.Errorf("client_secret_file value not trimmed or missing")
+	}
+}
