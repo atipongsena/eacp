@@ -20,7 +20,7 @@ spec:
       labels:
         {{- include "eacp.labels" $c | nindent 8 }}
     spec:
-      {{- include "eacp.podSecurity" (dict "root" . "sa" true) | nindent 6 }}
+      {{- include "eacp.podSecurity" (dict "root" . "sa" true "worker" true) | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       {{- include "eacp.spread" $c | nindent 6 }}
       {{- include "eacp.goDNS" . | nindent 6 }}
@@ -56,6 +56,9 @@ spec:
             - {name: tmp, mountPath: /tmp}
             {{- include "eacp.caMounts" (dict "root" . "nats" true) | nindent 12 }}
             - {name: connector-secrets, mountPath: /run/secrets/eacp, readOnly: true}
+            {{- if .Values.worker.workloadIdentity.enabled }}
+            - {name: identity, mountPath: /run/secrets/eacp-identity, readOnly: true}
+            {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
         {{- include "eacp.caVolumes" (dict "root" . "nats" true) | nindent 8 }}
@@ -65,3 +68,18 @@ spec:
             defaultMode: 0400
             items:
               - {key: connector-secrets.json, path: connector-secrets.json}
+        {{- with .Values.worker.workloadIdentity }}
+        {{- if .enabled }}
+        # ADR-019 Rev 1.1: a platform-issued token for workload identity
+        # federation; a secrets-file entry names /run/secrets/eacp-identity/token
+        # as its client_assertion_file. The kubelet rotates it.
+        - name: identity
+          projected:
+            defaultMode: 0400
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .audience | quote }}
+                  expirationSeconds: {{ int .expirationSeconds }}
+                  path: token
+        {{- end }}
+        {{- end }}

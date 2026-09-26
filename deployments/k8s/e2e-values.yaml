@@ -25,6 +25,10 @@ api:
   service: {type: NodePort}
 worker:
   connectorSecrets: eacp-connector-secrets
+  workloadIdentity:                 # ADR-019 Rev 1.1: Fake ERP trusts the cluster's issuer (TestFederatedJITDemo)
+    enabled: true
+    audience: fakeerp
+    expirationSeconds: 600
   env:
     EACP_WORKER_LEASE: 10s          # the demo's timings (deployments/demo/compose.demo.yml)
     EACP_RECONCILE_MAX_ATTEMPTS: "3"

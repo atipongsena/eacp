@@ -178,19 +178,24 @@ func TestWorkerIdentityComesFromThePodName(t *testing.T) {
 
 func TestDangerousValuesAreRefused(t *testing.T) {
 	for set, msg := range map[string]string{
-		"api.env.EACP_CONNECTOR_SECRETS_FILE=/x":       "connector secrets",
-		"pdp.env.EACP_CONNECTOR_SECRETS_FILE=/x":       "connector secrets",
-		"api.env.EACP_DATABASE_URL=postgres://a:b@c/d": "EACP_DATABASE_URL",
-		"worker.env.EACP_X_URL=nats://u:p@h:4222":      "password",
-		"database.appSecret=":                          "database.appSecret",
-		"database.ownerSecret=":                        "database.ownerSecret",
-		"pdp.tlsSecret=":                               "pdp.tlsSecret",
-		"worker.connectorSecrets=":                     "worker.connectorSecrets",
-		"api.replicas=0":                               "replicas",
-		"governance.provider=local":                    "governance.allowLocal",
-		"governance.provider=other":                    "governance.provider",
-		"database.peers=null":                          "database.peers",
-		"nats.peers=null":                              "nats.peers",
+		"api.env.EACP_CONNECTOR_SECRETS_FILE=/x":          "connector secrets",
+		"pdp.env.EACP_CONNECTOR_SECRETS_FILE=/x":          "connector secrets",
+		"api.env.EACP_DATABASE_URL=postgres://a:b@c/d":    "EACP_DATABASE_URL",
+		"worker.env.EACP_X_URL=nats://u:p@h:4222":         "password",
+		"database.appSecret=":                             "database.appSecret",
+		"database.ownerSecret=":                           "database.ownerSecret",
+		"pdp.tlsSecret=":                                  "pdp.tlsSecret",
+		"worker.connectorSecrets=":                        "worker.connectorSecrets",
+		"api.replicas=0":                                  "replicas",
+		"governance.provider=local":                       "governance.allowLocal",
+		"governance.provider=other":                       "governance.provider",
+		"database.peers=null":                             "database.peers",
+		"nats.peers=null":                                 "nats.peers",
+		"worker.workloadIdentity.audience=":               "workloadIdentity.audience",
+		"worker.workloadIdentity.audience=a b":            "workloadIdentity.audience",
+		"worker.workloadIdentity.expirationSeconds=599":   "workloadIdentity.expirationSeconds",
+		"worker.workloadIdentity.expirationSeconds=86401": "workloadIdentity.expirationSeconds",
+		"worker.workloadIdentity.expirationSeconds=1.5":   "workloadIdentity.expirationSeconds",
 	} {
 		out, err := renderErr(t, "--set", set)
 		if err == nil || !strings.Contains(out, msg) {

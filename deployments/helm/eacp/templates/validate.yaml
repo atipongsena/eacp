@@ -35,5 +35,12 @@
 {{- if lt (int $v.pdp.terminationGracePeriodSeconds) (add $delay $timeout) -}}{{- fail (printf "pdp.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout (%d)" (add $delay $timeout)) -}}{{- end -}}
 {{- if lt (int $v.worker.terminationGracePeriodSeconds) (add $delay $timeout (int $v.worker.maxCallSeconds)) -}}{{- fail (printf "worker.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout + worker.maxCallSeconds (%d)" (add $delay $timeout (int $v.worker.maxCallSeconds))) -}}{{- end -}}
 {{- if and (not $v.worker.connectorEgress) (not $v.worker.allowNoConnectorEgress) -}}{{- fail "worker.connectorEgress is empty: list the enterprise systems the worker may reach, or set worker.allowNoConnectorEgress=true" -}}{{- end -}}
+{{- $wi := $v.worker.workloadIdentity -}}
+{{- if $wi.enabled -}}
+{{- if or (not $wi.audience) (regexMatch "[[:space:]]" (toString $wi.audience)) (gt (len (toString $wi.audience)) 256) -}}{{- fail "worker.workloadIdentity.audience must be 1-256 characters without whitespace when workload identity is enabled" -}}{{- end -}}
+{{- end -}}
+{{- $exp := $wi.expirationSeconds -}}
+{{- if not (or (kindIs "int" $exp) (kindIs "int64" $exp) (kindIs "float64" $exp)) -}}{{- fail "worker.workloadIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
+{{- if or (lt (float64 $exp) 600.0) (gt (float64 $exp) 86400.0) (ne (float64 $exp) (float64 (int $exp))) -}}{{- fail "worker.workloadIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
 {{- if not $v.database.peers -}}{{- fail "database.peers must select PostgreSQL for NetworkPolicy egress" -}}{{- end -}}
 {{- if and $v.nats.enabled (not $v.nats.peers) -}}{{- fail "nats.peers must select NATS for NetworkPolicy egress (or set nats.enabled=false)" -}}{{- end -}}

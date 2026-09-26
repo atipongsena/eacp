@@ -60,6 +60,10 @@ worker:
   connectorSecrets: ""          # Secret with key "connector-secrets.json" (worker only)
   connectorEgress: []           # NetworkPolicy egress rules to enterprise systems (peers + ports)
   allowNoConnectorEgress: false
+  workloadIdentity:             # ADR-019 Rev 1.1: a projected token for workload identity federation
+    enabled: false
+    audience: ""                # the audience the IdP expects, e.g. api://AzureADTokenExchange
+    expirationSeconds: 3600     # 600-86400; the kubelet rotates it at 80 %
   env: {}
   resources:
     requests: {cpu: 100m, memory: 128Mi}
