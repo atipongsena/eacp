@@ -1,0 +1,26 @@
+{{- /* Fail closed on dangerous or incomplete values (ADR-029 Rev 1.1). Renders nothing. */ -}}
+{{- $v := .Values -}}
+{{- range $name := list "database.appSecret" "database.ownerSecret" "pdp.tlsSecret" "worker.connectorSecrets" -}}
+{{- $parts := splitList "." $name -}}
+{{- $val := index (index $v (first $parts)) (last $parts) -}}
+{{- if not $val -}}{{- fail (printf "%s must name an existing Secret" $name) -}}{{- end -}}
+{{- end -}}
+{{- if $v.nats.enabled -}}
+{{- if or (not $v.nats.relaySecret) (not $v.nats.workerSecret) -}}{{- fail "nats.relaySecret and nats.workerSecret must name existing Secrets (or set nats.enabled=false)" -}}{{- end -}}
+{{- end -}}
+{{- range $c := list "api" "worker" "pdp" -}}
+{{- $comp := index $v $c -}}
+{{- if lt (int $comp.replicas) 1 -}}{{- fail (printf "%s.replicas must be at least 1" $c) -}}{{- end -}}
+{{- range $k, $val := $comp.env -}}
+{{- if eq $k "EACP_CONNECTOR_SECRETS_FILE" -}}{{- fail (printf "%s.env: connector secrets belong to the worker's connectorSecrets only (ADR-001)" $c) -}}{{- end -}}
+{{- if eq $k "EACP_DATABASE_URL" -}}{{- fail (printf "%s.env: EACP_DATABASE_URL comes from database.appSecret, never from values" $c) -}}{{- end -}}
+{{- if regexMatch "://[^/@:]+:[^/@]+@" (toString $val) -}}{{- fail (printf "%s.env.%s: a URL with a password belongs in a Secret" $c $k) -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not (has $v.governance.provider (list "microsoft-agt" "local")) -}}{{- fail "governance.provider must be microsoft-agt or local" -}}{{- end -}}
+{{- if and (eq $v.governance.provider "local") (not $v.governance.allowLocal) -}}{{- fail "governance.provider=local needs governance.allowLocal=true (tests only)" -}}{{- end -}}
+{{- $delay := int (include "eacp.seconds" $v.shutdown.delay) -}}
+{{- $timeout := int (include "eacp.seconds" $v.shutdown.timeout) -}}
+{{- if lt (int $v.api.terminationGracePeriodSeconds) (add $delay $timeout) -}}{{- fail (printf "api.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout (%d)" (add $delay $timeout)) -}}{{- end -}}
+{{- if lt (int $v.worker.terminationGracePeriodSeconds) (add $delay $timeout (int $v.worker.maxCallSeconds)) -}}{{- fail (printf "worker.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout + worker.maxCallSeconds (%d)" (add $delay $timeout (int $v.worker.maxCallSeconds))) -}}{{- end -}}
+{{- if and (not $v.worker.connectorEgress) (not $v.worker.allowNoConnectorEgress) -}}{{- fail "worker.connectorEgress is empty: list the enterprise systems the worker may reach, or set worker.allowNoConnectorEgress=true" -}}{{- end -}}

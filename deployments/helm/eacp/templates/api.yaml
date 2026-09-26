@@ -1,0 +1,81 @@
+{{- $c := dict "root" . "component" "api" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "eacp.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eacp.labels" $c | nindent 8 }}
+    spec:
+      {{- include "eacp.podSecurity" (dict "root" . "sa" true) | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      {{- include "eacp.spread" $c | nindent 6 }}
+      containers:
+        - name: controlplane-api
+          image: {{ include "eacp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/controlplane-api"]
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: EACP_HTTP_ADDR, value: ":8080"}
+            - {name: EACP_LOG_FORMAT, value: json}
+            - name: EACP_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.database.appSecret }}, key: url}}
+            - {name: EACP_GOVERNANCE_PROVIDER, value: {{ .Values.governance.provider | quote }}}
+            - {name: EACP_AGT_PDP_URL, value: "https://{{ .Release.Name }}-pdp:8443"}
+            - {name: EACP_AGT_PDP_CA_FILE, value: /pki/ca.pem}
+            - {name: EACP_AGT_PDP_CERT_FILE, value: /pki/client.pem}
+            - {name: EACP_AGT_PDP_KEY_FILE, value: /pki/client-key.pem}
+            {{- if .Values.nats.enabled }}
+            - name: EACP_NATS_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.nats.relaySecret }}, key: url}}
+            {{- end }}
+            {{- include "eacp.shutdownEnv" . | nindent 12 }}
+            {{- include "eacp.extraEnv" .Values.api.env | nindent 12 }}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, failureThreshold: 2}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
+          startupProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 2, failureThreshold: 60}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- include "eacp.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: pki, mountPath: /pki, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: pki
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.pdp.tlsSecret }}
+                  items:
+                    - {key: ca.pem, path: ca.pem}
+                    - {key: client.pem, path: client.pem}
+                    - {key: client-key.pem, path: client-key.pem}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    {{- include "eacp.selector" $c | nindent 4 }}
+  ports:
+    - {name: http, port: 8080, targetPort: http}

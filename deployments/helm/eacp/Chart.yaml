@@ -1,0 +1,7 @@
+apiVersion: v2
+name: eacp
+description: Enterprise Agent Control Plane - controlplane-api, execution-worker and the AGT sidecar PDP (ADR-029).
+type: application
+version: 0.23.0
+appVersion: "0.23.0"
+kubeVersion: ">=1.30.0-0"

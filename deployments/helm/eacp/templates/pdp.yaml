@@ -1,0 +1,70 @@
+{{- $c := dict "root" . "component" "pdp" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-pdp
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+spec:
+  replicas: {{ .Values.pdp.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "eacp.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eacp.labels" $c | nindent 8 }}
+    spec:
+      {{- include "eacp.podSecurity" (dict "root" . "sa" true) | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      {{- include "eacp.spread" $c | nindent 6 }}
+      containers:
+        - name: agt-pdp
+          image: {{ include "eacp.pdpImage" . }}
+          imagePullPolicy: {{ .Values.pdp.image.pullPolicy }}
+          ports:
+            - {name: mtls, containerPort: 8443}
+          env:
+            - {name: AGT_PDP_LISTEN, value: "0.0.0.0:8443"}
+            - name: AGT_PDP_INSTANCE_ID
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - {name: AGT_PDP_TLS_CERT_FILE, value: /pki/server.pem}
+            - {name: AGT_PDP_TLS_KEY_FILE, value: /pki/server-key.pem}
+            - {name: AGT_PDP_TLS_CLIENT_CA_FILE, value: /pki/ca.pem}
+            {{- include "eacp.extraEnv" .Values.pdp.env | nindent 12 }}
+          # Its HTTP health needs a client certificate, so the probes are TCP.
+          readinessProbe: {tcpSocket: {port: mtls}, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: mtls}, periodSeconds: 10}
+          startupProbe: {tcpSocket: {port: mtls}, periodSeconds: 2, failureThreshold: 60}
+          resources:
+            {{- toYaml .Values.pdp.resources | nindent 12 }}
+          {{- include "eacp.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: pki, mountPath: /pki, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: pki
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.pdp.tlsSecret }}
+                  items:
+                    - {key: ca.pem, path: ca.pem}
+                    - {key: server.pem, path: server.pem}
+                    - {key: server-key.pem, path: server-key.pem}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-pdp
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+spec:
+  selector:
+    {{- include "eacp.selector" $c | nindent 4 }}
+  ports:
+    - {name: mtls, port: 8443, targetPort: mtls}

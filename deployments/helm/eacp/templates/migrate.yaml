@@ -1,0 +1,38 @@
+{{- $c := dict "root" . "component" "migrate" -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+  annotations:
+    # Before any pod of the new release: services refuse an older schema.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "eacp.labels" $c | nindent 8 }}
+    spec:
+      {{- include "eacp.podSecurity" (dict "root" . "sa" false) | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "eacp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/eacpctl"]
+          args: ["migrate", "up"]
+          env:
+            - {name: EACP_LOG_FORMAT, value: json}
+            - name: EACP_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.database.ownerSecret }}, key: url}}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          {{- include "eacp.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}

@@ -1,0 +1,82 @@
+# EACP Helm values (ADR-029 Rev 1.1, docs/KUBERNETES.md).
+# The chart never holds a secret value: every *Secret value below NAMES an
+# existing Kubernetes Secret with fixed keys. PostgreSQL and NATS are
+# external. Install into a dedicated namespace: the default-deny
+# NetworkPolicy covers every pod in it.
+
+image:
+  repository: eacp
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+governance:
+  provider: microsoft-agt   # or local (tests only, with allowLocal)
+  allowLocal: false
+
+database:
+  appSecret: ""      # Secret with key "url": the eacp_app DSN (services)
+  ownerSecret: ""    # Secret with key "url": the eacp_owner DSN (migrate Job only)
+  peers: []          # NetworkPolicy peers for PostgreSQL egress
+  port: 5432
+
+nats:
+  enabled: true
+  relaySecret: ""    # Secret with key "url" (controlplane-api relay user)
+  workerSecret: ""   # Secret with key "url" (execution-worker user)
+  peers: []
+  port: 4222
+
+otel:
+  peers: []          # optional egress for the OTLP exporter
+  ports: []
+
+shutdown:
+  delay: 10s         # EACP_SHUTDOWN_DELAY: keep serving, not ready
+  timeout: 15s       # EACP_SHUTDOWN_TIMEOUT: graceful HTTP shutdown
+
+api:
+  replicas: 2
+  terminationGracePeriodSeconds: 30
+  service:
+    type: ClusterIP
+  ingress:
+    from: []         # NetworkPolicy peers allowed to reach the API on 8080; [] = any source
+  env: {}            # extra non-secret EACP_* settings
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+worker:
+  replicas: 2
+  terminationGracePeriodSeconds: 60
+  maxCallSeconds: 30            # the longest connector call timeout you allow
+  connectorSecrets: ""          # Secret with key "connector-secrets.json" (worker only)
+  connectorEgress: []           # NetworkPolicy egress rules to enterprise systems (peers + ports)
+  allowNoConnectorEgress: false
+  env: {}
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+pdp:
+  replicas: 2
+  image:
+    repository: eacp-agt-pdp
+    tag: ""
+    pullPolicy: IfNotPresent
+  tlsSecret: ""      # Secret with ca.pem, client.pem, client-key.pem, server.pem, server-key.pem
+  env: {}
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {cpu: "1", memory: 768Mi}
+
+migrate:
+  backoffLimit: 3
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+autoscaling:
+  enabled: false     # CPU HPAs; queue-depth scaling is deferred (ADR-029 Rev 1.1)
+  api: {minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}
+  worker: {minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70}

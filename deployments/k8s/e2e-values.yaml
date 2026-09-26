@@ -1,0 +1,38 @@
+# Values for the minikube e2e (scripts/k8s-e2e.sh) and the chart render tests.
+# DEVELOPMENT ONLY: the Secrets named here are created by the script from
+# deployments/docker/secrets and eacpctl pdp-dev-certs.
+image:
+  repository: eacp
+  tag: dev
+  pullPolicy: Never
+pdp:
+  image: {repository: eacp-agt-pdp, tag: dev, pullPolicy: Never}
+  tlsSecret: eacp-pdp-tls
+database:
+  appSecret: eacp-db-app
+  ownerSecret: eacp-db-owner
+  peers:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+      podSelector: {matchLabels: {app: postgres}}
+nats:
+  relaySecret: eacp-nats-relay
+  workerSecret: eacp-nats-worker
+  peers:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+      podSelector: {matchLabels: {app: nats}}
+api:
+  service: {type: NodePort}
+worker:
+  connectorSecrets: eacp-connector-secrets
+  env:
+    EACP_WORKER_LEASE: 10s          # the demo's timings (deployments/demo/compose.demo.yml)
+    EACP_RECONCILE_MAX_ATTEMPTS: "3"
+  connectorEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+          podSelector: {matchLabels: {app: fakeerp}}
+      ports: [{protocol: TCP, port: 8090}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+          podSelector: {matchLabels: {app: fakemcp}}
+      ports: [{protocol: TCP, port: 8091}]

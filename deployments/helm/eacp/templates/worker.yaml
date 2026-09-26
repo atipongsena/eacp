@@ -1,0 +1,63 @@
+{{- $c := dict "root" . "component" "worker" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "eacp.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eacp.labels" $c | nindent 8 }}
+    spec:
+      {{- include "eacp.podSecurity" (dict "root" . "sa" true) | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      {{- include "eacp.spread" $c | nindent 6 }}
+      containers:
+        - name: execution-worker
+          image: {{ include "eacp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/execution-worker"]
+          ports:
+            - {name: http, containerPort: 8081}
+          env:
+            - {name: EACP_HTTP_ADDR, value: ":8081"}
+            - {name: EACP_LOG_FORMAT, value: json}
+            - name: EACP_WORKER_ID
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: EACP_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.database.appSecret }}, key: url}}
+            - {name: EACP_CONNECTOR_SECRETS_FILE, value: /run/secrets/eacp/connector-secrets.json}
+            {{- if .Values.nats.enabled }}
+            - name: EACP_NATS_URL
+              valueFrom: {secretKeyRef: {name: {{ .Values.nats.workerSecret }}, key: url}}
+            {{- end }}
+            {{- include "eacp.shutdownEnv" . | nindent 12 }}
+            {{- include "eacp.extraEnv" .Values.worker.env | nindent 12 }}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, failureThreshold: 2}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
+          startupProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 2, failureThreshold: 60}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- include "eacp.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: connector-secrets, mountPath: /run/secrets/eacp, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: connector-secrets
+          secret:
+            secretName: {{ .Values.worker.connectorSecrets }}
+            defaultMode: 0400
+            items:
+              - {key: connector-secrets.json, path: connector-secrets.json}
