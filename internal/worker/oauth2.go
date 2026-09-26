@@ -21,13 +21,16 @@ import (
 const (
 	tokenRequestTimeout = 10 * time.Second
 	maxTokenResponse    = 64 << 10
-	maxTokenLifetime    = 3600 // seconds
+	maxTokenLifetime    = 86400 // seconds; an IdP may issue tokens living longer than an hour
+	maxTokenUse         = time.Hour
 	maxAccessToken      = 8192
 	minMintBackoff      = time.Second
 	maxMintBackoff      = time.Minute
 	// minted tokens stay in the redaction set this long after they expire,
 	// for late log lines.
 	redactAfterExpiry = 24 * time.Hour
+	// replaced tokens kept for scrubbing until their real expiry, per binding
+	maxRetired = 16
 )
 
 var (
@@ -44,6 +47,11 @@ type oauthEntry struct {
 	ClientSecretFile *string `json:"client_secret_file"`
 	Scope            string  `json:"scope"`
 	Resource         string  `json:"resource"`
+}
+
+type heldToken struct {
+	token  Secret
+	expiry time.Time
 }
 
 // oauthProvider mints OAuth 2.0 client-credentials tokens (RFC 6749 §4.4)
@@ -63,8 +71,10 @@ type oauthProvider struct {
 
 	mu           sync.Mutex
 	token        Secret
-	expiry       time.Time
-	lifetime     time.Duration // of the last token minted: a longer call cannot be served
+	expiry       time.Time     // the token is used until then: at most maxTokenUse after its request
+	realExpiry   time.Time     // it authorises at the target until then, so it is scrubbed until then
+	lifetime     time.Duration // usable lifetime of the last token minted: a longer call cannot be served
+	retired      []heldToken   // replaced or dropped tokens that still authorise, newest last
 	backoff      time.Duration
 	backoffUntil time.Time
 }
@@ -164,15 +174,16 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 	if !p.available(p.now()) {
 		return Secret{}, ErrCredentialUnavailable
 	}
-	tok, expiry, lifetime, class := p.request(ctx)
+	tok, expiry, realExpiry, lifetime, class := p.request(ctx)
 	if class == "" {
-		p.redactUntil(tok, expiry)
+		p.redactUntil(tok, realExpiry)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
 	if class == "" {
-		p.token, p.expiry, p.lifetime = tok, expiry, lifetime
+		p.retire()
+		p.token, p.expiry, p.realExpiry, p.lifetime = tok, expiry, realExpiry, lifetime
 		p.backoff, p.backoffUntil = 0, time.Time{}
 		if !now.Add(validFor).Before(expiry) {
 			// Kept for shorter calls; this one cannot be served.
@@ -199,10 +210,11 @@ func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
 	}
 }
 
-// request performs one token request. It returns the token, its expiry and
-// lifetime, or a failure class, never a response body or secret. The expiry
-// is measured from before the request.
-func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Duration, string) {
+// request performs one token request. It returns the token, the time it is
+// used until (at most maxTokenUse after the request), its real expiry and its
+// usable lifetime, or a failure class, never a response body or secret. Both
+// expiries are measured from before the request.
+func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Time, time.Duration, string) {
 	form := url.Values{"grant_type": {"client_credentials"}}
 	if p.scope != "" {
 		form.Set("scope", p.scope)
@@ -214,7 +226,7 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Du
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Secret{}, time.Time{}, 0, "request"
+		return Secret{}, time.Time{}, time.Time{}, 0, "request"
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -223,15 +235,15 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Du
 	start := p.now()
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return Secret{}, time.Time{}, 0, "transport"
+		return Secret{}, time.Time{}, time.Time{}, 0, "transport"
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponse+1))
 	if err != nil || len(body) > maxTokenResponse {
-		return Secret{}, time.Time{}, 0, "response_unreadable"
+		return Secret{}, time.Time{}, time.Time{}, 0, "response_unreadable"
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Secret{}, time.Time{}, 0, fmt.Sprintf("http_%d", resp.StatusCode)
+		return Secret{}, time.Time{}, time.Time{}, 0, fmt.Sprintf("http_%d", resp.StatusCode)
 	}
 	var tr struct {
 		AccessToken string          `json:"access_token"`
@@ -239,20 +251,20 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Du
 		ExpiresIn   json.RawMessage `json:"expires_in"` // a bare JSON integer
 	}
 	if err := json.Unmarshal(body, &tr); err != nil {
-		return Secret{}, time.Time{}, 0, "invalid_json"
+		return Secret{}, time.Time{}, time.Time{}, 0, "invalid_json"
 	}
 	if len(tr.AccessToken) > maxAccessToken || !tokenPattern.MatchString(tr.AccessToken) {
-		return Secret{}, time.Time{}, 0, "invalid_access_token"
+		return Secret{}, time.Time{}, time.Time{}, 0, "invalid_access_token"
 	}
 	if !strings.EqualFold(tr.TokenType, "Bearer") {
-		return Secret{}, time.Time{}, 0, "not_bearer"
+		return Secret{}, time.Time{}, time.Time{}, 0, "not_bearer"
 	}
 	n, err := strconv.ParseInt(string(tr.ExpiresIn), 10, 64)
 	if err != nil || n < 1 || n > maxTokenLifetime {
-		return Secret{}, time.Time{}, 0, "invalid_expires_in"
+		return Secret{}, time.Time{}, time.Time{}, 0, "invalid_expires_in"
 	}
-	lifetime := time.Duration(n) * time.Second
-	return Secret{tr.AccessToken}, start.Add(lifetime), lifetime, ""
+	lifetime := min(time.Duration(n)*time.Second, maxTokenUse)
+	return Secret{tr.AccessToken}, start.Add(lifetime), start.Add(time.Duration(n) * time.Second), lifetime, ""
 }
 
 // rejected drops the held token when it is s.
@@ -260,18 +272,41 @@ func (p *oauthProvider) rejected(s Secret) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if s.v != "" && p.token.v == s.v {
-		p.token, p.expiry = Secret{}, time.Time{}
+		p.retire()
+		p.token, p.expiry, p.realExpiry = Secret{}, time.Time{}, time.Time{}
 	}
 }
 
-// live returns the client secret and the held token while it is unexpired.
+// retire keeps the held token for scrubbing until its real expiry. The
+// caller holds p.mu.
+func (p *oauthProvider) retire() {
+	if p.token.v == "" {
+		return
+	}
+	p.retired = append(p.retired, heldToken{p.token, p.realExpiry})
+	if len(p.retired) > maxRetired {
+		p.retired = p.retired[len(p.retired)-maxRetired:]
+	}
+}
+
+// live returns the client secret and every token, held or retired, until
+// its real expiry: a token authorises at the target until then.
 func (p *oauthProvider) live() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := p.now()
 	out := []string{p.clientSecret.v}
-	if p.token.v != "" && p.now().Before(p.expiry) {
+	if p.token.v != "" && now.Before(p.realExpiry) {
 		out = append(out, p.token.v)
 	}
+	kept := p.retired[:0]
+	for _, h := range p.retired {
+		if now.Before(h.expiry) {
+			kept = append(kept, h)
+			out = append(out, h.token.v)
+		}
+	}
+	p.retired = kept
 	return out
 }
 

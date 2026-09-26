@@ -179,7 +179,7 @@ func TestEveryInvalidTokenResponseIsRefused(t *testing.T) {
 		"no expiry":          {200, map[string]any{"access_token": "x", "token_type": "Bearer"}},
 		"expiry as string":   {200, map[string]any{"access_token": "x", "token_type": "Bearer", "expires_in": "60"}},
 		"fractional expiry":  {200, map[string]any{"access_token": "x", "token_type": "Bearer", "expires_in": 60.5}},
-		"too long lived":     {200, map[string]any{"access_token": "x", "token_type": "Bearer", "expires_in": 3601}},
+		"too long lived":     {200, map[string]any{"access_token": "x", "token_type": "Bearer", "expires_in": 86401}},
 		"zero lifetime":      {200, map[string]any{"access_token": "x", "token_type": "Bearer", "expires_in": 0}},
 		"empty token":        {200, map[string]any{"access_token": "", "token_type": "Bearer", "expires_in": 60}},
 		"token with a space": {200, map[string]any{"access_token": "a b", "token_type": "Bearer", "expires_in": 60}},
@@ -194,6 +194,71 @@ func TestEveryInvalidTokenResponseIsRefused(t *testing.T) {
 				t.Fatalf("err = %v, want ErrCredentialUnavailable", err)
 			}
 		})
+	}
+}
+
+// longLived answers every mint with a token living 90 minutes, as Entra ID
+// may (a random 60-90 minute default lifetime).
+func longLived(n int64) (int, any) {
+	return 200, map[string]any{"access_token": fmt.Sprintf("long-%d-%s", n, canary), "token_type": "Bearer", "expires_in": 5400}
+}
+
+func TestALongLivedTokenIsUsedForAtMostAnHour(t *testing.T) {
+	p := newIDP(t)
+	p.set(longLived)
+	c := &clock{t: time.Now()}
+	s := oauthStore(t, p.srv.URL, c, "")
+	ctx := context.Background()
+	first, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute)
+	if err != nil {
+		t.Fatalf("a token living 90 minutes was refused: %v", err)
+	}
+	c.add(58 * time.Minute)
+	if again, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); err != nil || again.Reveal() != first.Reveal() {
+		t.Fatalf("the token was not reused within its first hour: %v", err)
+	}
+	c.add(2 * time.Minute) // an hour after the mint
+	if fresh, err := s.Credential(ctx, tenant, "erp", erpEndpoint, time.Minute); err != nil || fresh.Reveal() == first.Reveal() {
+		t.Fatalf("a token was used for more than an hour: %v", err)
+	}
+	if p.mints.Load() != 2 {
+		t.Fatalf("%d mints, want 2", p.mints.Load())
+	}
+	if !strings.Contains(strings.Join(s.Values(), ","), first.Reveal()) {
+		t.Fatal("the first token left Values before its real expiry (it still authorises at the target)")
+	}
+	c.add(31 * time.Minute) // past the first token's real expiry
+	if strings.Contains(strings.Join(s.Values(), ","), first.Reveal()) {
+		t.Fatal("an expired token is still in Values")
+	}
+}
+
+func TestTheCapDecidesWhetherATokenIsTooShort(t *testing.T) {
+	p := newIDP(t)
+	p.set(longLived)
+	s := oauthStore(t, p.srv.URL, &clock{t: time.Now()}, "")
+	ctx := context.Background()
+	for range 2 {
+		if _, err := s.Credential(ctx, tenant, "erp", erpEndpoint, 3700*time.Second); !errors.Is(err, worker.ErrCredentialTooShort) {
+			t.Fatalf("a call longer than an hour got a token: %v", err)
+		}
+	}
+	if p.mints.Load() != 1 || len(s.Available()) != 1 {
+		t.Fatalf("mints = %d, available = %d: want one mint and no back-off", p.mints.Load(), len(s.Available()))
+	}
+}
+
+func TestALongLivedTokenIsRedacted(t *testing.T) {
+	p := newIDP(t)
+	p.set(longLived)
+	set := logging.NewSecretSet()
+	s := oauthStore(t, p.srv.URL, &clock{t: time.Now()}, "", worker.WithRedaction(set))
+	tok, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(set.Values(), ","), tok.Reveal()) {
+		t.Fatal("the redaction set lacks the token")
 	}
 }
 
