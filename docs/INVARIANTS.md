@@ -164,6 +164,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestSecretCanaryNeverLeaks — a canary secret appears in no row, journal, outbox or log
 - `internal/fakeerp` TestFakeERPRejectsUnauthenticatedPrivilegedCalls — privileged ERP calls need the worker credential
 - `internal/worker` TestTheWorkerExecutesWithAMintedToken — a just-in-time token is minted in the worker, reused, and appears in no row, journal, outbox or log (ADR-019)
+- `internal/worker` TestTheWorkerExecutesThroughWorkloadIdentityFederation — with a platform-issued client assertion and no client secret, neither the assertion nor a token appears in any row, journal, outbox or log (ADR-019 Rev 1.1)
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 

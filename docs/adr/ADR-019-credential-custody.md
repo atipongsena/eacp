@@ -1,6 +1,6 @@
 # ADR-019: Credential custody — providers and just-in-time credentials
 
-Status: Accepted (Rev 1.0, 2026-09-26). Phase 24a. Scope: MASTER_PLAN §96.
+Status: Accepted (Rev 1.1, 2026-09-26). Phases 24a (Rev 1.0) and 24b (Rev 1.1). Scope: MASTER_PLAN §96.
 Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
 bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
 (circuits and backpressure withhold work), ADR-023 (the MCP scanner), ADR-029 (the worker runs as several
@@ -19,6 +19,12 @@ Those credentials were static: a long-lived secret per target. §96 asks for sho
 just in time, then Vault, SPIFFE and cloud workload identity. This revision adds the provider seam and its
 first real provider, OAuth 2.0 client credentials (RFC 6749 §4.4), the pattern behind Entra ID, Okta, Keycloak
 and most enterprise token brokers. Custody does not change.
+
+Rev 1.1 (Phase 24b) removes the last long-lived secret of such a binding: workload identity federation. The
+worker authenticates to the token endpoint with a JWT its platform issues and rotates (a Kubernetes projected
+service-account token, which Azure Workload Identity also uses) instead of a client secret (§3a). It also
+accepts tokens that live longer than an hour, as Entra ID issues them, but uses each for at most an hour
+(§3).
 
 ## Decision
 
@@ -54,8 +60,9 @@ exactly one of `value`, `value_file` (a static credential, as before) or `oauth2
 
 Entry: `token_url` (absolute, lowercase host, no user info, query or fragment; `https`, or `http` only when
 `EACP_ENV` is `development` or `test`), `client_id` (1–256 printable characters without spaces or `:`),
-exactly one of `client_secret` and `client_secret_file` (1–4096 bytes), optional `scope` (RFC 6749 scope
-tokens, ≤ 1024 bytes) and `resource` (RFC 8707, an absolute URL without fragment).
+exactly one of `client_secret`, `client_secret_file` (1–4096 bytes) and `client_assertion_file` (§3a),
+optional `scope` (RFC 6749 scope tokens, ≤ 1024 bytes) and `resource` (RFC 8707, an absolute URL without
+fragment).
 
 Token request: `POST token_url`, form `grant_type=client_credentials[&scope][&resource]`, client
 authentication `client_secret_basic` with the id and secret form-urlencoded (RFC 6749 §2.3.1). Its own HTTP
@@ -64,7 +71,14 @@ client: 10 s timeout, **no redirects** (a redirect could carry the client secret
 
 Only this response is a token: HTTP 200, a JSON object, `access_token` of 1–8192 printable ASCII characters
 without spaces, `token_type` `Bearer` (case-insensitive, RFC 6750) and `expires_in` a bare JSON integer from 1
-to 3600. Anything else is a failed mint.
+to 86 400. Anything else is a failed mint.
+
+A token is **used** for at most an hour: its usable expiry is the request time plus `min(expires_in, 3600)`,
+and that capped lifetime decides whether a call can be served. Entra ID gives access tokens a random default
+lifetime of 60–90 minutes, so Rev 1.0's refusal of `expires_in` above 3600 would have refused its tokens about
+half the time (Rev 1.1). The token still authorises at the target until its real expiry, so it stays in
+`Values()` (for scrubbing) until then, even after a newer token replaced it (up to 16 per binding), and in the
+redaction set until a day later.
 
 A token that lives shorter than the call's `validFor` is not a failed mint: the IdP works, the call is simply
 longer than its tokens. The token is kept for shorter calls, the provider remembers the lifetime and answers
@@ -78,12 +92,48 @@ minting again, until a later mint shows a longer lifetime. The binding does not 
   back-off `Credential` fails at once without a request and `Available()` omits the binding.
 - Mints and failures are logged with tenant, reference, token host, lifetime or failure class only.
 
+### 3a. Workload identity federation (Rev 1.1)
+
+With `client_assertion_file`, the client holds no secret. The file holds a JWT that the platform issues and
+rotates, such as a Kubernetes projected service-account token (the kubelet rotates it at 80 % of its lifetime,
+and the application must reload it). The token request is RFC 7523 §2.2, in the shape Entra ID documents for a
+federated credential:
+
+```
+grant_type=client_credentials&client_id=<id>
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&client_assertion=<jwt>[&scope][&resource]
+```
+
+with no `Authorization` header (one client authentication method per request).
+
+- **At load** the file must be readable, 1 byte–16 KiB after a trailing newline is trimmed, and a compact JWS
+  (three non-empty unpadded base64url segments, a JSON object header and payload) whose payload has a
+  numeric `exp`; otherwise the whole secrets file is rejected. An expired assertion is accepted at load: the
+  kubelet may be about to rotate it.
+- **At every mint** the file is read again. An unreadable, empty or oversized file (`assertion_unreadable`),
+  a malformed one (`assertion_invalid`), or one with less than 10 s (the token request timeout) left
+  (`assertion_expired`) is a failed mint: no request, the 1–60 s back-off, and the binding withheld from
+  claims.
+- The worker never checks the assertion's signature, issuer or audience: only the IdP judges it. It reads
+  `exp` only to know when the assertion is unusable and how long to redact it.
+- The assertion is a credential (it can be exchanged for tokens until it expires): each value read is added to
+  the redaction set until its `exp` plus 24 h, and the last one read is in `Values()` until its `exp`.
+
+**Kubernetes.** The Helm chart gives the worker its own ServiceAccount, `<release>-worker`, so a federated
+subject `system:serviceaccount:<namespace>:<release>-worker` names only the worker. With
+`worker.workloadIdentity.enabled`, it projects a service-account token (`audience`, `expirationSeconds`
+600–86 400, default 3600) into the worker pod alone, read-only at `/run/secrets/eacp-identity/token`; the
+secrets-file entry names that path. For Entra ID, register a federated identity credential with the cluster's
+issuer, that subject and the audience `api://AzureADTokenExchange`; the Azure Workload Identity webhook is
+not needed.
+
 ### 4. Redaction
 
 `logging.SecretSet` holds the values a logger redacts and may grow after the logger is built
 (`logging.NewWithSet`). `service.Deps` owns one set (`Redaction()`); `RedactSecrets` adds permanent values.
-The worker adds each client secret permanently and each minted token until its expiry plus 24 h, keeping at
-most 10 000 temporary values (the oldest go first).
+The worker adds each client secret permanently, each client assertion until its `exp` plus 24 h and each minted
+token until its real expiry plus 24 h, keeping at most 10 000 temporary values (the oldest go first).
 
 ### 5. Failure handling
 
@@ -106,6 +156,16 @@ refusals are audited with the hash and expiry, never the token. Compose and the 
 tenant `…00a4`, `secret_ref` `fakeerp-jit`, to it; the TTL is 300 s because a 60 s token could never outlive
 the default 30 s call plus the 30 s skew.
 
+Rev 1.1: with `EACP_FAKEERP_OAUTH_FEDERATED_CLIENT_ID`, `_ISSUER`, `_AUDIENCE`, `_SUBJECT` and `_JWKS_FILE`
+(all or none), Fake ERP also serves a federated client. It verifies the assertion with the standard library:
+header `alg` `RS256` only and a known `kid`, the signature, `iss` and `sub` exactly, `aud` (a string or an
+array) containing the audience, and `exp`, `nbf` and `iat` with 30 s skew; a request using Basic auth and an
+assertion together is refused (`400 invalid_request`), a failed check is `401 invalid_client`. A token issued
+this way records the assertion's SHA-256 in the audit, never the assertion. On Kubernetes the e2e script reads
+the cluster's real issuer and JWKS into Fake ERP's configuration and binds tenant `…00a5`, `secret_ref`
+`fakeerp-wif`, to the worker's projected token (`deployments/k8s/connector-secrets.federated.json`). Compose
+has no platform issuer and keeps the Rev 1.0 client-secret tenant only.
+
 ### 7. Proof
 
 - `internal/logging`: `TestALoggerRedactsASecretAddedAfterItWasBuilt`, `TestTemporarySecretsExpireAndAreBounded`.
@@ -125,6 +185,19 @@ the default 30 s call plus the 30 s skew.
   from API responses, service logs and a database dump.
 - `test/security`: the agent cannot reach the token endpoint; only Fake ERP mounts the OAuth client secret;
   an unauthenticated token request gets 401.
+- Rev 1.1, `internal/worker` (`federation_test.go`): the assertion request's shape without Basic auth
+  (`TestAnAssertionAuthenticatesTheTokenRequest`), a rotated file read at the next mint
+  (`TestEveryMintReadsTheCurrentAssertion`), trimming, each unusable assertion backs off without a request
+  (`TestAnUnusableAssertionFailsTheMintAndBacksOff`), redaction and scrubbing, and every invalid assertion
+  file rejecting the whole secrets file; `oauth2_test.go`: `TestALongLivedTokenIsUsedForAtMostAnHour`,
+  `TestTheCapDecidesWhetherATokenIsTooShort`; `jit_integration_test.go`:
+  `TestTheWorkerExecutesThroughWorkloadIdentityFederation` (real HTTP connector, Fake ERP with a federated
+  client, no assertion or token in the database or logs).
+- Rev 1.1, `internal/fakeerp` (`federation_test.go`): issuance with a valid assertion and every refusal;
+  `test/helm` (`identity_test.go`): the worker's own ServiceAccount and the projected token in the worker only;
+  `test/demo` `TestFederatedJITDemo` on minikube with the cluster's issuer: purchases as
+  `oauth:eacp-worker-wif`, and no issued token and no JWT of the worker's service account in responses, logs
+  or a database dump.
 
 ## Consequences
 
@@ -133,8 +206,11 @@ the default 30 s call plus the 30 s skew.
 - A token endpoint outage stops that binding's work without churning leases or tripping the target's circuit.
   Work waits in `QUEUED`; it is never failed for a missing credential.
 - Each worker replica mints its own tokens (ADR-029: replicas share nothing that decides).
-- Vault, SPIFFE/SPIRE and cloud workload identity (24b/24c) implement the same seam: a provider that returns a
-  credential valid for `validFor`, reports availability and drops a rejected value.
+- With workload identity federation (Rev 1.1) the worker holds no long-lived secret for the binding: the
+  platform rotates the assertion, and revoking the federated credential at the IdP stops new tokens.
+- SPIFFE JWT-SVIDs, `private_key_jwt`, token exchange (RFC 8693), AWS and GCP STS and Vault (24c and later)
+  implement the same seam: a provider that returns a credential valid for `validFor`, reports availability
+  and drops a rejected value.
 
 ## Unresolved assumptions (conservative choices)
 
@@ -142,7 +218,7 @@ the default 30 s call plus the 30 s skew.
 |---|---|
 | Where providers run | Inside the worker only; a broker sidecar is deferred. |
 | Client authentication | `client_secret_basic` only; `private_key_jwt` and mTLS are deferred. |
-| Token lifetime | `expires_in` is required and at most 3600 s; longer or missing is refused. |
+| Token lifetime | `expires_in` is required, 1–86 400 s; a token is used for at most 3600 s and scrubbed and redacted until its real expiry (Rev 1.1; Rev 1.0 refused anything above 3600 s). |
 | Reuse | Only while the token outlives the whole call (`validFor`); never persisted. |
 | A token shorter than the call | Unavailable for that call only: no back-off, no new mint for calls as long, the action deferred by that worker for a minute, logged at error level with both durations. |
 | Reconciling while the credential is unavailable | Nothing is looked up; the lapsed lease still counts as a reconciliation attempt (T33), so a long IdP outage can hand an unknown outcome to a human sooner (T34). |
@@ -152,3 +228,10 @@ the default 30 s call plus the 30 s skew.
 | Plain `http` token endpoint | Only when `EACP_ENV` is `development` or `test`. |
 | Credential evidence in PostgreSQL | None; logs carry the binding and lifetime, never a value. |
 | Minted tokens in the redactor | Kept until expiry + 24 h, at most 10 000. |
+| Who validates a client assertion | The IdP only; the worker reads `exp` and nothing else (Rev 1.1). |
+| When the assertion is read | At every mint; never reused from an earlier read. |
+| An assertion close to expiry | Refused with less than 10 s left: a failed mint and back-off. |
+| Which service account the worker federates as | Its own, `<release>-worker`; no other chart workload can obtain its token. |
+| Projected token lifetime | 600–86 400 s, default 3600 s (as Azure Workload Identity). |
+| Assertion replay at Fake ERP | Not checked (Entra ID accepts the same assertion until it expires). |
+| Fake ERP's keys | A JWKS captured at install; key rotation needs a reinstall (demo only). |

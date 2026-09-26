@@ -47,6 +47,17 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   so give the client secret inline (`client_secret`); a `client_secret_file` path would not exist in the pod
   and the worker would refuse to start. A plain `http` token URL is accepted only when `environment` is
   `development` or `test`.
+- `worker.workloadIdentity` (ADR-019 Rev 1.1) — `enabled` (default `false`), `audience` (required when
+  enabled, 1–256 characters without whitespace) and `expirationSeconds` (600–86 400, default 3600). When
+  enabled, the worker pod alone gets a projected service-account token, read-only at
+  `/run/secrets/eacp-identity/token`; an `oauth2` entry names it as `client_assertion_file` and needs no
+  client secret. The worker always runs as its own ServiceAccount, `<release>-worker`, so the federated
+  subject `system:serviceaccount:<namespace>:<release>-worker` names only the worker. For Entra ID: create a
+  federated identity credential on the application with the cluster's service-account issuer (its OIDC
+  issuer URL, which Entra must be able to reach), that subject and the audience `api://AzureADTokenExchange`
+  (set `audience` to the same value); the token URL is
+  `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`, and its host belongs in
+  `worker.connectorEgress`. The Azure Workload Identity webhook is not needed: the chart projects the token.
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.

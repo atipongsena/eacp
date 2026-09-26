@@ -249,7 +249,7 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 		form.Set("resource", p.resource)
 	}
 	if p.assertionFile != "" {
-		// Read at every mint: the platform rotates the file (ADR-019 §3).
+		// Read at every mint: the platform rotates the file (ADR-019 §3a).
 		assertion, exp, class := readAssertion(p.assertionFile, p.now())
 		if class != "" {
 			return Secret{}, time.Time{}, time.Time{}, 0, class

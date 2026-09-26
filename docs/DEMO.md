@@ -125,6 +125,15 @@ The walk-through below is what `docs/reviews/2026-09-26-phase22b-console-e2e.md`
 
 The agent cannot reach the token endpoint any more than the ERP (`test/security` `TestAgentCannotReachTheTokenEndpoint`). The JIT demo also runs on Kubernetes (`scripts/k8s-e2e.sh`).
 
+### Federated JIT demo (Kubernetes only)
+
+`TestFederatedJITDemo` shows Phase 24b (ADR-019 Rev 1.1) and runs only through `scripts/k8s-e2e.sh`, because it needs a real platform issuer. The script reads the cluster's service-account issuer and JWKS into Fake ERP's configuration, which gains a federated client `eacp-worker-wif` trusting subject `system:serviceaccount:eacp:eacp-worker` and audience `fakeerp`. The worker's secrets bind tenant Hooli's `fakeerp-wif` to that client, with the kubelet-projected token as the client assertion. There is no client secret.
+
+- **F0.** Bootstrap tenant Hooli and a policy that allows routine ERP work.
+- **F1.** Three purchases each end `SUCCEEDED` with exactly one purchase order.
+- **F2.** The Fake ERP audit shows every purchase made by principal `oauth:eacp-worker-wif`, and each issuance records the assertion's SHA-256, never the assertion.
+- **F3.** No issued token, audited assertion or JWT naming the worker's service account appears in API responses, service logs or a database dump.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

@@ -23,7 +23,7 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 | [ADR-027](ADR-027-incidents-and-agent-soc.md) | Incidents and the Agent SOC Read Model | Accepted (Rev 1.0) | Phase 22a |
 | [ADR-028](ADR-028-operator-console.md) | The Operator Console | Accepted (Rev 1.0) | Phase 22b |
 | [ADR-029](ADR-029-high-availability.md) | High Availability: Replicas Without a Leader | Accepted (Rev 1.1) | Phase 23 |
-| [ADR-019](ADR-019-credential-custody.md) | Credential Custody: Providers and Just-in-Time Credentials | Accepted (Rev 1.0) | Phase 24a |
+| [ADR-019](ADR-019-credential-custody.md) | Credential Custody: Providers and Just-in-Time Credentials | Accepted (Rev 1.1) | Phases 24a, 24b |
 | ADR-006 … ADR-021 (others, except 011, 012, 014, 015, 016, 018 and 019) | See MASTER_PLAN §74 | Not started | |
 
 ADR-007 to ADR-010 and ADR-013 must conform to ADR-004.

@@ -199,6 +199,19 @@ A connector credential no longer has to be a static secret (ADR-019). An entry o
 
 The worker mints a Bearer token (it must expire within an hour) just before a call, reuses it only while it outlives the whole call plus 30 s, and never stores it. If the token endpoint fails, nothing is dispatched and the worker stops claiming that binding's work during a 1–60 s back-off. Tokens and client secrets are redacted from every log. Only the worker holds any of this; agents, the API and PostgreSQL never do. `DEMO=J scripts/demo.sh` runs the JIT demo.
 
+## Phase 24b: workload identity federation
+
+The OAuth provider can authenticate without any client secret (ADR-019 Rev 1.1). Name a JWT that the platform issues and rotates instead, such as the Kubernetes service-account token the chart projects into the worker:
+
+```json
+{"tenant_id": "…", "secret_ref": "erp-wif", "host": "erp.internal:8443",
+ "oauth2": {"token_url": "https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token",
+            "client_id": "<application id>", "client_assertion_file": "/run/secrets/eacp-identity/token",
+            "scope": "api://erp/.default"}}
+```
+
+The worker reads the file at every mint and sends it as an RFC 7523 client assertion, the request Entra ID documents for a federated credential. An unreadable, malformed or expiring assertion backs the binding off like a failing token endpoint. Tokens may live up to a day (Entra ID issues 60–90 minutes) but are used for at most an hour. With `worker.workloadIdentity.enabled`, the Helm chart projects the token into the worker pod only, under the worker's own ServiceAccount; see [docs/KUBERNETES.md](docs/KUBERNETES.md). `scripts/k8s-e2e.sh` runs `TestFederatedJITDemo`, which buys with tokens minted against the cluster's real service-account issuer.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start
