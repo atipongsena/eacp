@@ -78,8 +78,9 @@ type provider interface {
 }
 ```
 
-`SecretStore` and `LoadSecrets` are replaced by `Credentials` and `LoadCredentials(path, opts)`; `Secret` keeps
-its redacting formatters. The worker, reconciler and scanner call `Resolve` with `validFor`:
+Implementation note (plan ruling): the type keeps its name `SecretStore` and its loader `LoadSecrets(path, opts...)`,
+and the method above is `Credential`; `Resolve(tenant, ref, endpoint)` stays as `Credential` with `validFor` 0 for
+existing callers. `Secret` keeps its redacting formatters. The worker, reconciler and scanner call `Resolve` with `validFor`:
 
 | Caller | validFor |
 |---|---|
@@ -171,10 +172,11 @@ class only — never a token, a secret or a response body.
 - Issuance is audited (route `/oauth/token`, outcome `token_issued`, principal `oauth:<client_id>`, the
   token's SHA-256 and expiry), never the token. Tokens are random 32 bytes, base64url without padding (43
   characters).
-- Test hooks: `fakeerp.Options` lets tests shorten the TTL, count issuances and make the endpoint fail.
+- Test hooks: `fakeerp.Options` lets tests shorten the TTL; tests count issuances and make the endpoint fail
+  by wrapping the handler.
 
 Compose: Fake ERP gets a dev client (`deployments/docker/secrets/fakeerp-oauth-client.dev`, prepared like the
-other dev tokens) and TTL `60s`; the dev connector-secrets manifest gains tenant
+other dev tokens) and TTL `300s` (a 60 s token could never outlive the default 30 s call plus 30 s skew); the dev connector-secrets manifest gains tenant
 `00000000-0000-4000-8000-0000000000a4` (`secret_ref` `fakeerp-jit`, host `fakeerp:8090`, `oauth2` with
 `token_url` `http://fakeerp:8090/oauth/token`). The Kubernetes dev manifests and e2e script get the same.
 
