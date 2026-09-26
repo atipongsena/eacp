@@ -1,0 +1,28 @@
+# DEVELOPMENT ONLY: the demo's host names (fakeerp:8090, controlplane-api:8080)
+# resolve in every namespace that uses them, so a refused probe is refused by
+# a NetworkPolicy, not by a DNS miss, and the dev connector-secrets manifest
+# (host fakeerp:8090) is unchanged.
+apiVersion: v1
+kind: Service
+metadata: {name: fakeerp, namespace: eacp}
+spec: {type: ExternalName, externalName: fakeerp.eacp-deps.svc.cluster.local}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakemcp, namespace: eacp}
+spec: {type: ExternalName, externalName: fakemcp.eacp-deps.svc.cluster.local}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakeerp, namespace: agents}
+spec: {type: ExternalName, externalName: fakeerp.eacp-deps.svc.cluster.local}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakemcp, namespace: agents}
+spec: {type: ExternalName, externalName: fakemcp.eacp-deps.svc.cluster.local}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: controlplane-api, namespace: agents}
+spec: {type: ExternalName, externalName: eacp-api.eacp.svc.cluster.local}

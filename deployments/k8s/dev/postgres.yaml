@@ -1,0 +1,54 @@
+# DEVELOPMENT ONLY: a single PostgreSQL for the e2e. Production uses a managed
+# or HA PostgreSQL outside the chart (ADR-029 Rev 1.1). The roles come from
+# deployments/docker/postgres/initdb/01-roles.sh (ConfigMap postgres-initdb).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: eacp-deps
+spec:
+  selector: {app: postgres}
+  ports: [{name: pg, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: eacp-deps
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: postgres
+          image: postgres:18-alpine
+          imagePullPolicy: Never
+          env:
+            - {name: POSTGRES_USER, value: postgres}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres-bootstrap, key: POSTGRES_PASSWORD}}
+            - name: EACP_OWNER_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres-bootstrap, key: EACP_OWNER_PASSWORD}}
+            - name: EACP_APP_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres-bootstrap, key: EACP_APP_PASSWORD}}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, postgres, -d, eacp]}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+            - {name: initdb, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: initdb
+          configMap: {name: postgres-initdb}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}

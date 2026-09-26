@@ -1,0 +1,19 @@
+# Namespaces of the minikube e2e (scripts/k8s-e2e.sh). DEVELOPMENT ONLY.
+# eacp runs the chart under the restricted Pod Security Standard.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eacp
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eacp-deps
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents

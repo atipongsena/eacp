@@ -1,0 +1,23 @@
+# DEVELOPMENT ONLY: the stand-in agent runtime (compose service "agent"). It
+# holds no credential; the network lets it reach only the API.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent}
+  template:
+    metadata:
+      labels: {app: agent}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: agent
+          image: busybox:1.37
+          imagePullPolicy: Never
+          command: [sleep, infinity]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
