@@ -41,7 +41,9 @@ func NewSweeper(e *Engine) *Sweeper {
 	return &Sweeper{e: e, Batch: 100, Grace: 2 * time.Second, ReconcileMaxAge: time.Hour}
 }
 
-// Stats counts what one pass did.
+// Stats counts what one pass did. Expired, Reclaimed, Retried and Escalated
+// count only the actions this pass moved (another replica may move one
+// first); Advanced counts advance attempts.
 type Stats struct {
 	Tenants, Expired, Reclaimed, Retried, Advanced int
 	// Escalated counts unknown outcomes sent to a human (T29, T34).
@@ -117,18 +119,23 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 		return err
 	}
 	for _, id := range due {
+		moved := false
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			r, err := load(ctx, tx, id, true)
 			if err != nil || !r.Expired || (r.State != "RECEIVED" && r.State != "AUTHORIZED" &&
 				r.State != "QUEUED" && r.State != "LEASED") {
 				return err
 			}
-			return expire(ctx, tx, r)
+			err = expire(ctx, tx, r)
+			moved = err == nil
+			return err
 		})
 		if err != nil {
 			return err
 		}
-		st.Expired++
+		if moved {
+			st.Expired++
+		}
 	}
 
 	// Expired approvals decide their action through the request cascade
@@ -142,20 +149,24 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 		return err
 	}
 	for _, id := range lapsed {
+		moved := false
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			r, err := load(ctx, tx, id, true) // the action first: lock order
 			if err != nil || r.ApprovalRequestID == nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE eacp.approval_requests SET state = 'EXPIRED'
+			tag, err := tx.Exec(ctx, `UPDATE eacp.approval_requests SET state = 'EXPIRED'
 				WHERE id = $1 AND state IN ('PENDING', 'GRANTED')
 				  AND (expires_at <= now() OR not_after <= now())`, *r.ApprovalRequestID)
+			moved = err == nil && tag.RowsAffected() == 1
 			return err
 		})
 		if err != nil {
 			return err
 		}
-		st.Expired++
+		if moved {
+			st.Expired++
+		}
 	}
 
 	// Expired leases (§22): before a dispatch intent the action is safely
@@ -170,6 +181,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 		return err
 	}
 	for _, id := range lapsedLeases {
+		moved := false
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			var state string
 			var expired, readOnly bool
@@ -186,9 +198,11 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 				return err
 			}
 			if state == "RECONCILING" {
-				return move(ctx, tx, `UPDATE eacp.actions SET state = 'UNKNOWN_OUTCOME',
+				err = move(ctx, tx, `UPDATE eacp.actions SET state = 'UNKNOWN_OUTCOME',
 					state_reason = 'reconciler lease expired', reconcile_attempts = reconcile_attempts + 1,
 					next_reconcile_at = now() WHERE id = $1 AND state = $2`, id, state)
+				moved = err == nil
+				return err
 			}
 			to, why := "QUEUED", "lease expired before dispatch"
 			if state == "EXECUTING" && readOnly {
@@ -196,13 +210,17 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 			} else if state == "EXECUTING" {
 				to, why = "UNKNOWN_OUTCOME", "lease expired during the call"
 			}
-			return move(ctx, tx, `UPDATE eacp.actions SET state = $3, state_reason = $4
+			err = move(ctx, tx, `UPDATE eacp.actions SET state = $3, state_reason = $4
 				WHERE id = $1 AND state = $2`, id, state, to, why)
+			moved = err == nil
+			return err
 		})
 		if err != nil {
 			return err
 		}
-		st.Reclaimed++
+		if moved {
+			st.Reclaimed++
+		}
 	}
 
 	// Unknown outcomes (§20) that no lookup can prove anything about go to a
@@ -223,7 +241,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 		return err
 	}
 	for _, id := range unknown {
-		escalated := false
+		escalated, moved := false, false
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			var state, proof, lookup string
 			var read, revoked, old bool
@@ -254,15 +272,18 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 				return nil
 			}
 			escalated = to == "NEEDS_HUMAN_RESOLUTION"
-			return move(ctx, tx, `UPDATE eacp.actions SET state = $2, state_reason = $3
+			err = move(ctx, tx, `UPDATE eacp.actions SET state = $2, state_reason = $3
 				WHERE id = $1 AND state = 'UNKNOWN_OUTCOME'`, id, to, why)
+			moved = err == nil
+			return err
 		})
 		if err != nil {
 			return err
 		}
-		if escalated {
+		switch {
+		case moved && escalated:
 			st.Escalated++
-		} else {
+		case moved:
 			st.Retried++
 		}
 	}
@@ -278,6 +299,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 		return err
 	}
 	for _, id := range retries {
+		moved := false
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			var state string
 			var exhausted *string // the retry limit reached (ADR-022 §5)
@@ -310,13 +332,17 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 			default:
 				to, why = "AUTHORIZED", "policy changed before retry"
 			}
-			return move(ctx, tx, `UPDATE eacp.actions SET state = $2, state_reason = $3
+			err = move(ctx, tx, `UPDATE eacp.actions SET state = $2, state_reason = $3
 				WHERE id = $1 AND state = 'RETRY_WAIT'`, id, to, why)
+			moved = err == nil
+			return err
 		})
 		if err != nil {
 			return err
 		}
-		st.Retried++
+		if moved {
+			st.Retried++
+		}
 	}
 
 	// Pending governance work: T2a retries and releases after approval.
