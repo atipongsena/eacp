@@ -1,0 +1,14 @@
+{{- range $c := list "api" "worker" "pdp" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $.Release.Name }}-{{ $c }}
+  labels:
+    {{- include "eacp.labels" (dict "root" $ "component" $c) | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" $ "component" $c) | nindent 6 }}
+{{- end }}
