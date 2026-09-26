@@ -4,12 +4,17 @@ package fakeerp
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,6 +40,9 @@ type audit struct {
 	Path         string    `json:"path"`
 	OperationKey string    `json:"operation_key,omitempty"`
 	Outcome      string    `json:"outcome"`
+	// A token issuance records the token's SHA-256 and expiry, never the token.
+	TokenSHA256 string     `json:"token_sha256,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 type event struct {
@@ -45,19 +53,52 @@ type event struct {
 type ERP struct {
 	mu      sync.Mutex
 	token   string
+	oauth   Options
 	path    string
 	failed  bool
 	records map[string][]record
 	audit   []audit
+	tokens  map[string]issued // SHA-256 of each minted token
 }
+
+type issued struct {
+	principal string
+	expires   time.Time
+}
+
+// Options configures the optional OAuth 2.0 client-credentials token
+// endpoint (RFC 6749 §4.4). With a client, POST /oauth/token issues
+// short-lived bearer tokens that authorise like the static credential until
+// they expire (ADR-019).
+type Options struct {
+	OAuthClientID     string
+	OAuthClientSecret string
+	TokenTTL          time.Duration // default 300 s; 1 s to 1 h
+}
+
+const defaultTokenTTL = 300 * time.Second
 
 var connectorName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 // New loads a durable Fake ERP operation log. A corrupt log fails startup
 // closed, because an empty map could falsely say an operation never ran.
 func New(token, dataPath string) (http.Handler, error) {
+	return NewWithOptions(token, dataPath, Options{})
+}
+
+// NewWithOptions is New with an optional OAuth client.
+func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	if token == "" || dataPath == "" {
 		return nil, errors.New("fakeerp: credential and data path are required")
+	}
+	if (o.OAuthClientID == "") != (o.OAuthClientSecret == "") {
+		return nil, errors.New("fakeerp: an OAuth client needs both an id and a secret")
+	}
+	if o.TokenTTL == 0 {
+		o.TokenTTL = defaultTokenTTL
+	}
+	if o.TokenTTL < time.Second || o.TokenTTL > time.Hour {
+		return nil, errors.New("fakeerp: the token TTL must be 1s-1h")
 	}
 	f, err := os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
@@ -70,7 +111,7 @@ func New(token, dataPath string) (http.Handler, error) {
 	if err := syncDir(filepath.Dir(dataPath)); err != nil {
 		return nil, err
 	}
-	e := &ERP{token: token, path: dataPath, records: map[string][]record{}}
+	e := &ERP{token: token, oauth: o, path: dataPath, records: map[string][]record{}, tokens: map[string]issued{}}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	for scanner.Scan() {
@@ -87,11 +128,17 @@ func New(token, dataPath string) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/execute", e.execute)
 	mux.HandleFunc("GET /v1/operations/{key}", e.lookup)
 	mux.HandleFunc("GET /v1/audit", e.listAudit)
+	if o.OAuthClientID != "" {
+		mux.HandleFunc("POST /oauth/token", e.issue)
+	}
 	return mux, nil
 }
 
 func (e *ERP) apply(ev event) {
 	e.audit = append(e.audit, ev.Audit)
+	if ev.Audit.Outcome == "token_issued" && ev.Audit.ExpiresAt != nil {
+		e.tokens[ev.Audit.TokenSHA256] = issued{ev.Audit.Principal, *ev.Audit.ExpiresAt}
+	}
 	if ev.Record != nil {
 		e.records[ev.Record.OperationKey] = append(e.records[ev.Record.OperationKey], *ev.Record)
 	}
@@ -132,7 +179,70 @@ func (e *ERP) principal(r *http.Request) string {
 	if subtle.ConstantTimeCompare([]byte(got), []byte(e.token)) == 1 {
 		return "execution-worker"
 	}
+	sum := sha256.Sum256([]byte(got))
+	if t, ok := e.tokens[hex.EncodeToString(sum[:])]; ok && time.Now().Before(t.expires) {
+		return t.principal
+	}
 	return "unauthenticated"
+}
+
+// privileged reports whether principal may execute, look up and read the
+// audit: the static credential or an unexpired minted token.
+func privileged(principal string) bool {
+	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:")
+}
+
+// issue is an OAuth 2.0 client-credentials token endpoint (RFC 6749 §4.4,
+// client_secret_basic). It keeps only each token's SHA-256 and expiry, in
+// the durable log, so tokens survive a restart like every effect.
+func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	id, secret, ok := r.BasicAuth()
+	var idErr, secretErr error
+	id, idErr = url.QueryUnescape(id)
+	secret, secretErr = url.QueryUnescape(secret)
+	formErr := r.ParseForm()
+	e.mu.Lock()
+	if e.failed {
+		e.mu.Unlock()
+		errorJSON(w, 503, "operation_log_unavailable")
+		return
+	}
+	now := time.Now().UTC()
+	ev := event{Audit: audit{At: now, Principal: "unauthenticated", Method: r.Method, Path: "/oauth/token"}}
+	status, reply := 0, map[string]any(nil)
+	switch {
+	case !ok || idErr != nil || secretErr != nil ||
+		subtle.ConstantTimeCompare([]byte(id), []byte(e.oauth.OAuthClientID)) != 1 ||
+		subtle.ConstantTimeCompare([]byte(secret), []byte(e.oauth.OAuthClientSecret)) != 1:
+		ev.Audit.Outcome, status, reply = "invalid_client", 401, map[string]any{"error": "invalid_client"}
+		w.Header().Set("WWW-Authenticate", `Basic realm="fakeerp"`)
+	case formErr != nil || r.PostForm.Get("grant_type") != "client_credentials":
+		ev.Audit.Principal = "oauth:" + id
+		ev.Audit.Outcome, status, reply = "unsupported_grant_type", 400, map[string]any{"error": "unsupported_grant_type"}
+	default:
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			e.mu.Unlock()
+			errorJSON(w, 503, "token_unavailable")
+			return
+		}
+		token := base64.RawURLEncoding.EncodeToString(raw)
+		sum := sha256.Sum256([]byte(token))
+		expires := now.Add(e.oauth.TokenTTL)
+		ev.Audit.Principal = "oauth:" + id
+		ev.Audit.Outcome, ev.Audit.TokenSHA256, ev.Audit.ExpiresAt = "token_issued", hex.EncodeToString(sum[:]), &expires
+		status, reply = 200, map[string]any{"access_token": token, "token_type": "Bearer",
+			"expires_in": int(e.oauth.TokenTTL / time.Second)}
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	logged := e.log(ev)
+	e.mu.Unlock()
+	if !logged {
+		errorJSON(w, 503, "audit_unavailable")
+		return
+	}
+	writeJSON(w, status, reply)
 }
 
 func (e *ERP) begin(r *http.Request, key string) audit {
@@ -189,7 +299,7 @@ func (e *ERP) execute(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 503, "operation_log_unavailable")
 		return
 	}
-	if e.principal(r) != "execution-worker" {
+	if !privileged(e.principal(r)) {
 		ev := event{Audit: e.begin(r, "")}
 		ev.Audit.Outcome = "unauthorized"
 		ok := e.log(ev)
@@ -344,7 +454,7 @@ func (e *ERP) lookup(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 503, "operation_log_unavailable")
 		return
 	}
-	if e.principal(r) != "execution-worker" {
+	if !privileged(e.principal(r)) {
 		e.reject(w, r, key, 401, "unauthorized")
 		return
 	}
@@ -390,7 +500,7 @@ func (e *ERP) listAudit(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 503, "operation_log_unavailable")
 		return
 	}
-	if e.principal(r) != "execution-worker" {
+	if !privileged(e.principal(r)) {
 		e.reject(w, r, "", 401, "unauthorized")
 		return
 	}
