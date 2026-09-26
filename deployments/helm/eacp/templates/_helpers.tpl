@@ -69,3 +69,36 @@ topologySpreadConstraints:
 {{- end -}}
 
 {{- define "eacp.seconds" -}}{{ trimSuffix "s" . | int }}{{- end -}}
+
+{{- /* EACP_ENV and the optional NATS CA for the API and the worker. */ -}}
+{{- define "eacp.depsEnv" -}}
+- {name: EACP_ENV, value: {{ .Values.environment | quote }}}
+{{- if and .Values.nats.enabled .Values.nats.caSecret }}
+- {name: EACP_NATS_CA_FILE, value: /run/secrets/eacp-nats/ca.pem}
+{{- end }}
+{{- end -}}
+
+{{- /* Private CAs of the dependencies: (dict "root" . "nats" true|false). */ -}}
+{{- define "eacp.caMounts" -}}
+{{- if .root.Values.database.caSecret }}
+- {name: db-ca, mountPath: /run/secrets/eacp-db, readOnly: true}
+{{- end }}
+{{- if and .nats .root.Values.nats.enabled .root.Values.nats.caSecret }}
+- {name: nats-ca, mountPath: /run/secrets/eacp-nats, readOnly: true}
+{{- end }}
+{{- end -}}
+
+{{- define "eacp.caVolumes" -}}
+{{- if .root.Values.database.caSecret }}
+- name: db-ca
+  secret:
+    secretName: {{ .root.Values.database.caSecret }}
+    items: [{key: ca.pem, path: ca.pem}]
+{{- end }}
+{{- if and .nats .root.Values.nats.enabled .root.Values.nats.caSecret }}
+- name: nats-ca
+  secret:
+    secretName: {{ .root.Values.nats.caSecret }}
+    items: [{key: ca.pem, path: ca.pem}]
+{{- end }}
+{{- end -}}

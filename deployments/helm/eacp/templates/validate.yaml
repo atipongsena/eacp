@@ -8,18 +8,28 @@
 {{- if $v.nats.enabled -}}
 {{- if or (not $v.nats.relaySecret) (not $v.nats.workerSecret) -}}{{- fail "nats.relaySecret and nats.workerSecret must name existing Secrets (or set nats.enabled=false)" -}}{{- end -}}
 {{- end -}}
+{{- if not (has $v.environment (list "development" "test" "staging" "production")) -}}{{- fail "environment must be one of development, test, staging, production" -}}{{- end -}}
+{{- $reserved := list "EACP_HTTP_ADDR" "EACP_LOG_FORMAT" "EACP_ENV" "EACP_WORKER_ID" "EACP_GOVERNANCE_PROVIDER" "EACP_NATS_URL" "EACP_NATS_CA_FILE" "EACP_SHUTDOWN_DELAY" "EACP_SHUTDOWN_TIMEOUT" -}}
 {{- range $c := list "api" "worker" "pdp" -}}
 {{- $comp := index $v $c -}}
 {{- if lt (int $comp.replicas) 1 -}}{{- fail (printf "%s.replicas must be at least 1" $c) -}}{{- end -}}
 {{- range $k, $val := $comp.env -}}
 {{- if eq $k "EACP_CONNECTOR_SECRETS_FILE" -}}{{- fail (printf "%s.env: connector secrets belong to the worker's connectorSecrets only (ADR-001)" $c) -}}{{- end -}}
 {{- if eq $k "EACP_DATABASE_URL" -}}{{- fail (printf "%s.env: EACP_DATABASE_URL comes from database.appSecret, never from values" $c) -}}{{- end -}}
-{{- if regexMatch "://[^/@:]+:[^/@]+@" (toString $val) -}}{{- fail (printf "%s.env.%s: a URL with a password belongs in a Secret" $c $k) -}}{{- end -}}
+{{- if or (has $k $reserved) (hasPrefix "EACP_AGT_PDP_" $k) (hasPrefix "AGT_PDP_" $k) -}}{{- fail (printf "%s.env.%s is set by the chart; use its value instead" $c $k) -}}{{- end -}}
+{{- if or (kindIs "map" $val) (kindIs "slice" $val) -}}{{- fail (printf "%s.env.%s must be a string" $c $k) -}}{{- end -}}
+{{- if regexMatch "://[^/?#]*@" (toString $val) -}}{{- fail (printf "%s.env.%s: a URL with credentials (user or password) belongs in a Secret" $c $k) -}}{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if not (has $v.governance.provider (list "microsoft-agt" "local")) -}}{{- fail "governance.provider must be microsoft-agt or local" -}}{{- end -}}
 {{- if and (eq $v.governance.provider "local") (not $v.governance.allowLocal) -}}{{- fail "governance.provider=local needs governance.allowLocal=true (tests only)" -}}{{- end -}}
+{{- if not (regexMatch "^[0-9]+s$" (toString $v.shutdown.delay)) -}}{{- fail "shutdown.delay must be whole seconds from 0s to 60s, like 10s" -}}{{- end -}}
+{{- if not (regexMatch "^[1-9][0-9]*s$" (toString $v.shutdown.timeout)) -}}{{- fail "shutdown.timeout must be positive whole seconds, like 15s" -}}{{- end -}}
+{{- $call := $v.worker.maxCallSeconds -}}
+{{- if not (or (kindIs "int" $call) (kindIs "int64" $call) (kindIs "float64" $call)) -}}{{- fail "worker.maxCallSeconds must be a whole number of seconds, at least 1" -}}{{- end -}}
+{{- if or (lt (float64 $call) 1.0) (ne (float64 $call) (float64 (int $call))) -}}{{- fail "worker.maxCallSeconds must be a whole number of seconds, at least 1" -}}{{- end -}}
 {{- $delay := int (include "eacp.seconds" $v.shutdown.delay) -}}
+{{- if gt $delay 60 -}}{{- fail "shutdown.delay must be whole seconds from 0s to 60s, like 10s" -}}{{- end -}}
 {{- $timeout := int (include "eacp.seconds" $v.shutdown.timeout) -}}
 {{- if lt (int $v.api.terminationGracePeriodSeconds) (add $delay $timeout) -}}{{- fail (printf "api.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout (%d)" (add $delay $timeout)) -}}{{- end -}}
 {{- if lt (int $v.worker.terminationGracePeriodSeconds) (add $delay $timeout (int $v.worker.maxCallSeconds)) -}}{{- fail (printf "worker.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout + worker.maxCallSeconds (%d)" (add $delay $timeout (int $v.worker.maxCallSeconds))) -}}{{- end -}}

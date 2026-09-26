@@ -34,5 +34,7 @@ spec:
           {{- include "eacp.containerSecurity" . | nindent 10 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            {{- include "eacp.caMounts" (dict "root" . "nats" false) | nindent 12 }}
       volumes:
         - {name: tmp, emptyDir: {}}
+        {{- include "eacp.caVolumes" (dict "root" . "nats" false) | nindent 8 }}

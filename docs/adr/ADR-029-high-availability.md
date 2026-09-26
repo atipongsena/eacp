@@ -96,10 +96,15 @@ The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the
 - **Hardening.** Every pod runs as 65532, non-root, with a read-only root filesystem, no privilege escalation,
   all capabilities dropped, `RuntimeDefault` seccomp, a `/tmp` emptyDir and no service links. The release
   namespace enforces the `restricted` Pod Security Standard.
-- **Fail closed at render time.** `helm template` stops with a message for a missing Secret name, a connector
-  secret file, database URL or password-bearing URL in any `env`, replicas below 1, a short grace period, an
-  unknown governance provider, empty PostgreSQL or NATS peers, or no connector egress without an explicit
-  opt-out.
+- **Environment.** The chart sets `EACP_ENV` from `environment` (default `production`), so NATS must be
+  `tls://` outside development and test (ADR-014 §6); optional `nats.caSecret` and `database.caSecret` mount a
+  private CA. The binaries alone default to `development`.
+- **Fail closed at render time.** `helm template` stops with a message for a missing Secret name; a connector
+  secret file, database URL, credential-bearing URL, non-string value or chart-set variable in any `env`
+  (Kubernetes keeps the last duplicate, so an override would win); an unknown environment; a shutdown delay or
+  timeout that is not whole seconds in range, or a `worker.maxCallSeconds` that is not a whole number ≥ 1;
+  replicas below 1; a short grace period; an unknown governance provider; empty PostgreSQL or NATS peers; or no
+  connector egress without an explicit opt-out.
 - **NetworkPolicies** repeat the compose networks: default deny in the namespace, DNS egress, API ingress on
   8080 only, the PDP reachable only from the API, the worker the only pod with egress to enterprise systems
   (`worker.connectorEgress`), and the migrate Job reaching only PostgreSQL. The dev dependencies protect
@@ -107,15 +112,19 @@ The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the
 - **Availability.** PodDisruptionBudgets `maxUnavailable: 1`; rolling updates `maxUnavailable: 0`,
   `maxSurge: 1`; pods spread across nodes (`ScheduleAnyway`). `EACP_SHUTDOWN_DELAY` 10 s and
   `EACP_SHUTDOWN_TIMEOUT` 15 s; the chart refuses a worker grace period below delay + timeout +
-  `worker.maxCallSeconds` (default 30 s) and an API grace below delay + timeout.
+  `worker.maxCallSeconds` and an API grace below delay + timeout. `worker.maxCallSeconds` defaults to 300, the
+  cap PostgreSQL puts on a call (`eacp.call_timeout`), so the default worker grace (330 s) covers every call.
 - **Autoscaling.** CPU HPAs for the API and the worker exist but are off by default. Queue-depth scaling is
   deferred: it needs a new dependency (KEDA or a metrics adapter) and a read-only queue metric.
 - **Proof.** `test/helm` renders the chart and checks each rule above, including every refused value
   (`EACP_HELM_REQUIRED=1` fails instead of skipping without Helm). `scripts/k8s-e2e.sh` installs it on a 2-node
-  minikube cluster with Calico and runs the Slice A demo unchanged and `TestKubernetesDisruption`: 30 purchases
-  while the API rolls, the workers scale to 3 and a node drains all end `SUCCEEDED` with one ERP record each; a
-  `/healthz` probe through the Service every 100 ms never fails; the stand-in agent reaches the API and nothing
-  else; every pod is non-root with a read-only root filesystem.
+  minikube cluster with Calico and runs the Slice A demo unchanged and `TestKubernetesDisruption`. The API and
+  the PDP roll onto one node, the workers scale to 3 and that node drains; 30 purchases, each on a new
+  connection, are all accepted on the first attempt and end `SUCCEEDED` with one ERP record each; the API and
+  PDP Services never lose their last ready endpoint (an EndpointSlice watch); a `/healthz` probe through the
+  Service every 100 ms never fails; the stand-in agent reaches the API and nothing else; every pod is non-root
+  with a read-only root filesystem. With the PodDisruptionBudgets deleted the same run fails: the drain evicts
+  both PDP pods at once and a purchase gets `503 governance_unavailable`.
 
 ## Consequences
 
@@ -149,7 +158,8 @@ The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the
 | Worker egress default (Rev 1.1) | None; the chart refuses to render without an allow-list or an explicit opt-out. |
 | Autoscaling (Rev 1.1) | CPU HPAs, off by default; queue-depth scaling deferred. |
 | PDB (Rev 1.1) | `maxUnavailable: 1` for api, worker and pdp. |
-| Shutdown timing (Rev 1.1) | Delay 10 s, timeout 15 s; worker grace ≥ delay + timeout + longest call (default 30 s). |
+| Shutdown timing (Rev 1.1) | Delay 10 s, timeout 15 s; worker grace ≥ delay + timeout + longest call (default 300 s, PostgreSQL's cap). |
+| Environment (Rev 1.1) | The chart sets `EACP_ENV=production` unless told otherwise; env entries never override a chart-set variable. |
 | PDP probes (Rev 1.1) | TCP connects, since its HTTP health needs a client certificate; each logs an `SSLEOFError` line. |
 | Namespace (Rev 1.1) | Dedicated, `restricted` Pod Security Standard; the default deny covers the whole namespace. |
 | Slice C on Kubernetes (Rev 1.1) | Not run (a file copy into a distroless pod); compose keeps it. |

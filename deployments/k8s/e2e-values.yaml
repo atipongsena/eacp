@@ -1,6 +1,7 @@
 # Values for the minikube e2e (scripts/k8s-e2e.sh) and the chart render tests.
 # DEVELOPMENT ONLY: the Secrets named here are created by the script from
 # deployments/docker/secrets and eacpctl pdp-dev-certs.
+environment: development   # plain nats:// to the dev NATS (ADR-014 §6)
 image:
   repository: eacp
   tag: dev

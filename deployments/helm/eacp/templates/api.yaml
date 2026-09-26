@@ -44,6 +44,7 @@ spec:
             - name: EACP_NATS_URL
               valueFrom: {secretKeyRef: {name: {{ .Values.nats.relaySecret }}, key: url}}
             {{- end }}
+            {{- include "eacp.depsEnv" . | nindent 12 }}
             {{- include "eacp.shutdownEnv" . | nindent 12 }}
             {{- include "eacp.extraEnv" .Values.api.env | nindent 12 }}
           readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, failureThreshold: 2}
@@ -54,9 +55,11 @@ spec:
           {{- include "eacp.containerSecurity" . | nindent 10 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            {{- include "eacp.caMounts" (dict "root" . "nats" true) | nindent 12 }}
             - {name: pki, mountPath: /pki, readOnly: true}
       volumes:
         - {name: tmp, emptyDir: {}}
+        {{- include "eacp.caVolumes" (dict "root" . "nats" true) | nindent 8 }}
         - name: pki
           projected:
             sources:

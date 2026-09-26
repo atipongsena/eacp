@@ -4,6 +4,10 @@
 # external. Install into a dedicated namespace: the default-deny
 # NetworkPolicy covers every pod in it.
 
+# EACP_ENV of the API and the worker. Outside development and test, NATS must
+# be tls:// (ADR-014 §6); the binaries default to development, the chart does not.
+environment: production
+
 image:
   repository: eacp
   tag: ""            # defaults to the chart appVersion
@@ -16,6 +20,8 @@ governance:
 database:
   appSecret: ""      # Secret with key "url": the eacp_app DSN (services)
   ownerSecret: ""    # Secret with key "url": the eacp_owner DSN (migrate Job only)
+  caSecret: ""       # optional Secret with key "ca.pem", mounted at /run/secrets/eacp-db/ca.pem
+                     # (use sslrootcert=/run/secrets/eacp-db/ca.pem in the DSNs)
   peers: []          # NetworkPolicy peers for PostgreSQL egress
   port: 5432
 
@@ -23,6 +29,7 @@ nats:
   enabled: true
   relaySecret: ""    # Secret with key "url" (controlplane-api relay user)
   workerSecret: ""   # Secret with key "url" (execution-worker user)
+  caSecret: ""       # optional Secret with key "ca.pem" for a private tls:// CA (EACP_NATS_CA_FILE)
   peers: []
   port: 4222
 
@@ -48,8 +55,8 @@ api:
 
 worker:
   replicas: 2
-  terminationGracePeriodSeconds: 60
-  maxCallSeconds: 30            # the longest connector call timeout you allow
+  terminationGracePeriodSeconds: 330
+  maxCallSeconds: 300           # the longest call: PostgreSQL caps a contract's timeout_ms at 300 s
   connectorSecrets: ""          # Secret with key "connector-secrets.json" (worker only)
   connectorEgress: []           # NetworkPolicy egress rules to enterprise systems (peers + ports)
   allowNoConnectorEgress: false

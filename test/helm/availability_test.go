@@ -31,7 +31,7 @@ func TestRolloutsNeverDropBelowTheReplicas(t *testing.T) {
 			t.Errorf("%s is not spread across nodes: %s", c, s)
 		}
 	}
-	for c, grace := range map[string]int{"api": 30, "worker": 60} {
+	for c, grace := range map[string]int{"api": 30, "worker": 330} {
 		if g := podSpec(find(t, objs, "Deployment", "eacp-"+c))["terminationGracePeriodSeconds"]; g != grace {
 			t.Errorf("%s grace = %v, want %d", c, g, grace)
 		}
@@ -40,15 +40,15 @@ func TestRolloutsNeverDropBelowTheReplicas(t *testing.T) {
 
 func TestGraceMustCoverTheDrain(t *testing.T) {
 	for set, msg := range map[string]string{
-		"worker.terminationGracePeriodSeconds=54": "worker.terminationGracePeriodSeconds must be at least",
-		"api.terminationGracePeriodSeconds=24":    "api.terminationGracePeriodSeconds must be at least",
-		"worker.maxCallSeconds=120":               "worker.terminationGracePeriodSeconds must be at least",
+		"worker.terminationGracePeriodSeconds=324": "worker.terminationGracePeriodSeconds must be at least",
+		"api.terminationGracePeriodSeconds=24":     "api.terminationGracePeriodSeconds must be at least",
+		"worker.maxCallSeconds=400":                "worker.terminationGracePeriodSeconds must be at least",
 	} {
 		if out, err := renderErr(t, "--set", set); err == nil || !strings.Contains(out, msg) {
 			t.Errorf("--set %s: err = %v, output lacks %q", set, err, msg)
 		}
 	}
-	if _, err := renderErr(t, "--set", "worker.terminationGracePeriodSeconds=55"); err != nil {
+	if _, err := renderErr(t, "--set", "worker.terminationGracePeriodSeconds=325"); err != nil {
 		t.Errorf("grace exactly delay+timeout+call refused: %v", err)
 	}
 }

@@ -181,7 +181,7 @@ func TestDangerousValuesAreRefused(t *testing.T) {
 		"api.env.EACP_CONNECTOR_SECRETS_FILE=/x":       "connector secrets",
 		"pdp.env.EACP_CONNECTOR_SECRETS_FILE=/x":       "connector secrets",
 		"api.env.EACP_DATABASE_URL=postgres://a:b@c/d": "EACP_DATABASE_URL",
-		"worker.env.EACP_NATS_URL=nats://u:p@h:4222":   "password",
+		"worker.env.EACP_X_URL=nats://u:p@h:4222":      "password",
 		"database.appSecret=":                          "database.appSecret",
 		"database.ownerSecret=":                        "database.ownerSecret",
 		"pdp.tlsSecret=":                               "pdp.tlsSecret",
