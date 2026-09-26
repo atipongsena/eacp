@@ -426,3 +426,84 @@ func (v *vaultClient) do(req *http.Request) (int, []byte, bool) {
 	}
 	return resp.StatusCode, body, true
 }
+
+// vaultValue is a static connector credential read from Vault (value_vault).
+// A failed read withholds the binding with the mint back-off; a stale value
+// is never served (ADR-019 §3c).
+type vaultValue struct {
+	client  *vaultClient
+	ref     vaultRef
+	binding Binding
+	now     func() time.Time
+	log     *slog.Logger
+
+	mu            sync.Mutex
+	current       Secret
+	previous      Secret // the value just rotated out, scrubbed until previousUntil
+	previousUntil time.Time
+	backoff       time.Duration
+	backoffUntil  time.Time
+}
+
+func (v *vaultValue) credential(ctx context.Context) (Secret, error) {
+	now := v.now()
+	v.mu.Lock()
+	waiting := now.Before(v.backoffUntil)
+	v.mu.Unlock()
+	if waiting {
+		return Secret{}, ErrCredentialUnavailable
+	}
+	s, class := v.client.value(ctx, v.ref)
+	if class == "" && len(s.v) > maxSecret {
+		class = "vault_invalid"
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if class != "" {
+		v.backoff = min(max(2*v.backoff, minMintBackoff), maxMintBackoff)
+		v.backoffUntil = now.Add(v.backoff)
+		v.log.WarnContext(ctx, "vault credential unavailable", "tenant", v.binding.TenantID.String(),
+			"ref", v.binding.Ref, "class", class, "retry_after", v.backoff)
+		return Secret{}, ErrCredentialUnavailable
+	}
+	if s.v != v.current.v {
+		if v.current.v != "" {
+			v.previous, v.previousUntil = v.current, now.Add(v.client.refresh())
+		}
+		v.current = s
+	}
+	v.backoff, v.backoffUntil = 0, time.Time{}
+	return s, nil
+}
+
+func (v *vaultValue) available(now time.Time) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return !now.Before(v.backoffUntil)
+}
+
+// rejected drops the cached path when the target refused the current value,
+// so the next call reads a rotation at once.
+func (v *vaultValue) rejected(s Secret) {
+	v.mu.Lock()
+	current := v.current.v
+	v.mu.Unlock()
+	if s.v != "" && s.v == current {
+		v.client.drop(v.ref)
+	}
+}
+
+// live returns the values to scrub: the current one and, for one refresh
+// interval after a rotation, the previous one.
+func (v *vaultValue) live(now time.Time) []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var out []string
+	if v.current.v != "" {
+		out = append(out, v.current.v)
+	}
+	if v.previous.v != "" && now.Before(v.previousUntil) {
+		out = append(out, v.previous.v)
+	}
+	return out
+}

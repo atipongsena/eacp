@@ -45,6 +45,7 @@ type loadConfig struct {
 	redact     *logging.SecretSet
 	now        func() time.Time
 	log        *slog.Logger
+	vault      *vaultClient // the file's Vault client, while loading
 }
 
 // AllowPlainTokenURL lets an oauth2 token_url use http. The worker passes it
@@ -95,7 +96,8 @@ type secretKey struct {
 type secretEntry struct {
 	host   string
 	secret Secret         // a static credential, or
-	oauth  *oauthProvider // tokens minted just in time
+	oauth  *oauthProvider // tokens minted just in time, or
+	vault  *vaultValue    // a static credential read from Vault
 }
 
 // SecretStore holds the worker's connector credentials, keyed by tenant and
@@ -114,8 +116,10 @@ const maxSecret = 4096
 
 // LoadSecrets reads the secrets file at path:
 //
-//	{"secrets": [{"tenant_id": "...", "secret_ref": "erp", "host": "erp.internal:8443",
+//	{"vault": {"address": "https://vault:8200", "auth": {"kubernetes" | "approle": {...}}, ...},  (optional)
+//	 "secrets": [{"tenant_id": "...", "secret_ref": "erp", "host": "erp.internal:8443",
 //	              "value": "..." | "value_file": "/run/secrets/erp" |
+//	              "value_vault": {"path": "eacp/erp", "key": "token"} |
 //	              "oauth2": {"token_url": "https://idp/token", "client_id": "...",
 //	                         "client_secret": "..." | "client_secret_file": "...",
 //	                         "scope": "...", "resource": "https://..."}}]}
@@ -132,13 +136,15 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 		return nil, fmt.Errorf("worker: read secrets file: %w", err)
 	}
 	var file struct {
+		Vault   *vaultEntry `json:"vault"`
 		Secrets []struct {
-			TenantID  string      `json:"tenant_id"`
-			Ref       string      `json:"secret_ref"`
-			Host      string      `json:"host"`
-			Value     *string     `json:"value"`
-			ValueFile *string     `json:"value_file"`
-			OAuth2    *oauthEntry `json:"oauth2"`
+			TenantID   string      `json:"tenant_id"`
+			Ref        string      `json:"secret_ref"`
+			Host       string      `json:"host"`
+			Value      *string     `json:"value"`
+			ValueFile  *string     `json:"value_file"`
+			ValueVault *vaultRef   `json:"value_vault"`
+			OAuth2     *oauthEntry `json:"oauth2"`
 		} `json:"secrets"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -148,6 +154,13 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 	}
 	if len(file.Secrets) == 0 {
 		return nil, errors.New("worker: secrets file lists no secrets")
+	}
+	if file.Vault != nil {
+		v, err := newVaultClient(*file.Vault, c)
+		if err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
+		c.vault = v
 	}
 	store := &SecretStore{m: map[secretKey]secretEntry{}, now: c.now}
 	for i, e := range file.Secrets {
@@ -166,13 +179,25 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			return nil, fmt.Errorf("worker: secret %d: duplicate tenant and secret_ref", i)
 		}
 		kinds := 0
-		for _, set := range []bool{e.Value != nil, e.ValueFile != nil, e.OAuth2 != nil} {
+		for _, set := range []bool{e.Value != nil, e.ValueFile != nil, e.ValueVault != nil, e.OAuth2 != nil} {
 			if set {
 				kinds++
 			}
 		}
 		if kinds != 1 {
-			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file and oauth2 is required", i)
+			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file, value_vault and oauth2 is required", i)
+		}
+		if e.ValueVault != nil {
+			if c.vault == nil {
+				return nil, fmt.Errorf("worker: secret %d: value_vault needs the file's vault object", i)
+			}
+			ref, err := e.ValueVault.validate(c.vault.kvMount)
+			if err != nil {
+				return nil, fmt.Errorf("worker: secret %d: %w", i, err)
+			}
+			store.m[k] = secretEntry{host: e.Host, vault: &vaultValue{client: c.vault, ref: ref,
+				binding: Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, now: c.now, log: c.log}}
+			continue
 		}
 		if e.OAuth2 != nil {
 			p, err := newOAuthProvider(i, *e.OAuth2, Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, c)
@@ -239,6 +264,9 @@ func (s *SecretStore) Credential(ctx context.Context, tenant uuid.UUID, ref, end
 	if e.oauth != nil {
 		return e.oauth.credential(ctx, validFor)
 	}
+	if e.vault != nil {
+		return e.vault.credential(ctx)
+	}
 	return e.secret, nil
 }
 
@@ -253,7 +281,11 @@ func (s *SecretStore) Resolve(tenant uuid.UUID, ref, endpoint string) (Secret, e
 func (s *SecretStore) Available() []Binding {
 	var out []Binding
 	for _, b := range s.Bindings() {
-		if e := s.m[secretKey{b.TenantID, b.Ref}]; e.oauth == nil || e.oauth.available(s.now()) {
+		e := s.m[secretKey{b.TenantID, b.Ref}]
+		switch {
+		case e.oauth != nil && !e.oauth.available(s.now()):
+		case e.vault != nil && !e.vault.available(s.now()):
+		default:
 			out = append(out, b)
 		}
 	}
@@ -267,8 +299,12 @@ func (s *SecretStore) Rejected(tenant uuid.UUID, ref string, secret Secret) {
 	if s == nil {
 		return
 	}
-	if e, ok := s.m[secretKey{tenant, ref}]; ok && e.oauth != nil {
+	e, ok := s.m[secretKey{tenant, ref}]
+	switch {
+	case ok && e.oauth != nil:
 		e.oauth.rejected(secret)
+	case ok && e.vault != nil:
+		e.vault.rejected(secret)
 	}
 }
 
@@ -300,11 +336,14 @@ func (s *SecretStore) Values() []string {
 	}
 	out := make([]string, 0, len(s.m))
 	for _, e := range s.m {
-		if e.oauth != nil {
+		switch {
+		case e.oauth != nil:
 			out = append(out, e.oauth.live()...)
-			continue
+		case e.vault != nil:
+			out = append(out, e.vault.live(s.now())...)
+		default:
+			out = append(out, e.secret.v)
 		}
-		out = append(out, e.secret.v)
 	}
 	return out
 }

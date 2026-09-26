@@ -140,8 +140,12 @@ type lockedBuffer struct {
 	b  bytes.Buffer
 }
 
-func (l *lockedBuffer) Write(p []byte) (int, error) { l.mu.Lock(); defer l.mu.Unlock(); return l.b.Write(p) }
-func (l *lockedBuffer) String() string              { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuffer) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 func writeFile(t *testing.T, name, content string) string {
 	t.Helper()
@@ -235,7 +239,7 @@ func TestVaultTokenIsReusedThenRenewedByLogin(t *testing.T) {
 		lease       int64
 		reuse, next time.Duration
 	}{
-		{90, 59 * time.Second, 61 * time.Second},              // two thirds of 90 s
+		{90, 59 * time.Second, 61 * time.Second},                  // two thirds of 90 s
 		{2764800, 39 * time.Minute, 40*time.Minute + time.Second}, // capped at an hour
 	} {
 		f := newFakeVault(t)
