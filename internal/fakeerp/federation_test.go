@@ -129,7 +129,14 @@ func TestInvalidAssertionsAreRefused(t *testing.T) {
 		"issued in future": assertionForm(with("iat", now+120)),
 		"no expiry":        assertionForm(with("exp", nil)),
 		"malformed":        assertionForm("a.b.c"),
-		"wrong client id":  func() url.Values { f := assertionForm(s.Sign(goodClaims())); f.Set("client_id", "x"); return f }(),
+		"exp as a string":  assertionForm(with("exp", "9999999999")),
+		"ISS instead of iss": func() url.Values {
+			c := goodClaims()
+			c["ISS"] = c["iss"]
+			delete(c, "iss")
+			return assertionForm(s.Sign(c))
+		}(),
+		"wrong client id": func() url.Values { f := assertionForm(s.Sign(goodClaims())); f.Set("client_id", "x"); return f }(),
 		"wrong assertion type": func() url.Values {
 			f := assertionForm(s.Sign(goodClaims()))
 			f.Set("client_assertion_type", "urn:x")

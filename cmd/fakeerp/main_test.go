@@ -126,3 +126,34 @@ func TestFederatedSettingsComeTogether(t *testing.T) {
 		t.Fatalf("ttl without a secret client = %+v, %v", o, err)
 	}
 }
+
+func TestKeyClientSettingsComeTogether(t *testing.T) {
+	jwks := filepath.Join(t.TempDir(), "client-jwks.json")
+	if err := os.WriteFile(jwks, jwttest.New(t).JWKS(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	all := map[string]string{
+		"EACP_FAKEERP_OAUTH_KEY_CLIENT_ID": "eacp-worker-pkjwt",
+		"EACP_FAKEERP_OAUTH_KEY_AUDIENCE":  "http://fakeerp:8090/oauth/token",
+		"EACP_FAKEERP_OAUTH_KEY_JWKS_FILE": jwks,
+	}
+	if c, err := loadKeyClient(env(map[string]string{})); c != nil || err != nil {
+		t.Fatalf("no settings = %+v, %v", c, err)
+	}
+	c, err := loadKeyClient(env(all))
+	if err != nil || c.ClientID != "eacp-worker-pkjwt" || c.Audience != "http://fakeerp:8090/oauth/token" || len(c.Keys) != 1 {
+		t.Fatalf("all settings = %+v, %v", c, err)
+	}
+	for k := range all {
+		some := map[string]string{}
+		for k2, v := range all {
+			if k2 != k {
+				some[k2] = v
+			}
+		}
+		if _, err := loadKeyClient(env(some)); err == nil {
+			t.Errorf("without %s: accepted", k)
+		}
+	}
+}

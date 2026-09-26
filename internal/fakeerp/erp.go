@@ -45,6 +45,8 @@ type audit struct {
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	// A federated issuance records the assertion's SHA-256, never the assertion.
 	AssertionSHA256 string `json:"assertion_sha256,omitempty"`
+	// A private_key_jwt issuance records the assertion's jti: it is single-use.
+	AssertionJTI string `json:"assertion_jti,omitempty"`
 }
 
 type event struct {
@@ -61,6 +63,7 @@ type ERP struct {
 	records map[string][]record
 	audit   []audit
 	tokens  map[string]issued // SHA-256 of each minted token
+	jtis    map[string]bool   // private_key_jwt assertions already used
 }
 
 type issued struct {
@@ -76,7 +79,8 @@ type Options struct {
 	OAuthClientID     string
 	OAuthClientSecret string
 	TokenTTL          time.Duration // default 300 s; 1 s to 1 h
-	Federated         *Federated    // optional: a client authenticated by client assertions
+	Federated         *Federated    // optional: a client authenticated by platform-issued assertions
+	KeyClient         *KeyClient    // optional: a client authenticated by assertions it signs itself
 }
 
 const defaultTokenTTL = 300 * time.Second
@@ -96,6 +100,14 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	}
 	if (o.OAuthClientID == "") != (o.OAuthClientSecret == "") {
 		return nil, errors.New("fakeerp: an OAuth client needs both an id and a secret")
+	}
+	if o.KeyClient != nil {
+		if err := o.KeyClient.valid(); err != nil {
+			return nil, err
+		}
+		if o.Federated != nil && o.Federated.ClientID == o.KeyClient.ClientID {
+			return nil, errors.New("fakeerp: the federated and key clients need different ids")
+		}
 	}
 	if o.Federated != nil {
 		if err := o.Federated.valid(); err != nil {
@@ -119,7 +131,8 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	if err := syncDir(filepath.Dir(dataPath)); err != nil {
 		return nil, err
 	}
-	e := &ERP{token: token, oauth: o, path: dataPath, records: map[string][]record{}, tokens: map[string]issued{}}
+	e := &ERP{token: token, oauth: o, path: dataPath, records: map[string][]record{}, tokens: map[string]issued{},
+		jtis: map[string]bool{}}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	for scanner.Scan() {
@@ -136,7 +149,7 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/execute", e.execute)
 	mux.HandleFunc("GET /v1/operations/{key}", e.lookup)
 	mux.HandleFunc("GET /v1/audit", e.listAudit)
-	if o.OAuthClientID != "" || o.Federated != nil {
+	if o.OAuthClientID != "" || o.Federated != nil || o.KeyClient != nil {
 		mux.HandleFunc("POST /oauth/token", e.issue)
 	}
 	return mux, nil
@@ -146,6 +159,9 @@ func (e *ERP) apply(ev event) {
 	e.audit = append(e.audit, ev.Audit)
 	if ev.Audit.Outcome == "token_issued" && ev.Audit.ExpiresAt != nil {
 		e.tokens[ev.Audit.TokenSHA256] = issued{ev.Audit.Principal, *ev.Audit.ExpiresAt}
+		if ev.Audit.AssertionJTI != "" {
+			e.jtis[ev.Audit.AssertionJTI] = true // single use, across restarts
+		}
 	}
 	if ev.Record != nil {
 		e.records[ev.Record.OperationKey] = append(e.records[ev.Record.OperationKey], *ev.Record)
@@ -224,8 +240,16 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 	case formErr != nil || (hasBasic && hasAssertion):
 		ev.Audit.Outcome, status, reply = "invalid_request", 400, map[string]any{"error": "invalid_request"}
 	case hasAssertion:
+		// The assertion client is chosen by client_id.
 		if f := e.oauth.Federated; f != nil && f.verifyAssertion(r.PostForm, now) {
 			id, authenticated = f.ClientID, true
+		}
+		if k := e.oauth.KeyClient; k != nil && !authenticated {
+			if jti, ok := k.verifyAssertion(r.PostForm, now); ok && !e.jtis[jti] {
+				id, authenticated, ev.Audit.AssertionJTI = k.ClientID, true, jti
+			}
+		}
+		if authenticated {
 			sum := sha256.Sum256([]byte(r.PostForm.Get("client_assertion")))
 			ev.Audit.AssertionSHA256 = hex.EncodeToString(sum[:])
 		}

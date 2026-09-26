@@ -92,6 +92,30 @@ func loadFederated(getenv func(string) string) (*fakeerp.Federated, error) {
 		Subject: v["SUBJECT"], Keys: keys}, nil
 }
 
+// loadKeyClient reads the optional private_key_jwt client (ADR-019 Rev 1.2):
+// its id, the audience its assertions must name (the token endpoint URL as
+// the worker sees it) and the JWKS of its public keys. All three come
+// together.
+func loadKeyClient(getenv func(string) string) (*fakeerp.KeyClient, error) {
+	id, aud, file := getenv("EACP_FAKEERP_OAUTH_KEY_CLIENT_ID"), getenv("EACP_FAKEERP_OAUTH_KEY_AUDIENCE"),
+		getenv("EACP_FAKEERP_OAUTH_KEY_JWKS_FILE")
+	if id == "" && aud == "" && file == "" {
+		return nil, nil
+	}
+	if id == "" || aud == "" || file == "" {
+		return nil, errors.New("fakeerp: EACP_FAKEERP_OAUTH_KEY_CLIENT_ID, _KEY_AUDIENCE and _KEY_JWKS_FILE go together")
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, errors.New("fakeerp: cannot read the key client's JWKS file")
+	}
+	keys, err := fakeerp.ParseKeySet(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &fakeerp.KeyClient{ClientID: id, Audience: aud, Keys: keys}, nil
+}
+
 func main() {
 	service.Main("fakeerp", config.Options{RequireDatabase: false, DefaultHTTPAddr: ":8090"},
 		func(d *service.Deps, mux *http.ServeMux) error {
@@ -100,6 +124,9 @@ func main() {
 				return err
 			}
 			if o.Federated, err = loadFederated(os.Getenv); err != nil {
+				return err
+			}
+			if o.KeyClient, err = loadKeyClient(os.Getenv); err != nil {
 				return err
 			}
 			h, token, err := loadHandler(os.Getenv("EACP_FAKEERP_TOKEN_FILE"), os.Getenv("EACP_FAKEERP_DATA_FILE"), o)
