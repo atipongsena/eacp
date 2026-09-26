@@ -16,14 +16,41 @@ func tokenSources(spec map[string]any) []any {
 }
 
 func identityMounted(spec map[string]any) bool {
+	return mountedAt(spec, "/run/secrets/eacp-identity") || mountedAt(spec, "/run/secrets/eacp-vault-identity")
+}
+
+// mountedAt reports whether a container mounts a volume at path, and
+// whether read-only.
+func mountedAt(spec map[string]any, path string) bool {
 	for _, c := range list(spec, "containers") {
 		for _, m := range list(c, "volumeMounts") {
-			if get(m, "mountPath") == "/run/secrets/eacp-identity" {
+			if get(m, "mountPath") == path {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func mountedReadOnly(spec map[string]any, path string) bool {
+	for _, c := range list(spec, "containers") {
+		for _, m := range list(c, "volumeMounts") {
+			if get(m, "mountPath") == path && get(m, "readOnly") == true {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tokenByAudience returns the worker's projected token for audience.
+func tokenByAudience(spec map[string]any, audience string) any {
+	for _, tok := range tokenSources(spec) {
+		if get(tok, "audience") == audience {
+			return tok
+		}
+	}
+	return nil
 }
 
 // ADR-019 Rev 1.1: a federated subject names only the worker.
@@ -58,29 +85,21 @@ func TestOnlyTheWorkerProjectsAnIdentityToken(t *testing.T) {
 			}
 			continue
 		}
-		if len(sources) != 1 {
-			t.Fatalf("the worker projects %d tokens, want 1", len(sources))
+		if len(sources) != 2 { // the e2e values also enable the Vault identity
+			t.Fatalf("the worker projects %d tokens, want 2", len(sources))
 		}
-		tok := sources[0]
-		if get(tok, "audience") != "fakeerp" || get(tok, "expirationSeconds") != 600 || get(tok, "path") != "token" {
+		tok := tokenByAudience(spec, "fakeerp")
+		if tok == nil || get(tok, "expirationSeconds") != 600 || get(tok, "path") != "token" {
 			t.Errorf("the worker's projected token = %v", tok)
 		}
-		readOnly := false
-		for _, c := range list(spec, "containers") {
-			for _, m := range list(c, "volumeMounts") {
-				if get(m, "mountPath") == "/run/secrets/eacp-identity" && get(m, "readOnly") == true {
-					readOnly = true
-				}
-			}
-		}
-		if !readOnly {
+		if !mountedReadOnly(spec, "/run/secrets/eacp-identity") {
 			t.Error("the identity token is not mounted read-only at /run/secrets/eacp-identity")
 		}
 	}
 }
 
 func TestWorkloadIdentityOffProjectsNothing(t *testing.T) {
-	objs := render(t, "--set", "worker.workloadIdentity.enabled=false")
+	objs := render(t, "--set", "worker.workloadIdentity.enabled=false", "--set", "worker.vaultIdentity.enabled=false")
 	for _, w := range workloads {
 		spec := podSpec(find(t, objs, w.kind, w.name))
 		if len(tokenSources(spec)) != 0 || identityMounted(spec) {
@@ -89,5 +108,36 @@ func TestWorkloadIdentityOffProjectsNothing(t *testing.T) {
 	}
 	if podSpec(find(t, objs, "Deployment", "eacp-worker"))["serviceAccountName"] != "eacp-worker" {
 		t.Error("the worker lost its own service account")
+	}
+}
+
+// ADR-019 Rev 1.3: the worker's Vault login token has its own audience, so
+// neither Vault nor the ERP's IdP can replay a token meant for the other.
+func TestTheVaultIdentityIsTheWorkersOwn(t *testing.T) {
+	for name, args := range map[string][]string{
+		"with workload identity":    nil,
+		"without workload identity": {"--set", "worker.workloadIdentity.enabled=false"},
+	} {
+		objs := render(t, args...)
+		for _, w := range workloads {
+			spec := podSpec(find(t, objs, w.kind, w.name))
+			if w.component != "worker" {
+				if mountedAt(spec, "/run/secrets/eacp-vault-identity") {
+					t.Errorf("%s: %s mounts the Vault identity", name, w.name)
+				}
+				continue
+			}
+			tok := tokenByAudience(spec, "vault")
+			if tok == nil || get(tok, "expirationSeconds") != 3600 || get(tok, "path") != "token" {
+				t.Errorf("%s: the worker's Vault token = %v", name, tok)
+			}
+			if !mountedReadOnly(spec, "/run/secrets/eacp-vault-identity") {
+				t.Errorf("%s: the Vault identity is not mounted read-only at /run/secrets/eacp-vault-identity", name)
+			}
+		}
+	}
+	off := podSpec(find(t, render(t, "--set", "worker.vaultIdentity.enabled=false"), "Deployment", "eacp-worker"))
+	if tokenByAudience(off, "vault") != nil || mountedAt(off, "/run/secrets/eacp-vault-identity") {
+		t.Error("the Vault identity is projected while disabled")
 	}
 }

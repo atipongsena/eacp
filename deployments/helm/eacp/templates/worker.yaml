@@ -59,6 +59,9 @@ spec:
             {{- if .Values.worker.workloadIdentity.enabled }}
             - {name: identity, mountPath: /run/secrets/eacp-identity, readOnly: true}
             {{- end }}
+            {{- if .Values.worker.vaultIdentity.enabled }}
+            - {name: vault-identity, mountPath: /run/secrets/eacp-vault-identity, readOnly: true}
+            {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
         {{- include "eacp.caVolumes" (dict "root" . "nats" true) | nindent 8 }}
@@ -74,6 +77,22 @@ spec:
         # federation; a secrets-file entry names /run/secrets/eacp-identity/token
         # as its client_assertion_file. The kubelet rotates it.
         - name: identity
+          projected:
+            defaultMode: 0400
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .audience | quote }}
+                  expirationSeconds: {{ int .expirationSeconds }}
+                  path: token
+        {{- end }}
+        {{- end }}
+        {{- with .Values.worker.vaultIdentity }}
+        {{- if .enabled }}
+        # ADR-019 Rev 1.3: the worker's Vault login (Kubernetes auth); the
+        # secrets file's vault block names /run/secrets/eacp-vault-identity/token
+        # as its jwt_file. Its own audience, so no relying party can replay it
+        # at another.
+        - name: vault-identity
           projected:
             defaultMode: 0400
             sources:

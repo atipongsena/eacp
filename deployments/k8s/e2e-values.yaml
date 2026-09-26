@@ -29,6 +29,9 @@ worker:
     enabled: true
     audience: fakeerp
     expirationSeconds: 600
+  vaultIdentity:                    # ADR-019 Rev 1.3: the worker's Vault login (Kubernetes auth, TestVaultDemo)
+    enabled: true
+    audience: vault
   env:
     EACP_WORKER_LEASE: 10s          # the demo's timings (deployments/demo/compose.demo.yml)
     EACP_RECONCILE_MAX_ATTEMPTS: "3"
