@@ -134,6 +134,17 @@ The agent cannot reach the token endpoint any more than the ERP (`test/security`
 - **F2.** The Fake ERP audit shows every purchase made by principal `oauth:eacp-worker-wif`, and each issuance records the assertion's SHA-256, never the assertion.
 - **F3.** No issued token, audited assertion or JWT naming the worker's service account appears in API responses, service logs or a database dump.
 
+### private_key_jwt demo
+
+`TestPrivateKeyJWTDemo` shows Phase 24c (ADR-019 Rev 1.2) and runs with `DEMO=J` on compose and in `scripts/k8s-e2e.sh`. The one-shot `client-key` service runs `eacpctl dev-client-key`: the key and certificate go to a volume only the worker mounts, and the public JWKS to one only Fake ERP mounts (on Kubernetes the script inlines the key into the worker's secrets and puts the JWKS in a ConfigMap). Fake ERP gains a key client `eacp-worker-pkjwt` whose audience is its token URL. The worker's secrets bind tenant Stark's `fakeerp-pkjwt` to that client with a PS256 key and certificate; there is no client secret.
+
+- **P0.** Bootstrap tenant Stark and a policy that allows routine ERP work.
+- **P1.** Three purchases each end `SUCCEEDED` with exactly one purchase order.
+- **P2.** The Fake ERP audit shows every purchase made by principal `oauth:eacp-worker-pkjwt`; each issuance records its assertion's `jti` and SHA-256, and no `jti` repeats.
+- **P3.** No issued token, `PRIVATE KEY` PEM or JWT whose `iss` is `eacp-worker-pkjwt` appears in API responses, service logs or a database dump.
+
+`test/security` `TestTheClientKeyIsMountedOnlyIntoTheWorker` checks the compose mounts.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

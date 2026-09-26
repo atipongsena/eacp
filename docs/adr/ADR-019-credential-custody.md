@@ -1,6 +1,6 @@
 # ADR-019: Credential custody — providers and just-in-time credentials
 
-Status: Accepted (Rev 1.1, 2026-09-26). Phases 24a (Rev 1.0) and 24b (Rev 1.1). Scope: MASTER_PLAN §96.
+Status: Accepted (Rev 1.2, 2026-09-26). Phases 24a (Rev 1.0), 24b (Rev 1.1) and 24c (Rev 1.2). Scope: MASTER_PLAN §96.
 Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
 bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
 (circuits and backpressure withhold work), ADR-023 (the MCP scanner), ADR-029 (the worker runs as several
@@ -25,6 +25,11 @@ worker authenticates to the token endpoint with a JWT its platform issues and ro
 service-account token, which Azure Workload Identity also uses) instead of a client secret (§3a). It also
 accepts tokens that live longer than an hour, as Entra ID issues them, but uses each for at most an hour
 (§3).
+
+Rev 1.2 (Phase 24c) brings the same property where no platform issues the worker an identity (VMs, compose,
+on-premises hosts): `private_key_jwt` (OpenID Connect Core §9, RFC 7523 §2.2). The worker holds an asymmetric
+private key, the IdP holds only its public half, and every token request carries a fresh, short-lived
+assertion the worker signs (§3b). Nothing the IdP stores can authenticate as the worker.
 
 ## Decision
 
@@ -60,7 +65,8 @@ exactly one of `value`, `value_file` (a static credential, as before) or `oauth2
 
 Entry: `token_url` (absolute, lowercase host, no user info, query or fragment; `https`, or `http` only when
 `EACP_ENV` is `development` or `test`), `client_id` (1–256 printable characters without spaces or `:`),
-exactly one of `client_secret`, `client_secret_file` (1–4096 bytes) and `client_assertion_file` (§3a),
+exactly one of `client_secret`, `client_secret_file` (1–4096 bytes), `client_assertion_file` (§3a) and
+`private_key_jwt` (§3b),
 optional `scope` (RFC 6749 scope tokens, ≤ 1024 bytes) and `resource` (RFC 8707, an absolute URL without
 fragment).
 
@@ -128,6 +134,39 @@ secrets-file entry names that path. For Entra ID, register a federated identity 
 issuer, that subject and the audience `api://AzureADTokenExchange`; the Azure Workload Identity webhook is
 not needed.
 
+### 3b. private_key_jwt (Rev 1.2)
+
+With a `private_key_jwt` object the client holds no shared secret: it signs its own assertion, in the shapes
+Entra ID (certificate credentials) and Okta/Keycloak (a client JWKS) document.
+
+```json
+"private_key_jwt": {"alg": "PS256",
+                    "key_file": "/run/secrets/idp/key.pem"         | "key": "-----BEGIN PRIVATE KEY-----\n…",
+                    "certificate_file": "/run/secrets/idp/cert.pem" | "certificate": "…",
+                    "key_id": "…"}
+```
+
+- **At load** (any failure rejects the whole secrets file; errors never contain a value): `alg` is `RS256`,
+  `PS256` (an RSA key of at least 2048 bits) or `ES256` (an ECDSA P-256 key). Exactly one of `key_file` and
+  `key`: one unencrypted PEM block, at most 16 KiB, of type `PRIVATE KEY` (PKCS #8), `RSA PRIVATE KEY` or
+  `EC PRIVATE KEY`, whose key type matches `alg`. At most one of `certificate_file` and `certificate`: one
+  `CERTIFICATE` block for the same public key (an empty value is refused, not taken as absent); it adds
+  `x5t#S256` (the base64url SHA-256 of its DER) to the header. `key_id` (1–256 printable ASCII characters
+  without spaces) adds `kid`. A certificate outside its validity period is accepted at load, like an expired
+  platform assertion (§3a): a clock passing `NotAfter` must not stop every other binding at the worker's next
+  start. The key and
+  certificate are read once; rotating them means restarting the worker, like a static secret. Inline `key` and
+  `certificate` exist because the Helm chart mounts only the secrets file.
+- **At every mint** the worker signs header `{"alg", "typ": "JWT"[, "kid"][, "x5t#S256"]}` and claims
+  `{"iss" = "sub" = client_id, "aud" = token_url, "jti" (128 random bits), "iat" = "nbf" = now, "exp" = now +
+  300}`, PSS with a salt as long as the hash for PS256 and the raw 64-byte `R‖S` for ES256 (RFC 7518). It is
+  sent exactly like §3a's assertion, with no `Authorization` header. A certificate outside its validity
+  period (`certificate_not_valid`) or a signing error (`assertion_signing`) is a failed mint: no request, the
+  1–60 s back-off, and the binding withheld from claims until the certificate is valid.
+- Each assertion is redacted until its `exp` plus 24 h, and the latest is in `Values()` until its `exp`. The
+  key is never sent to a connector, so it is never in `Values()`; its PEM text, and each of its base64 lines
+  of 16 or more characters, are redacted permanently (a log line may wrap a PEM).
+
 ### 4. Redaction
 
 `logging.SecretSet` holds the values a logger redacts and may grow after the logger is built
@@ -166,6 +205,19 @@ the cluster's real issuer and JWKS into Fake ERP's configuration and binds tenan
 `fakeerp-wif`, to the worker's projected token (`deployments/k8s/connector-secrets.federated.json`). Compose
 has no platform issuer and keeps the Rev 1.0 client-secret tenant only.
 
+Rev 1.2: with `EACP_FAKEERP_OAUTH_KEY_CLIENT_ID`, `_KEY_AUDIENCE` (the token URL as the worker names it) and
+`_KEY_JWKS_FILE` (all or none), Fake ERP serves a key client with a different id from the federated one. It
+reads the JWKS's RSA and EC P-256 keys that carry a `kid` or `x5t#S256` and ignores other or malformed keys
+(RFC 7517 §5). An assertion must use `RS256`, `PS256` or `ES256` with a key of the matching type, found by
+`kid` and else by `x5t#S256`; verify; have `iss` = `sub` = the client id and the audience; `exp` in the future
+and at most an hour ahead (as Okta), `nbf` and `iat` not in the future (30 s skew); and a `jti` never seen.
+Accepted `jti`s are recorded in the issuance audit (`assertion_jti`) and rebuilt from the durable log at start,
+so a restart cannot reopen a replay. Header and claim parsing is strict for both assertion clients: exact
+member names, and NumericDates that are JSON numbers, never strings. Compose and Kubernetes bind tenant
+`…00a6`, `secret_ref` `fakeerp-pkjwt`, to it with a PS256 key and certificate from `eacpctl dev-client-key`
+(development and test only): on compose the key reaches the worker alone through the `client_key` volume, and
+Fake ERP gets only the JWKS; on Kubernetes the e2e script inlines the key into the worker's secrets file.
+
 ### 7. Proof
 
 - `internal/logging`: `TestALoggerRedactsASecretAddedAfterItWasBuilt`, `TestTemporarySecretsExpireAndAreBounded`.
@@ -198,6 +250,17 @@ has no platform issuer and keeps the Rev 1.0 client-secret tenant only.
   `test/demo` `TestFederatedJITDemo` on minikube with the cluster's issuer: purchases as
   `oauth:eacp-worker-wif`, and no issued token and no JWT of the worker's service account in responses, logs
   or a database dump.
+- Rev 1.2, `internal/worker` (`privatekeyjwt_test.go`): each algorithm's signature verified with the public
+  key, the header naming the key, a new `jti` on every mint, the key redacted and never in `Values()`, inline and
+  CRLF PEM, every invalid entry rejecting the whole file, and a certificate outside its validity failing the
+  mint without a request (`TestACertificateOutsideItsValidityFailsTheMintNotTheFile`); `jit_integration_test.go`:
+  `TestTheWorkerExecutesWithPrivateKeyJWT` (real HTTP connector, Fake ERP with a key client, no key or token in
+  the database or logs).
+- Rev 1.2, `internal/fakeerp` (`keyclient_test.go`): issuance by `kid` and `x5t#S256` for each algorithm, every
+  refusal, a `jti` refused a second time and after a restart, `ParseKeySet`; `cmd/eacpctl`: `dev-client-key`;
+  `test/security`: only the worker mounts the key, only Fake ERP the JWKS; `test/demo` `TestPrivateKeyJWTDemo`
+  (compose and Kubernetes): purchases as `oauth:eacp-worker-pkjwt`, a distinct `jti` per issuance, and no
+  token, private key or assertion in responses, logs or a database dump.
 
 ## Consequences
 
@@ -208,7 +271,9 @@ has no platform issuer and keeps the Rev 1.0 client-secret tenant only.
 - Each worker replica mints its own tokens (ADR-029: replicas share nothing that decides).
 - With workload identity federation (Rev 1.1) the worker holds no long-lived secret for the binding: the
   platform rotates the assertion, and revoking the federated credential at the IdP stops new tokens.
-- SPIFFE JWT-SVIDs, `private_key_jwt`, token exchange (RFC 8693), AWS and GCP STS and Vault (24c and later)
+- With `private_key_jwt` (Rev 1.2) the IdP holds only a public key: a leak of its client registration
+  cannot authenticate as the worker, and the worker's key never leaves it.
+- SPIFFE JWT-SVIDs, token exchange (RFC 8693), AWS and GCP STS, Vault and HSM/KMS-held keys (later phases)
   implement the same seam: a provider that returns a credential valid for `validFor`, reports availability
   and drops a rejected value.
 
@@ -217,7 +282,7 @@ has no platform issuer and keeps the Rev 1.0 client-secret tenant only.
 | Assumption | Choice |
 |---|---|
 | Where providers run | Inside the worker only; a broker sidecar is deferred. |
-| Client authentication | `client_secret_basic` only; `private_key_jwt` and mTLS are deferred. |
+| Client authentication | `client_secret_basic`, a platform assertion (Rev 1.1) or `private_key_jwt` (Rev 1.2); mTLS is deferred. |
 | Token lifetime | `expires_in` is required, 1–86 400 s; a token is used for at most 3600 s and scrubbed and redacted until its real expiry (Rev 1.1; Rev 1.0 refused anything above 3600 s). |
 | Reuse | Only while the token outlives the whole call (`validFor`); never persisted. |
 | A token shorter than the call | Unavailable for that call only: no back-off, no new mint for calls as long, the action deferred by that worker for a minute, logged at error level with both durations. |
@@ -233,5 +298,13 @@ has no platform issuer and keeps the Rev 1.0 client-secret tenant only.
 | An assertion close to expiry | Refused with less than 10 s left: a failed mint and back-off. |
 | Which service account the worker federates as | Its own, `<release>-worker`; no other chart workload can obtain its token. |
 | Projected token lifetime | 600–86 400 s, default 3600 s (as Azure Workload Identity). |
-| Assertion replay at Fake ERP | Not checked (Entra ID accepts the same assertion until it expires). |
+| Assertion replay at Fake ERP | Not checked for the federated client (Entra ID accepts the same platform assertion until it expires); the key client accepts each `jti` once (Rev 1.2). |
 | Fake ERP's keys | A JWKS captured at install; key rotation needs a reinstall (demo only). |
+| Signed assertion lifetime | 300 s (Entra ID advises 5–10 minutes; Okta allows at most an hour) (Rev 1.2). |
+| Assertion audience | Always the token URL; no override. |
+| `jti` | 128 random bits per request, never reused. |
+| Key rotation | Restart the worker; the key and certificate are read once. |
+| Certificate validity | Checked at every mint: outside its validity period the binding's mints fail (`certificate_not_valid`) and back off; the secrets file still loads, so other bindings keep working. |
+| Signing algorithms | RS256, PS256 and ES256 only; the key type must match. |
+| The key in logs | Its PEM and each of its base64 lines of 16 or more characters are redacted permanently; it never enters `Values()`. |
+| Fake ERP's `jti` record | Kept for the life of its log (demo scale). |

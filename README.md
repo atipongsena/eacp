@@ -212,6 +212,20 @@ The OAuth provider can authenticate without any client secret (ADR-019 Rev 1.1).
 
 The worker reads the file at every mint and sends it as an RFC 7523 client assertion, the request Entra ID documents for a federated credential. An unreadable, malformed or expiring assertion backs the binding off like a failing token endpoint. Tokens may live up to a day (Entra ID issues 60–90 minutes) but are used for at most an hour. With `worker.workloadIdentity.enabled`, the Helm chart projects the token into the worker pod only, under the worker's own ServiceAccount; see [docs/KUBERNETES.md](docs/KUBERNETES.md). `scripts/k8s-e2e.sh` runs `TestFederatedJITDemo`, which buys with tokens minted against the cluster's real service-account issuer.
 
+## Phase 24c: private_key_jwt
+
+Where no platform issues the worker an identity (VMs, compose, on-premises hosts), the worker can sign its own client assertions with a private key (ADR-019 Rev 1.2). The IdP registers only the public half, as a certificate (Entra ID) or a JWKS (Okta, Keycloak):
+
+```json
+{"tenant_id": "…", "secret_ref": "erp-pkjwt", "host": "erp.internal:8443",
+ "oauth2": {"token_url": "https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token",
+            "client_id": "<application id>", "scope": "api://erp/.default",
+            "private_key_jwt": {"alg": "PS256", "key_file": "/run/secrets/idp/key.pem",
+                                "certificate_file": "/run/secrets/idp/cert.pem"}}}
+```
+
+Every token request carries a new assertion, valid for five minutes, with a unique `jti` (RS256, ES256, or PS256 with the certificate's `x5t#S256` as Entra ID expects). The key and certificate are read once at startup and checked there, except the certificate's validity period: an expired certificate fails that binding's mints (with back-off) rather than the whole worker. The key is redacted from logs and never sent to a connector. On Kubernetes, put the PEM inline (`key`, `certificate`) in the worker's secrets file. `eacpctl dev-client-key` writes a development key, certificate and JWKS; `DEMO=J scripts/demo.sh` also runs `TestPrivateKeyJWTDemo`.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start

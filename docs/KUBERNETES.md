@@ -58,6 +58,13 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   (set `audience` to the same value); the token URL is
   `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`, and its host belongs in
   `worker.connectorEgress`. The Azure Workload Identity webhook is not needed: the chart projects the token.
+- `private_key_jwt` (ADR-019 Rev 1.2) needs no chart value: put the worker's key and certificate inline in its
+  `oauth2` entry (`"private_key_jwt": {"alg": "PS256", "key": "-----BEGIN PRIVATE KEY-----\n…",
+  "certificate": "…"}`), since the chart mounts only the manifest file and a `key_file` path would not exist
+  in the pod. The key lives only in the worker's connector-secrets Secret; register the certificate (Entra ID)
+  or the public JWKS (Okta, Keycloak) with the IdP. `scripts/k8s-e2e.sh` generates a development key with
+  `eacpctl dev-client-key`, inlines it this way and gives Fake ERP the JWKS through the `fakeerp-federation`
+  ConfigMap (`client-jwks.json`).
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.
