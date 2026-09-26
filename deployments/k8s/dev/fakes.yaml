@@ -48,6 +48,10 @@ spec:
             - {name: EACP_FAKEERP_OAUTH_FEDERATED_AUDIENCE, value: fakeerp}
             - {name: EACP_FAKEERP_OAUTH_FEDERATED_SUBJECT, value: "system:serviceaccount:eacp:eacp-worker"}
             - {name: EACP_FAKEERP_OAUTH_FEDERATED_JWKS_FILE, value: /run/config/fakeerp-federation/jwks.json}
+            # ADR-019 Rev 1.2: a private_key_jwt client with the dev key's JWKS
+            - {name: EACP_FAKEERP_OAUTH_KEY_CLIENT_ID, value: eacp-worker-pkjwt}
+            - {name: EACP_FAKEERP_OAUTH_KEY_AUDIENCE, value: "http://fakeerp:8090/oauth/token"}
+            - {name: EACP_FAKEERP_OAUTH_KEY_JWKS_FILE, value: /run/config/fakeerp-federation/client-jwks.json}
           ports: [{containerPort: 8090}]
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
@@ -64,7 +68,7 @@ spec:
         - name: oauth-client
           secret: {secretName: fakeerp-oauth-client}
         - name: federation
-          configMap: {name: fakeerp-federation, items: [{key: jwks.json, path: jwks.json}]}
+          configMap: {name: fakeerp-federation, items: [{key: jwks.json, path: jwks.json}, {key: client-jwks.json, path: client-jwks.json}]}
         - {name: data, emptyDir: {}}
 ---
 apiVersion: v1

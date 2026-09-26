@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -59,15 +59,29 @@ secret eacp eacp-db-app --from-literal=url='postgres://eacp_app:eacp_app_dev@pos
 secret eacp eacp-db-owner --from-literal=url='postgres://eacp_owner:eacp_owner_dev@postgres.eacp-deps.svc:5432/eacp?sslmode=disable'
 secret eacp eacp-nats-relay --from-literal=url='nats://relay:relay_dev@nats.eacp-deps.svc:4222'
 secret eacp eacp-nats-worker --from-literal=url='nats://worker:worker_dev@nats.eacp-deps.svc:4222'
+# A development private_key_jwt key (ADR-019 Rev 1.2): the worker gets it
+# inline in its connector secrets, Fake ERP the public JWKS.
+EACP_ENV=development go run ./cmd/eacpctl dev-client-key --dir "$(winpath "$work/client-key")" \
+	--jwks "$(winpath "$work/client-jwks.json")"
 # The worker's secrets on Kubernetes: the dev manifest plus the federated
 # binding, whose client assertion is the worker's projected token (ADR-019
-# Rev 1.1). Compose never sees that entry: it has no such token.
+# Rev 1.1). Compose never sees that entry: it has no such token. The compose
+# key files under /run/secrets/eacp-client-key/ become inline PEM.
 "$python" - deployments/docker/secrets/connector-secrets.dev.json deployments/k8s/connector-secrets.federated.json \
-	"$(winpath "$work/connector-secrets.json")" <<'PY'
-import json, sys
+	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" <<'PY'
+import json, os, sys
 merged = {"secrets": []}
 for path in sys.argv[1:3]:
     merged["secrets"] += json.load(open(path, encoding="utf-8"))["secrets"]
+prefix = "/run/secrets/eacp-client-key/"
+for entry in merged["secrets"]:
+    pk = entry.get("oauth2", {}).get("private_key_jwt")
+    if not pk:
+        continue
+    for field, inline in (("key_file", "key"), ("certificate_file", "certificate")):
+        if pk.get(field, "").startswith(prefix):
+            name = pk.pop(field)[len(prefix):]
+            pk[inline] = open(os.path.join(sys.argv[4], name), encoding="utf-8").read()
 json.dump(merged, open(sys.argv[3], "w", encoding="utf-8"), indent=2)
 PY
 secret eacp eacp-connector-secrets --from-file=connector-secrets.json="$(winpath "$work/connector-secrets.json")"
@@ -83,7 +97,8 @@ k get --raw /.well-known/openid-configuration >"$work/oidc.json"
 k get --raw /openid/v1/jwks >"$work/jwks.json"
 issuer=$("$python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["issuer"])' "$(winpath "$work/oidc.json")")
 k -n eacp-deps create configmap fakeerp-federation --from-literal=issuer="$issuer" \
-	--from-file=jwks.json="$(winpath "$work/jwks.json")" --dry-run=client -o yaml | k apply -f -
+	--from-file=jwks.json="$(winpath "$work/jwks.json")" \
+	--from-file=client-jwks.json="$(winpath "$work/client-jwks.json")" --dry-run=client -o yaml | k apply -f -
 k -n eacp-deps create configmap nats-config --from-file=nats.conf=deployments/docker/nats/nats.conf \
 	--dry-run=client -o yaml | k apply -f -
 k apply -f deployments/k8s/dev/
@@ -110,7 +125,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then
