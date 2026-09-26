@@ -43,6 +43,8 @@ type audit struct {
 	// A token issuance records the token's SHA-256 and expiry, never the token.
 	TokenSHA256 string     `json:"token_sha256,omitempty"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	// A federated issuance records the assertion's SHA-256, never the assertion.
+	AssertionSHA256 string `json:"assertion_sha256,omitempty"`
 }
 
 type event struct {
@@ -74,6 +76,7 @@ type Options struct {
 	OAuthClientID     string
 	OAuthClientSecret string
 	TokenTTL          time.Duration // default 300 s; 1 s to 1 h
+	Federated         *Federated    // optional: a client authenticated by client assertions
 }
 
 const defaultTokenTTL = 300 * time.Second
@@ -93,6 +96,11 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	}
 	if (o.OAuthClientID == "") != (o.OAuthClientSecret == "") {
 		return nil, errors.New("fakeerp: an OAuth client needs both an id and a secret")
+	}
+	if o.Federated != nil {
+		if err := o.Federated.valid(); err != nil {
+			return nil, err
+		}
 	}
 	if o.TokenTTL == 0 {
 		o.TokenTTL = defaultTokenTTL
@@ -128,7 +136,7 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/execute", e.execute)
 	mux.HandleFunc("GET /v1/operations/{key}", e.lookup)
 	mux.HandleFunc("GET /v1/audit", e.listAudit)
-	if o.OAuthClientID != "" {
+	if o.OAuthClientID != "" || o.Federated != nil {
 		mux.HandleFunc("POST /oauth/token", e.issue)
 	}
 	return mux, nil
@@ -192,16 +200,16 @@ func privileged(principal string) bool {
 	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:")
 }
 
-// issue is an OAuth 2.0 client-credentials token endpoint (RFC 6749 §4.4,
-// client_secret_basic). It keeps only each token's SHA-256 and expiry, in
-// the durable log, so tokens survive a restart like every effect.
+// issue is an OAuth 2.0 client-credentials token endpoint (RFC 6749 §4.4).
+// A client authenticates with client_secret_basic or, when federated, with
+// an RFC 7523 client assertion; one method per request. It keeps only each
+// token's SHA-256 and expiry (and an assertion's SHA-256), in the durable
+// log, so tokens survive a restart like every effect.
 func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	id, secret, ok := r.BasicAuth()
-	var idErr, secretErr error
-	id, idErr = url.QueryUnescape(id)
-	secret, secretErr = url.QueryUnescape(secret)
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10) // a 16 KiB assertion, form-encoded
 	formErr := r.ParseForm()
+	hasBasic := r.Header.Get("Authorization") != ""
+	hasAssertion := r.PostForm.Has("client_assertion") || r.PostForm.Has("client_assertion_type")
 	e.mu.Lock()
 	if e.failed {
 		e.mu.Unlock()
@@ -211,13 +219,33 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	ev := event{Audit: audit{At: now, Principal: "unauthenticated", Method: r.Method, Path: "/oauth/token"}}
 	status, reply := 0, map[string]any(nil)
+	id, authenticated := "", false
 	switch {
-	case !ok || idErr != nil || secretErr != nil ||
-		subtle.ConstantTimeCompare([]byte(id), []byte(e.oauth.OAuthClientID)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(secret), []byte(e.oauth.OAuthClientSecret)) != 1:
+	case formErr != nil || (hasBasic && hasAssertion):
+		ev.Audit.Outcome, status, reply = "invalid_request", 400, map[string]any{"error": "invalid_request"}
+	case hasAssertion:
+		if f := e.oauth.Federated; f != nil && f.verifyAssertion(r.PostForm, now) {
+			id, authenticated = f.ClientID, true
+			sum := sha256.Sum256([]byte(r.PostForm.Get("client_assertion")))
+			ev.Audit.AssertionSHA256 = hex.EncodeToString(sum[:])
+		}
+	default:
+		basicID, secret, ok := r.BasicAuth()
+		basicID, idErr := url.QueryUnescape(basicID)
+		secret, secretErr := url.QueryUnescape(secret)
+		if ok && idErr == nil && secretErr == nil && e.oauth.OAuthClientID != "" &&
+			subtle.ConstantTimeCompare([]byte(basicID), []byte(e.oauth.OAuthClientID)) == 1 &&
+			subtle.ConstantTimeCompare([]byte(secret), []byte(e.oauth.OAuthClientSecret)) == 1 {
+			id, authenticated = basicID, true
+		} else {
+			w.Header().Set("WWW-Authenticate", `Basic realm="fakeerp"`)
+		}
+	}
+	switch {
+	case status != 0:
+	case !authenticated:
 		ev.Audit.Outcome, status, reply = "invalid_client", 401, map[string]any{"error": "invalid_client"}
-		w.Header().Set("WWW-Authenticate", `Basic realm="fakeerp"`)
-	case formErr != nil || r.PostForm.Get("grant_type") != "client_credentials":
+	case r.PostForm.Get("grant_type") != "client_credentials":
 		ev.Audit.Principal = "oauth:" + id
 		ev.Audit.Outcome, status, reply = "unsupported_grant_type", 400, map[string]any{"error": "unsupported_grant_type"}
 	default:

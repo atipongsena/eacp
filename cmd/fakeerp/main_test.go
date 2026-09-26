@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"eacp/internal/fakeerp"
+	"eacp/internal/jwttest"
 )
 
 func TestFakeERPStartupRequiresCredentialFile(t *testing.T) {
@@ -76,5 +77,52 @@ func TestOAuthSettingsFailClosed(t *testing.T) {
 		if _, err := loadOAuth(env(m)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestFederatedSettingsComeTogether(t *testing.T) {
+	dir := t.TempDir()
+	jwks := filepath.Join(dir, "jwks.json")
+	if err := os.WriteFile(jwks, jwttest.New(t).JWKS(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	all := map[string]string{
+		"EACP_FAKEERP_OAUTH_FEDERATED_CLIENT_ID": "eacp-worker-wif",
+		"EACP_FAKEERP_OAUTH_FEDERATED_ISSUER":    "https://kubernetes.default.svc.cluster.local",
+		"EACP_FAKEERP_OAUTH_FEDERATED_AUDIENCE":  "fakeerp",
+		"EACP_FAKEERP_OAUTH_FEDERATED_SUBJECT":   "system:serviceaccount:eacp:eacp-worker",
+		"EACP_FAKEERP_OAUTH_FEDERATED_JWKS_FILE": jwks,
+	}
+	if f, err := loadFederated(env(map[string]string{})); f != nil || err != nil {
+		t.Fatalf("no settings = %+v, %v", f, err)
+	}
+	f, err := loadFederated(env(all))
+	if err != nil || f.ClientID != "eacp-worker-wif" || f.Subject != "system:serviceaccount:eacp:eacp-worker" || len(f.Keys) != 1 {
+		t.Fatalf("all settings = %+v, %v", f, err)
+	}
+	for k := range all {
+		some := map[string]string{}
+		for k2, v := range all {
+			if k2 != k {
+				some[k2] = v
+			}
+		}
+		if _, err := loadFederated(env(some)); err == nil {
+			t.Errorf("without %s: accepted", k)
+		}
+	}
+	unreadable := map[string]string{}
+	for k, v := range all {
+		unreadable[k] = v
+	}
+	unreadable["EACP_FAKEERP_OAUTH_FEDERATED_JWKS_FILE"] = filepath.Join(dir, "absent")
+	if _, err := loadFederated(env(unreadable)); err == nil {
+		t.Error("an unreadable JWKS file was accepted")
+	}
+	// The token lifetime applies to federated tokens too.
+	o, err := loadOAuth(env(map[string]string{"EACP_FAKEERP_OAUTH_TTL": "90s"}))
+	if err != nil || o.TokenTTL != 90*time.Second || o.OAuthClientID != "" {
+		t.Fatalf("ttl without a secret client = %+v, %v", o, err)
 	}
 }
