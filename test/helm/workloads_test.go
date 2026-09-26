@@ -189,6 +189,8 @@ func TestDangerousValuesAreRefused(t *testing.T) {
 		"api.replicas=0":                               "replicas",
 		"governance.provider=local":                    "governance.allowLocal",
 		"governance.provider=other":                    "governance.provider",
+		"database.peers=null":                          "database.peers",
+		"nats.peers=null":                              "nats.peers",
 	} {
 		out, err := renderErr(t, "--set", set)
 		if err == nil || !strings.Contains(out, msg) {

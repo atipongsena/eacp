@@ -1,0 +1,142 @@
+{{- $r := .Release.Name -}}
+{{- $v := .Values -}}
+# Every pod in the release namespace: nothing in, nothing out, unless allowed below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-default-deny
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-dns
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: eacp
+      app.kubernetes.io/instance: {{ $r }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# The authenticated front door (ADR-001 §3): agents and operators reach only this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-api
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - {{- with $v.api.ingress.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      ports:
+        - {protocol: TCP, port: 8080}
+  egress:
+    - to:
+        {{- toYaml $v.database.peers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.database.port }}}]
+    {{- if $v.nats.enabled }}
+    - to:
+        {{- toYaml $v.nats.peers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.nats.port }}}]
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "pdp") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8443}]
+    {{- with $v.otel.peers }}
+    - to:
+        {{- toYaml . | nindent 8 }}
+      {{- with $v.otel.ports }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+---
+# Only the worker holds connector credentials and reaches enterprise systems.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-worker
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" . "component" "worker") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        {{- toYaml $v.database.peers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.database.port }}}]
+    {{- if $v.nats.enabled }}
+    - to:
+        {{- toYaml $v.nats.peers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.nats.port }}}]
+    {{- end }}
+    {{- with $v.worker.connectorEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with $v.otel.peers }}
+    - to:
+        {{- toYaml . | nindent 8 }}
+      {{- with $v.otel.ports }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+---
+# The PDP answers the API only, over mutual TLS, and calls nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-pdp
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" . "component" "pdp") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "api") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-migrate
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" . "component" "migrate") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        {{- toYaml $v.database.peers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.database.port }}}]
