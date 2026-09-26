@@ -25,7 +25,7 @@ esac
 tests=()
 case "$demos" in *A*) tests+=(TestSliceADemo) ;; esac
 case "$demos" in *C*) tests+=(TestSliceCDemo) ;; esac
-case "$demos" in *J*) tests+=(TestJITDemo) ;; esac
+case "$demos" in *J*) tests+=(TestJITDemo TestPrivateKeyJWTDemo) ;; esac
 pattern="^($(
 	IFS='|'
 	echo "${tests[*]}"

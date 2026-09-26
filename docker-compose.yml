@@ -16,7 +16,9 @@
 # The "agent" service stands in for an agent runtime. It has no route to
 # fakeerp and holds no ERP credential. The connector-secret manifest is
 # mounted into execution-worker only; Fake ERP receives just its verifier
-# token. Every other service refuses EACP_CONNECTOR_SECRETS_FILE.
+# token. Every other service refuses EACP_CONNECTOR_SECRETS_FILE. The
+# worker's private_key_jwt signing key (client_key) is likewise the worker's
+# only; Fake ERP gets its public JWKS (client_jwks).
 #
 # NATS JetStream carries signals only (ADR-014): the API's outbox relay
 # publishes work hints and dashboard events, and a hint wakes the worker's
@@ -94,6 +96,19 @@ services:
       - pdp_pki:/pki
     network_mode: none
 
+  # Development-only private_key_jwt client key (ADR-019 Rev 1.2, kept if
+  # present): the key and certificate go to client_key, which only the worker
+  # mounts; the public JWKS goes to client_jwks, which only Fake ERP mounts.
+  client-key:
+    build: { context: ., dockerfile: deployments/docker/Dockerfile }
+    command: ["/eacpctl", "dev-client-key", "--dir", "/client-key", "--jwks", "/client-jwks/jwks.json"]
+    environment:
+      <<: *eacp-env
+    volumes:
+      - client_key:/client-key
+      - client_jwks:/client-jwks
+    network_mode: none
+
   # Microsoft AGT policy layer + ACS engine + OPA, pinned (sidecars/agt-pdp).
   # Stateless; reachable only from controlplane-api, only with a client
   # certificate. Its outage keeps new actions RECEIVED (ADR-002 §6).
@@ -124,8 +139,11 @@ services:
       EACP_CONNECTOR_SECRETS_FILE: /run/secrets/connector_secrets
       EACP_NATS_URL: nats://worker:worker_dev@nats:4222
     secrets: [connector_secrets, fakeerp_token]
+    volumes:
+      - client_key:/run/secrets/eacp-client-key:ro
     depends_on:
       migrate: { condition: service_completed_successfully }
+      client-key: { condition: service_completed_successfully }
     networks: [core, erp, bus]
 
   # NATS JetStream for work hints and dashboard events (ADR-014). Not a
@@ -158,9 +176,17 @@ services:
       EACP_FAKEERP_OAUTH_CLIENT_ID: eacp-worker
       EACP_FAKEERP_OAUTH_CLIENT_SECRET_FILE: /run/secrets/fakeerp_oauth_client
       EACP_FAKEERP_OAUTH_TTL: 300s
+      # ADR-019 Rev 1.2: a private_key_jwt client; the audience is the token
+      # endpoint as the worker names it.
+      EACP_FAKEERP_OAUTH_KEY_CLIENT_ID: eacp-worker-pkjwt
+      EACP_FAKEERP_OAUTH_KEY_AUDIENCE: http://fakeerp:8090/oauth/token
+      EACP_FAKEERP_OAUTH_KEY_JWKS_FILE: /run/config/client-jwks/jwks.json
     secrets: [fakeerp_token, fakeerp_oauth_client]
     volumes:
       - fakeerp_data:/tmp
+      - client_jwks:/run/config/client-jwks:ro
+    depends_on:
+      client-key: { condition: service_completed_successfully }
     networks: [erp]
 
   # The Slice C demo's MCP server (docs/DEMO.md). Only the worker reaches it,
@@ -202,6 +228,8 @@ volumes:
   fakemcp_data: {}
   pdp_pki: {}
   nats_data: {}
+  client_key: {}
+  client_jwks: {}
 
 secrets:
   connector_secrets:

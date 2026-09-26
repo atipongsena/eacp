@@ -122,7 +122,7 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":5`) {
+	if err != nil || !strings.Contains(string(logs), `"bindings":6`) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
 	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") ||
@@ -217,5 +217,57 @@ func TestTheTokenEndpointRejectsAnUnknownClient(t *testing.T) {
 		"http://fakeerp:8090/oauth/token").CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "401 Unauthorized") {
 		t.Fatalf("an unauthenticated token request was not rejected with 401 (err=%v out=%q)", err, out)
+	}
+}
+
+// volumeMounts returns a running compose service's named volumes by the
+// compose volume name (the project prefix removed) and their mount targets.
+func volumeMounts(t *testing.T, service string) map[string]string {
+	t.Helper()
+	id, err := exec.Command("docker", "compose", "ps", "-q", service).Output()
+	if err != nil || strings.TrimSpace(string(id)) == "" {
+		t.Fatalf("service %s is not running (err=%v)", service, err)
+	}
+	out, err := exec.Command("docker", "inspect", "--format",
+		`{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}={{.Destination}} {{end}}{{end}}`,
+		strings.TrimSpace(string(id))).Output()
+	if err != nil {
+		t.Fatalf("docker inspect %s: %v", service, err)
+	}
+	volumes := map[string]string{}
+	for _, f := range strings.Fields(string(out)) {
+		name, dest, _ := strings.Cut(f, "=")
+		if i := strings.Index(name, "_"); i >= 0 {
+			name = name[i+1:]
+		}
+		volumes[name] = dest
+	}
+	return volumes
+}
+
+// ADR-019 Rev 1.2: the worker's private_key_jwt signing key is mounted into
+// the worker only; the Fake ERP gets the public JWKS and never the key.
+func TestTheClientKeyIsMountedOnlyIntoTheWorker(t *testing.T) {
+	requireCompose(t)
+	if got := volumeMounts(t, "execution-worker")["client_key"]; got != "/run/secrets/eacp-client-key" {
+		t.Fatalf("the worker mounts client_key at %q", got)
+	}
+	erp := volumeMounts(t, "fakeerp")
+	if erp["client_jwks"] == "" {
+		t.Fatalf("fakeerp has no client_jwks mount: %v", erp)
+	}
+	if _, ok := erp["client_key"]; ok {
+		t.Fatal("fakeerp mounts the worker's signing key")
+	}
+	if _, ok := volumeMounts(t, "execution-worker")["client_jwks"]; ok {
+		t.Error("the worker mounts the relying party's JWKS")
+	}
+	for _, service := range []string{"controlplane-api", "fakemcp", "agent", "postgres"} {
+		v := volumeMounts(t, service)
+		for _, name := range []string{"client_key", "client_jwks"} {
+			if _, ok := v[name]; ok {
+				t.Errorf("%s mounts %s", service, name)
+			}
+		}
 	}
 }

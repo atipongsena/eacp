@@ -649,6 +649,8 @@ type erpEntry struct {
 	TokenSHA256  string `json:"token_sha256"` // a token issuance: never the token
 	// A federated issuance: the assertion's SHA-256, never the assertion.
 	AssertionSHA256 string `json:"assertion_sha256"`
+	// A private_key_jwt issuance: the assertion's jti, accepted once.
+	AssertionJTI string `json:"assertion_jti"`
 }
 
 // erpAudit reads the Fake ERP audit with the ERP credential, as an auditor
