@@ -185,7 +185,9 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 		err := s.e.inTx(ctx, a, func(tx pgx.Tx) error {
 			var state string
 			var expired, readOnly bool
-			err := tx.QueryRow(ctx, `SELECT a.state, a.leased_until <= now(),
+			// Another replica may have moved the action since it was
+			// selected; leaving the lease cleared leased_until.
+			err := tx.QueryRow(ctx, `SELECT a.state, COALESCE(a.leased_until <= now(), false),
 				k.side_effects = ARRAY['READ_ONLY'] AND k.revoked_at IS NULL
 				FROM eacp.actions a
 				JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
@@ -304,7 +306,8 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant uuid.UUID, st *Stats) 
 			var state string
 			var exhausted *string // the retry limit reached (ADR-022 §5)
 			var due, cancelled, expired, samePolicy bool
-			err := tx.QueryRow(ctx, `SELECT a.state, a.next_attempt_at <= now(), a.cancel_requested_at IS NOT NULL,
+			// Leaving RETRY_WAIT (maybe by another replica) cleared next_attempt_at.
+			err := tx.QueryRow(ctx, `SELECT a.state, COALESCE(a.next_attempt_at <= now(), false), a.cancel_requested_at IS NOT NULL,
 				a.not_after <= now(), eacp.retry_budget_exhausted(a, k),
 				p.current_bundle_id = a.policy_bundle_id AND p.current_version = a.policy_version
 				FROM eacp.actions a
