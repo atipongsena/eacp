@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"eacp/internal/connector"
 	"eacp/internal/fakeerp"
 	"eacp/internal/governance"
+	"eacp/internal/jwttest"
 	"eacp/internal/logging"
 	"eacp/internal/registry/registrytest"
 	"eacp/internal/storage"
@@ -56,9 +58,16 @@ const jitStatic = canary + "-jit-static"
 
 func newJIT(t *testing.T, ttl time.Duration, timeoutMS int) *jitEnv {
 	t.Helper()
+	return newJITWith(t, fakeerp.Options{OAuthClientID: "eacp-worker", OAuthClientSecret: canary + "-client", TokenTTL: ttl},
+		fmt.Sprintf(`"client_id":"eacp-worker","client_secret":%q,"scope":"erp.purchase"`, canary+"-client"), timeoutMS)
+}
+
+// newJITWith is newJIT with the Fake ERP's OAuth options and the worker's
+// oauth2 client fields (everything but token_url) chosen by the test.
+func newJITWith(t *testing.T, erp fakeerp.Options, client string, timeoutMS int) *jitEnv {
+	t.Helper()
 	v := &jitEnv{t: t, clock: &clock{t: time.Now()}, logs: &bytes.Buffer{}, logMu: &sync.Mutex{}}
-	h, err := fakeerp.NewWithOptions(jitStatic, filepath.Join(t.TempDir(), "erp.log"),
-		fakeerp.Options{OAuthClientID: "eacp-worker", OAuthClientSecret: canary + "-client", TokenTTL: ttl})
+	h, err := fakeerp.NewWithOptions(jitStatic, filepath.Join(t.TempDir(), "erp.log"), erp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +128,7 @@ func newJIT(t *testing.T, ttl time.Duration, timeoutMS int) *jitEnv {
 	logger := logging.NewWithSet(syncWriter{v.logs, v.logMu}, slog.LevelDebug, "json", set)
 	v.logger = logger
 	v.secrets, err = worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,
-		"oauth2":{"token_url":%q,"client_id":"eacp-worker","client_secret":%q,"scope":"erp.purchase"}}]}`,
-		pgtest.TenantA, u.Host, v.srv.URL+"/oauth/token", canary+"-client")),
+		"oauth2":{"token_url":%q,%s}}]}`, pgtest.TenantA, u.Host, v.srv.URL+"/oauth/token", client)),
 		worker.AllowPlainTokenURL(), worker.WithRedaction(set), worker.WithClock(v.clock.now), worker.WithLogger(logger))
 	if err != nil {
 		t.Fatal(err)
@@ -235,6 +243,17 @@ func TestTheWorkerExecutesWithAMintedToken(t *testing.T) {
 	if len(values) != 2 {
 		t.Fatalf("issued %d tokens", len(values)-1)
 	}
+	v.assertNotPersisted(values...)
+	if !strings.Contains(v.log(), "credential minted") {
+		t.Fatal("the mint was not logged")
+	}
+}
+
+// assertNotPersisted fails unless no value appears in the tenant's actions,
+// attempts, audit events, outbox or the worker log.
+func (v *jitEnv) assertNotPersisted(values ...string) {
+	v.t.Helper()
+	ctx := context.Background()
 	for _, value := range values {
 		for _, sql := range []string{
 			`SELECT count(*) FROM eacp.actions WHERE to_jsonb(actions)::text LIKE '%' || $1 || '%'`,
@@ -246,16 +265,67 @@ func TestTheWorkerExecutesWithAMintedToken(t *testing.T) {
 			if err := storage.InTenantTx(ctx, v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
 				return tx.QueryRow(ctx, sql, value).Scan(&count)
 			}); err != nil || count != 0 {
-				t.Fatalf("a credential was persisted (count=%d err=%v)", count, err)
+				v.t.Fatalf("a credential was persisted (count=%d err=%v)", count, err)
 			}
 		}
 		if strings.Contains(v.log(), value) {
-			t.Fatal("a credential reached the worker log")
+			v.t.Fatal("a credential reached the worker log")
 		}
 	}
-	if !strings.Contains(v.log(), "credential minted") {
-		t.Fatal("the mint was not logged")
+}
+
+// TestTheWorkerExecutesThroughWorkloadIdentityFederation: the binding holds no
+// client secret; the worker presents its platform-issued assertion and the
+// ERP (a federated relying party) mints the token (ADR-019 Rev 1.1).
+func TestTheWorkerExecutesThroughWorkloadIdentityFederation(t *testing.T) {
+	signer := jwttest.New(t)
+	keys, err := fakeerp.ParseJWKS(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
 	}
+	const subject = "system:serviceaccount:eacp:eacp-worker"
+	now := time.Now()
+	jwt := signer.Sign(map[string]any{"iss": "https://issuer.test", "sub": subject, "aud": []string{"fakeerp"},
+		"iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(10 * time.Minute).Unix()})
+	file := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(file, []byte(jwt+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v := newJITWith(t, fakeerp.Options{TokenTTL: 10 * time.Minute, Federated: &fakeerp.Federated{ClientID: "eacp-wif",
+		Issuer: "https://issuer.test", Audience: "fakeerp", Subject: subject, Keys: keys}},
+		fmt.Sprintf(`"client_id":"eacp-wif","client_assertion_file":%q`, file), 100)
+	ids := []uuid.UUID{v.submit("").ID, v.submit("").ID}
+	for claimed, tries := 0, 0; claimed < 2; tries++ {
+		n, err := v.w.RunOnce(context.Background())
+		if err != nil || tries == 5 {
+			t.Fatalf("claimed %d of 2 (err %v)", claimed, err)
+		}
+		claimed += n
+	}
+	for _, id := range ids {
+		if got := v.get(id); got.State != "SUCCEEDED" || got.AttemptCount != 1 {
+			t.Fatalf("action = %+v", got)
+		}
+	}
+	executes := 0
+	for _, e := range v.audit() {
+		if e["path"] == "/v1/execute" {
+			executes++
+			if e["principal"] != "oauth:eacp-wif" {
+				t.Fatalf("an execute used principal %v, not a federated token", e["principal"])
+			}
+		}
+	}
+	if executes != 2 {
+		t.Fatalf("%d executes, want 2", executes)
+	}
+	v.mu.Lock()
+	values := append([]string{jwt}, v.tokens...)
+	v.mu.Unlock()
+	if len(values) != 2 {
+		t.Fatalf("issued %d tokens, want one reused", len(values)-1)
+	}
+	v.assertNotPersisted(values...)
 }
 
 func TestATokenShorterThanTheCallNeverDispatches(t *testing.T) {
