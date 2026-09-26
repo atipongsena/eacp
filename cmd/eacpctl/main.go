@@ -86,6 +86,8 @@
 //
 //	eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]
 //	                          mutual-TLS PKI for the AGT sidecar PDP (ADR-002 §8)
+//	eacpctl dev-client-key --dir <dir> --jwks <file> [--kid <kid>]
+//	                          private_key_jwt key, certificate and JWKS for the Fake ERP (ADR-019 Rev 1.2)
 package main
 
 import (
@@ -116,7 +118,8 @@ const usage = `usage:
   eacpctl soc summary
   eacpctl action list|get|evidence|resolve|confirm|withdraw ...
   eacpctl api <METHOD> <PATH> [JSON]
-  eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]`
+  eacpctl pdp-dev-certs --dir <dir> --name <host> [--name <host>...]
+  eacpctl dev-client-key --dir <dir> --jwks <file> [--kid <kid>]`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -166,6 +169,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runAPI(ctx, args[1:], getenv, out)
 	case "pdp-dev-certs":
 		return runPDPDevCerts(args[1:], getenv, out)
+	case "dev-client-key":
+		return runDevClientKey(args[1:], getenv, out)
 	default:
 		return errors.New(usage)
 	}
