@@ -192,7 +192,9 @@ other dev tokens) and TTL `60s`; the dev connector-secrets manifest gains tenant
   text columns), the logs or the action API.
 - `test/demo` `TestJITDemo` (compose; Kubernetes too): a tenant bound through `oauth2` buys through the Fake
   ERP; the ERP audit shows only `oauth:` principals for its operations and token issuance; the secret scan
-  covers the client secret and every token the ERP issued (read from a test-only audit of hashes).
+  covers the client secret, and every token the ERP issued: the issuance audit carries the token's SHA-256
+  (safe for a random 256-bit value), and the scan hashes every 43-character base64url string in responses,
+  logs and the database dump and fails on a match.
 - `test/security` (compose): the agent cannot reach `/oauth/token`.
 
 ### 3.7 Documentation
