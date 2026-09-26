@@ -3720,6 +3720,8 @@ Incidents
 
 # 95. Phase 23 — Kubernetes / HA (Later)
 
+> **Status (2026-09-26): 23a delivered (ADR-029).** No leader: PostgreSQL arbitrates every background loop. The incident, FinOps and release evaluators take a per-tenant transaction-scoped try-lock so N replicas evaluate each tenant once per interval; the sweeper relies on row locks and tolerates actions another replica moved first. On SIGTERM a service fails `/readyz`, stops its loops and keeps serving for `EACP_SHUTDOWN_DELAY`. A multi-replica test (three API loop sets, three workers, one of each stopped mid-run) proves the whole. 23b (Helm, NetworkPolicies, disruption budgets, autoscaling, a minikube run) is next.
+
 After architecture stable:
 
 ```text
