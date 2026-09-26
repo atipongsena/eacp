@@ -45,6 +45,8 @@ type oauthEntry struct {
 	ClientID         string  `json:"client_id"`
 	ClientSecret     *string `json:"client_secret"`
 	ClientSecretFile *string `json:"client_secret_file"`
+	// The client secret read from Vault at each mint (ADR-019 §3c).
+	ClientSecretVault *vaultRef `json:"client_secret_vault"`
 	// A platform-issued JWT (RFC 7523), re-read at every mint: workload
 	// identity federation, with no client secret at all.
 	ClientAssertionFile *string `json:"client_assertion_file"`
@@ -68,6 +70,9 @@ type oauthProvider struct {
 	clientSecret       Secret // empty when the client authenticates with an assertion
 	assertionFile      string
 	signer             *assertionSigner // private_key_jwt
+	vault              *vaultClient     // with secretRef or pk: values read at each mint
+	secretRef          *vaultRef        // client_secret_vault
+	pk                 *vaultSigner     // private_key_jwt with a key or certificate in Vault
 	scope, resource    string
 	client             *http.Client
 	now                func() time.Time
@@ -104,20 +109,36 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 		return nil, bad("client_id must be 1-256 printable characters without spaces or ':'")
 	}
 	kinds := 0
-	for _, set := range []bool{e.ClientSecret != nil, e.ClientSecretFile != nil, e.ClientAssertionFile != nil,
-		e.PrivateKeyJWT != nil} {
+	for _, set := range []bool{e.ClientSecret != nil, e.ClientSecretFile != nil, e.ClientSecretVault != nil,
+		e.ClientAssertionFile != nil, e.PrivateKeyJWT != nil} {
 		if set {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return nil, bad("needs exactly one of client_secret, client_secret_file, client_assertion_file and private_key_jwt")
+		return nil, bad("needs exactly one of client_secret, client_secret_file, client_secret_vault, client_assertion_file and private_key_jwt")
 	}
 	var secret, assertionFile string
 	var assertion Secret
 	var assertionExp time.Time
 	var signer *assertionSigner
+	var secretRef *vaultRef
+	var pk *vaultSigner
 	switch {
+	case e.PrivateKeyJWT != nil && (e.PrivateKeyJWT.KeyVault != nil || e.PrivateKeyJWT.CertificateVault != nil):
+		var err error
+		if pk, err = newVaultSigner(*e.PrivateKeyJWT, c); err != nil {
+			return nil, bad(err.Error())
+		}
+	case e.ClientSecretVault != nil:
+		if c.vault == nil {
+			return nil, bad("client_secret_vault needs the file's vault object")
+		}
+		r, err := e.ClientSecretVault.validate(c.vault.kvMount)
+		if err != nil {
+			return nil, bad(err.Error())
+		}
+		secretRef = &r
 	case e.PrivateKeyJWT != nil:
 		var err error
 		if signer, err = newAssertionSigner(*e.PrivateKeyJWT); err != nil {
@@ -140,7 +161,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 			return nil, bad("client_assertion_file must hold a compact JWS with a numeric exp (" + class + ")")
 		}
 	}
-	if assertionFile == "" && signer == nil && (secret == "" || len(secret) > maxSecret) {
+	if assertionFile == "" && signer == nil && pk == nil && secretRef == nil && (secret == "" || len(secret) > maxSecret) {
 		return nil, bad(fmt.Sprintf("client secret must be 1-%d bytes", maxSecret))
 	}
 	if e.Scope != "" && (len(e.Scope) > 1024 || !scopePattern.MatchString(e.Scope)) {
@@ -156,6 +177,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	p := &oauthProvider{
 		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
 		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp, signer: signer,
+		vault: c.vault, secretRef: secretRef, pk: pk,
 		scope: e.Scope, resource: e.Resource, now: c.now, redact: c.redact, log: c.log,
 		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
 			// A redirect could carry the client secret or assertion to another host.
@@ -229,6 +251,7 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 		}
 	}
 	if class != "" {
+		p.dropVault() // a rotated client secret or key is read at the next mint
 		p.backoff = min(max(2*p.backoff, minMintBackoff), maxMintBackoff)
 		p.backoffUntil = now.Add(p.backoff)
 		p.log.WarnContext(ctx, "credential mint failed", "tenant", p.binding.TenantID.String(),
@@ -258,8 +281,29 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	if p.resource != "" {
 		form.Set("resource", p.resource)
 	}
-	if p.assertionFile != "" || p.signer != nil {
-		assertion, exp, class := p.clientAssertion(p.now())
+	secret := p.clientSecret
+	if p.secretRef != nil {
+		s, class := p.vault.value(ctx, *p.secretRef)
+		if class == "" && len(s.v) > maxSecret {
+			class = "vault_invalid"
+		}
+		if class != "" {
+			return Secret{}, time.Time{}, time.Time{}, 0, class
+		}
+		p.mu.Lock()
+		p.clientSecret = s
+		p.mu.Unlock()
+		secret = s
+	}
+	signer := p.signer
+	if p.pk != nil {
+		var class string
+		if signer, class = p.pk.current(ctx); class != "" {
+			return Secret{}, time.Time{}, time.Time{}, 0, class
+		}
+	}
+	if p.assertionFile != "" || signer != nil {
+		assertion, exp, class := p.clientAssertion(p.now(), signer)
 		if class != "" {
 			return Secret{}, time.Time{}, time.Time{}, 0, class
 		}
@@ -282,7 +326,7 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	req.Header.Set("Accept", "application/json")
 	if !form.Has("client_assertion") {
 		// RFC 6749 §2.3.1: the id and secret are form-urlencoded before Basic auth.
-		req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(p.clientSecret.v))
+		req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(secret.v))
 	}
 	start := p.now()
 	resp, err := p.client.Do(req)
@@ -323,18 +367,28 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 // or a failure class: the platform-issued file, read again because the
 // platform rotates it (§3a), or a fresh one signed with the worker's key
 // (§3b).
-func (p *oauthProvider) clientAssertion(now time.Time) (Secret, time.Time, string) {
-	if p.signer == nil {
+func (p *oauthProvider) clientAssertion(now time.Time, signer *assertionSigner) (Secret, time.Time, string) {
+	if signer == nil {
 		return readAssertion(p.assertionFile, now)
 	}
-	if !p.signer.validAt(now) {
+	if !signer.validAt(now) {
 		return Secret{}, time.Time{}, "certificate_not_valid"
 	}
-	a, exp, err := p.signer.sign(p.clientID, p.tokenURL, now)
+	a, exp, err := signer.sign(p.clientID, p.tokenURL, now)
 	if err != nil {
 		return Secret{}, time.Time{}, "assertion_signing"
 	}
 	return a, exp, ""
+}
+
+// dropVault forgets the provider's cached Vault paths.
+func (p *oauthProvider) dropVault() {
+	if p.secretRef != nil {
+		p.vault.drop(*p.secretRef)
+	}
+	if p.pk != nil {
+		p.pk.drop()
+	}
 }
 
 // rejected drops the held token when it is s.

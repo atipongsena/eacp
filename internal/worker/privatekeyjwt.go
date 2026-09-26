@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -17,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"eacp/internal/logging"
 )
 
 const (
@@ -38,6 +41,9 @@ type privateKeyJWTEntry struct {
 	CertificateFile *string `json:"certificate_file"`
 	Certificate     *string `json:"certificate"`
 	KeyID           *string `json:"key_id"`
+	// The key and certificate may also come from Vault (ADR-019 §3c).
+	KeyVault         *vaultRef `json:"key_vault"`
+	CertificateVault *vaultRef `json:"certificate_vault"`
 }
 
 // assertionSigner signs private_key_jwt client assertions with the worker's
@@ -55,11 +61,8 @@ type assertionSigner struct {
 // a value from it. A certificate outside its validity is accepted here and
 // refused at each mint: the clock, not the file, is at fault.
 func newAssertionSigner(e privateKeyJWTEntry) (*assertionSigner, error) {
-	if e.Alg != "RS256" && e.Alg != "PS256" && e.Alg != "ES256" {
-		return nil, errors.New("private_key_jwt alg must be RS256, PS256 or ES256")
-	}
-	if e.KeyID != nil && !keyIDPattern.MatchString(*e.KeyID) {
-		return nil, errors.New("private_key_jwt key_id must be 1-256 printable characters without spaces")
+	if err := checkAlgKeyID(e); err != nil {
+		return nil, err
 	}
 	keyPEM, err := oneOf(e.Key, e.KeyFile, "key", true)
 	if err != nil {
@@ -123,6 +126,149 @@ func newAssertionSigner(e privateKeyJWTEntry) (*assertionSigner, error) {
 	sum := sha256.Sum256(cert.Raw)
 	s.x5t = base64.RawURLEncoding.EncodeToString(sum[:])
 	return s, nil
+}
+
+// checkAlgKeyID checks the entry's alg and key_id.
+func checkAlgKeyID(e privateKeyJWTEntry) error {
+	if e.Alg != "RS256" && e.Alg != "PS256" && e.Alg != "ES256" {
+		return errors.New("private_key_jwt alg must be RS256, PS256 or ES256")
+	}
+	if e.KeyID != nil && !keyIDPattern.MatchString(*e.KeyID) {
+		return errors.New("private_key_jwt key_id must be 1-256 printable characters without spaces")
+	}
+	return nil
+}
+
+// redactPEM adds a PEM, and each base64 line of it, to set permanently, so a
+// partial leak is redacted too.
+func redactPEM(set *logging.SecretSet, text string) {
+	if set == nil || text == "" {
+		return
+	}
+	set.AddPermanent(text)
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if len(line) >= 16 && !strings.HasPrefix(line, "-----") {
+			set.AddPermanent(line)
+		}
+	}
+}
+
+// vaultSigner is a private_key_jwt signer whose key or certificate comes
+// from Vault: it is rebuilt, under the rules of newAssertionSigner, each
+// time their text changes (ADR-019 §3c).
+type vaultSigner struct {
+	client          *vaultClient
+	alg             string
+	keyID           *string
+	keyRef, certRef *vaultRef
+	keyText         string  // the key when it is not in Vault
+	certText        *string // the certificate when it is not in Vault
+	redact          *logging.SecretSet
+
+	signer *assertionSigner // the caller holds the provider's mint lock
+	last   string
+}
+
+func countSet(ptrs ...bool) int {
+	n := 0
+	for _, p := range ptrs {
+		if p {
+			n++
+		}
+	}
+	return n
+}
+
+func newVaultSigner(e privateKeyJWTEntry, c loadConfig) (*vaultSigner, error) {
+	if err := checkAlgKeyID(e); err != nil {
+		return nil, err
+	}
+	if countSet(e.Key != nil, e.KeyFile != nil, e.KeyVault != nil) != 1 {
+		return nil, errors.New("private_key_jwt needs exactly one of key, key_file and key_vault")
+	}
+	if countSet(e.Certificate != nil, e.CertificateFile != nil, e.CertificateVault != nil) > 1 {
+		return nil, errors.New("private_key_jwt takes at most one of certificate, certificate_file and certificate_vault")
+	}
+	if c.vault == nil {
+		return nil, errors.New("private_key_jwt key_vault and certificate_vault need the file's vault object")
+	}
+	s := &vaultSigner{client: c.vault, alg: e.Alg, keyID: e.KeyID, redact: c.redact}
+	if e.KeyVault != nil {
+		r, err := e.KeyVault.validate(c.vault.kvMount)
+		if err != nil {
+			return nil, err
+		}
+		s.keyRef = &r
+	} else {
+		text, err := oneOf(e.Key, e.KeyFile, "key", true)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := newAssertionSigner(privateKeyJWTEntry{Alg: e.Alg, Key: &text, KeyID: e.KeyID}); err != nil {
+			return nil, err
+		}
+		s.keyText = text
+		redactPEM(c.redact, text)
+	}
+	switch {
+	case e.CertificateVault != nil:
+		r, err := e.CertificateVault.validate(c.vault.kvMount)
+		if err != nil {
+			return nil, err
+		}
+		s.certRef = &r
+	case e.Certificate != nil || e.CertificateFile != nil:
+		text, err := oneOf(e.Certificate, e.CertificateFile, "certificate", false)
+		if err != nil {
+			return nil, err
+		}
+		s.certText = &text
+	}
+	return s, nil
+}
+
+// current returns the signer for the key and certificate Vault holds now,
+// or a failure class.
+func (s *vaultSigner) current(ctx context.Context) (*assertionSigner, string) {
+	keyPEM := s.keyText
+	if s.keyRef != nil {
+		v, class := s.client.value(ctx, *s.keyRef)
+		if class != "" {
+			return nil, class
+		}
+		keyPEM = v.v
+	}
+	certPEM := s.certText
+	if s.certRef != nil {
+		v, class := s.client.value(ctx, *s.certRef)
+		if class != "" {
+			return nil, class
+		}
+		certPEM = &v.v
+	}
+	combined := keyPEM
+	if certPEM != nil {
+		combined += "\x00" + *certPEM
+	}
+	if s.signer != nil && combined == s.last {
+		return s.signer, ""
+	}
+	signer, err := newAssertionSigner(privateKeyJWTEntry{Alg: s.alg, Key: &keyPEM, Certificate: certPEM, KeyID: s.keyID})
+	if err != nil {
+		return nil, "vault_invalid"
+	}
+	redactPEM(s.redact, keyPEM)
+	s.signer, s.last = signer, combined
+	return signer, ""
+}
+
+// drop forgets the cached Vault paths, so the next mint reads them again.
+func (s *vaultSigner) drop() {
+	for _, r := range []*vaultRef{s.keyRef, s.certRef} {
+		if r != nil {
+			s.client.drop(*r)
+		}
+	}
 }
 
 // oneOf returns the inline value or the file's content; exactly one is
