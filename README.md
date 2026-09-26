@@ -226,6 +226,19 @@ Where no platform issues the worker an identity (VMs, compose, on-premises hosts
 
 Every token request carries a new assertion, valid for five minutes, with a unique `jti` (RS256, ES256, or PS256 with the certificate's `x5t#S256` as Entra ID expects). The key and certificate are read once at startup and checked there, except the certificate's validity period: an expired certificate fails that binding's mints (with back-off) rather than the whole worker. The key is redacted from logs and never sent to a connector. On Kubernetes, put the PEM inline (`key`, `certificate`) in the worker's secrets file. `eacpctl dev-client-key` writes a development key, certificate and JWKS; `DEMO=J scripts/demo.sh` also runs `TestPrivateKeyJWTDemo`.
 
+## Phase 24d: credentials from Vault
+
+Any credential in the worker's secrets file can live in HashiCorp Vault KV v2 instead (ADR-019 Rev 1.3): a static token (`value_vault`), an OAuth client secret (`client_secret_vault`) or a `private_key_jwt` key and certificate (`key_vault`, `certificate_vault`). The worker logs in with its own identity and reads each value when it needs it:
+
+```json
+{"vault": {"address": "https://vault.internal:8200", "refresh_seconds": 300,
+           "auth": {"kubernetes": {"role": "eacp-worker", "jwt_file": "/run/secrets/eacp-vault-identity/token"}}},
+ "secrets": [{"tenant_id": "…", "secret_ref": "erp", "host": "erp.internal:8443",
+              "value_vault": {"path": "eacp/erp", "key": "token"}}]}
+```
+
+On Kubernetes, `worker.vaultIdentity.enabled` projects a token with audience `vault` into the worker pod only; elsewhere use `"approle": {"role_id_file": …, "secret_id_file": …}`. The worker starts with Vault down and never contacts it at load. Values are cached for `refresh_seconds` (30–3600) and never served stale: a rotation in Vault takes effect within one interval, or at once after the target rejects the old value, without a restart. A Vault failure holds only the bindings that need it in `QUEUED`, with the usual back-off. Vault tokens and values are redacted from every log and never stored. `DEMO=J scripts/demo.sh` also runs `TestVaultDemo` against a dev-mode Vault with AppRole; `scripts/k8s-e2e.sh` runs it with Kubernetes auth.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start

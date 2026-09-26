@@ -65,6 +65,16 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   or the public JWKS (Okta, Keycloak) with the IdP. `scripts/k8s-e2e.sh` generates a development key with
   `eacpctl dev-client-key`, inlines it this way and gives Fake ERP the JWKS through the `fakeerp-federation`
   ConfigMap (`client-jwks.json`).
+- `worker.vaultIdentity` (ADR-019 Rev 1.3) — `enabled` (default `false`), `audience` (default `vault`, 1–256
+  characters without whitespace) and `expirationSeconds` (600–86 400, default 3600). When enabled, the worker
+  pod alone gets a second projected service-account token, read-only at
+  `/run/secrets/eacp-vault-identity/token`, for Vault's Kubernetes auth: the secrets file's `vault` block names
+  it as `"auth": {"kubernetes": {"role": "…", "jwt_file": "/run/secrets/eacp-vault-identity/token"}}`. It is
+  separate from `workloadIdentity`'s token, so neither the ERP's IdP nor Vault can replay a token meant for the
+  other. Bind the Vault role to service account `<release>-worker` in the release namespace and the same
+  audience, and list Vault's address in `worker.connectorEgress`. A Vault running outside the cluster reviews
+  the token with a reviewer JWT or the cluster's issuer; one inside it needs `system:auth-delegator` (as
+  `deployments/k8s/dev/vault.yaml` does).
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.
@@ -152,11 +162,14 @@ enforced:
    pulled inside it);
 3. creates namespaces `eacp` (restricted), `eacp-deps` and `agents`, the dev Secrets (from
    `deployments/docker/secrets` and `eacpctl pdp-dev-certs`) and the dev dependencies of
-   `deployments/k8s/dev` — PostgreSQL, NATS, Fake ERP, Fake MCP and a busybox stand-in agent, each protecting
-   itself with its own NetworkPolicies, all pinned to the control-plane node;
+   `deployments/k8s/dev` — PostgreSQL, NATS, Fake ERP, Fake MCP, a dev-mode Vault with its init Job
+   (Kubernetes auth for the worker) and a busybox stand-in agent, each protecting itself with its own
+   NetworkPolicies, all pinned to the control-plane node;
 4. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml --wait`;
 5. opens `minikube service eacp-api --url` (through the Service, so it survives pod restarts) and runs
-   `TestSliceADemo` and `TestKubernetesDisruption` from `test/demo` with `EACP_DEMO_PLATFORM=k8s`;
+   `TestSliceADemo`, `TestKubernetesDisruption` and the credential demos (`TestJITDemo`,
+   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`) from `test/demo` with
+   `EACP_DEMO_PLATFORM=k8s`;
 6. deletes the profile.
 
 ```bash

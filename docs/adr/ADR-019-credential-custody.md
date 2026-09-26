@@ -1,6 +1,7 @@
 # ADR-019: Credential custody — providers and just-in-time credentials
 
-Status: Accepted (Rev 1.2, 2026-09-26). Phases 24a (Rev 1.0), 24b (Rev 1.1) and 24c (Rev 1.2). Scope: MASTER_PLAN §96.
+Status: Accepted (Rev 1.3, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2) and 24d (Rev 1.3).
+Scope: MASTER_PLAN §96.
 Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
 bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
 (circuits and backpressure withhold work), ADR-023 (the MCP scanner), ADR-029 (the worker runs as several
@@ -30,6 +31,12 @@ Rev 1.2 (Phase 24c) brings the same property where no platform issues the worker
 on-premises hosts): `private_key_jwt` (OpenID Connect Core §9, RFC 7523 §2.2). The worker holds an asymmetric
 private key, the IdP holds only its public half, and every token request carries a fresh, short-lived
 assertion the worker signs (§3b). Nothing the IdP stores can authenticate as the worker.
+
+Rev 1.3 (Phase 24d) moves the credentials themselves out of the secrets file. Enterprises keep them in
+HashiCorp Vault; rotating a value in the file meant rewriting it and restarting the worker. Now the file may
+say *where* a credential lives in Vault KV v2 instead of holding it: the worker logs in to Vault with its own
+identity (Kubernetes auth with its projected token, or AppRole), reads the value when it needs it and picks up
+a rotation without a restart (§3c).
 
 ## Decision
 
@@ -167,12 +174,76 @@ Entra ID (certificate credentials) and Okta/Keycloak (a client JWKS) document.
   key is never sent to a connector, so it is never in `Values()`; its PEM text, and each of its base64 lines
   of 16 or more characters, are redacted permanently (a log line may wrap a PEM).
 
+### 3c. Vault KV v2 as a credential source (Rev 1.3)
+
+A top-level `vault` object configures one Vault client per worker, and every credential field gains a third
+form beside the inline value and the file:
+
+```json
+{"vault": {"address": "https://vault.internal:8200", "namespace": "eacp", "ca_file": "/run/secrets/vault-ca.pem",
+           "kv_mount": "secret", "refresh_seconds": 300,
+           "auth": {"kubernetes": {"role": "eacp-worker", "jwt_file": "/run/secrets/eacp-vault-identity/token"}}},
+ "secrets": [{"tenant_id": "…", "secret_ref": "erp", "host": "erp.internal:8443",
+              "value_vault": {"path": "eacp/erp", "key": "token"}}]}
+```
+
+| Field | Forms (exactly one) |
+|---|---|
+| a static credential | `value` · `value_file` · `value_vault` (or `oauth2`) |
+| `oauth2` client secret | `client_secret` · `client_secret_file` · `client_secret_vault` (still exclusive with `client_assertion_file` and `private_key_jwt`) |
+| `private_key_jwt` key | `key` · `key_file` · `key_vault` |
+| `private_key_jwt` certificate (optional) | `certificate` · `certificate_file` · `certificate_vault` |
+
+- **At load** (any failure rejects the whole file; errors never contain a value): `address` is an absolute
+  URL with a lowercase host and no user info, query or fragment, `https` or, in development and test only,
+  `http`; `namespace` 1–256 printable characters; `ca_file` one or more PEM certificates, used instead of the
+  system roots; `kv_mount` defaults to `secret`; `refresh_seconds` 30–3600, default 300. `auth` has exactly
+  one of `kubernetes` (`role`, `jwt_file`, `mount` default `kubernetes`) and `approle` (`mount` default
+  `approle`, one of `role_id`/`role_id_file` and one of `secret_id`/`secret_id_file`); the login files must be
+  readable and non-empty. A reference is `{"path", "key"[, "mount"]}`: `path` 1–256 characters of
+  `[A-Za-z0-9._-]+` segments joined by `/` (no `.` or `..`, no leading or trailing `/`), `key` 1–128
+  characters `[A-Za-z0-9._-]`. A `_vault` field needs the `vault` block. **The worker never contacts Vault at
+  load**, so it starts with Vault down.
+- **The client** (`internal/worker/vault.go`): its own HTTP client with a 10 s timeout, no redirects (a
+  redirect is a failure) and responses read to at most 64 KiB. It logs in lazily, one login at a time,
+  re-reading the JWT or AppRole files at every login (`POST /v1/auth/<mount>/login`); it requires HTTP 200,
+  a printable `auth.client_token` of at most 1024 bytes and an integer `auth.lease_duration` of at least 1,
+  and uses the token until the request time plus two thirds of `min(lease_duration, 3600)`. The token is
+  never renewed, persisted or logged. A read is `GET /v1/<mount>/data/<path>` with `X-Vault-Token` (and
+  `X-Vault-Namespace`); the whole `data.data` map is cached per path for `refresh_seconds`, measured from
+  before the request, with one read per path at a time. A 403 drops the Vault token. Nothing is retried
+  within one call or mint.
+- **Failure classes:** `vault_login_unreadable`, `vault_login`, `vault_forbidden` (403), `vault_read`
+  (transport, 5xx, non-JSON), `vault_missing` (404, no data, a soft-deleted or destroyed version, or the key
+  absent) and `vault_invalid` (not a string, or not valid for the field it feeds).
+- **A static credential** is the cached value while it is fresh, else a new read; it must be 1–4096 bytes. A
+  failure makes the binding unavailable with §5's back-off (1 s doubling to 60 s), omitted from `Available()`.
+  A stale value is never served: past its refresh deadline a failed read means no credential. When the target
+  answers `unauthorized`, the binding drops its cached path, so a rotation takes effect at the next call.
+- **A client secret, key or certificate** from Vault is read inside each mint, before the token request; a
+  failure is a failed mint with the Vault class. A key or certificate is parsed with §3b's rules whenever its
+  text changes (the signer is rebuilt; a bad PEM is `vault_invalid`). A failed mint drops the provider's cached
+  Vault paths, so a rotated client secret is read at the next mint.
+- **Redaction and scrubbing:** every value read from Vault is redacted permanently (a PEM also line by line,
+  as §3b); the Vault token until its lease end plus 24 h. A static Vault binding's `Values()` holds its
+  current value and, for one refresh interval after a rotation, the previous one. Neither the Vault token nor
+  a private key ever enters `Values()`. Logins and reads are logged with the host, mount, path and class only.
+- **Kubernetes identity** (ADR-029, the chart): `worker.vaultIdentity` (`enabled`, `audience` default
+  `vault`, `expirationSeconds` 600–86 400, default 3600) projects a second token into the worker pod alone,
+  read-only at `/run/secrets/eacp-vault-identity/token`, under the worker's own ServiceAccount. It is separate
+  from §3a's token, so neither relying party can replay a token meant for the other. Egress to Vault is
+  declared in `worker.connectorEgress`.
+
+KV v2 only: dynamic secrets and leases, Vault Agent, response wrapping, KV v1 and renewing or revoking the
+Vault token are out of scope; the worker logs in again instead of renewing.
+
 ### 4. Redaction
 
 `logging.SecretSet` holds the values a logger redacts and may grow after the logger is built
 (`logging.NewWithSet`). `service.Deps` owns one set (`Redaction()`); `RedactSecrets` adds permanent values.
 The worker adds each client secret permanently, each client assertion until its `exp` plus 24 h and each minted
-token until its real expiry plus 24 h, keeping at most 10 000 temporary values (the oldest go first).
+token until its real expiry plus 24 h, keeping at most 10 000 temporary values (the oldest go first). Rev 1.3
+adds every Vault-held value permanently and each Vault token until its lease end plus 24 h.
 
 ### 5. Failure handling
 
@@ -218,6 +289,18 @@ member names, and NumericDates that are JSON numbers, never strings. Compose and
 (development and test only): on compose the key reaches the worker alone through the `client_key` volume, and
 Fake ERP gets only the JWKS; on Kubernetes the e2e script inlines the key into the worker's secrets file.
 
+Rev 1.3: a DEVELOPMENT-ONLY Vault (`hashicorp/vault:2.1.1` in dev mode: in memory, a fixed dev root token)
+holds tenant `…00a7`'s two credentials: `fakeerp-vault` (`value_vault` `eacp/fakeerp#token`, the ERP's static
+token) and `fakeerp-vault-oauth` (the Rev 1.0 client with `client_secret_vault` `eacp/fakeerp-oauth#client_secret`).
+Its init writes both values from the dev secret files and a policy that can only read `secret/data/eacp/*`. On
+compose, Vault is on an internal `vault` network joined by Vault, its one-shot init and the worker; the init
+enables AppRole and writes `role_id` and `secret_id` into the `vault_approle` volume, mounted read-only into
+the worker alone. On Kubernetes (`deployments/k8s/dev/vault.yaml`), Vault reviews tokens with its own service
+account (`system:auth-delegator`); its init Job enables Kubernetes auth with role `eacp-worker` bound to
+service account `eacp-worker` in namespace `eacp` and audience `vault`, and a NetworkPolicy admits only the
+worker and the Job. The e2e script replaces the merged manifest's `vault` block with Kubernetes auth
+(`deployments/k8s/connector-secrets.vault.json`).
+
 ### 7. Proof
 
 - `internal/logging`: `TestALoggerRedactsASecretAddedAfterItWasBuilt`, `TestTemporarySecretsExpireAndAreBounded`.
@@ -261,6 +344,27 @@ Fake ERP gets only the JWKS; on Kubernetes the e2e script inlines the key into t
   `test/security`: only the worker mounts the key, only Fake ERP the JWKS; `test/demo` `TestPrivateKeyJWTDemo`
   (compose and Kubernetes): purchases as `oauth:eacp-worker-pkjwt`, a distinct `jti` per issuance, and no
   token, private key or assertion in responses, logs or a database dump.
+- Rev 1.3, `internal/worker` with an in-process fake Vault (`vault_test.go`): `TestVaultAppRoleLogin` (with the namespace header),
+  `TestVaultKubernetesLoginRereadsTheJWT` (the file read at every login),
+  `TestVaultTokenIsReusedThenRenewedByLogin` (two thirds of the capped lease),
+  `TestVaultCachesAPathForTheRefreshInterval`, `TestVaultFailureClasses` (each class; a 403 drops the token), `TestVaultNeverFollowsARedirect`,
+  `TestVaultOneLoginAndOneReadUnderConcurrency`, `TestVaultNeverLogsATokenOrValue`; `vaultsecrets_test.go`:
+  `TestAStaticCredentialComesFromVault` (a rotation within one refresh, the previous value scrubbed until the
+  next), `TestAVaultFailureBacksTheBindingOff`, `TestAStaleVaultValueIsNeverServed`,
+  `TestARejectedVaultCredentialIsReadAgain`, `TestTheWorkerStartsWithVaultDown`,
+  `TestInvalidVaultEntriesRejectTheWholeFile`; `vaultoauth_test.go`: `TestAnOAuthClientSecretComesFromVault`,
+  `TestAPrivateKeyComesFromVault` (a rotated key rebuilds the signer, a bad PEM backs off),
+  `TestInvalidOAuthVaultEntriesRejectTheWholeFile`; PostgreSQL (`vault_integration_test.go`):
+  `TestTheWorkerExecutesWithAVaultCredential` (the real HTTP connector and Fake ERP; a stale value is refused,
+  the rotated one is read at once and used, exactly two KV reads, no Vault token or value in the database or
+  logs).
+- Rev 1.3, `test/helm`: `TestTheVaultIdentityIsTheWorkersOwn` and the render-time refusals; `test/security`:
+  `TestAgentCannotReachVault`, `TestTheVaultAppRoleIsMountedOnlyIntoTheWorker`,
+  `TestOnlyTheWorkerSharesTheVaultNetwork`; `test/demo` `TestVaultDemo` (compose with AppRole, Kubernetes with
+  Kubernetes auth): purchases through both bindings as `execution-worker` and `oauth:eacp-worker`; a value
+  soft-deleted in Vault withholds the next purchase (`QUEUED`, no attempt, no PO) after one refresh interval,
+  and restoring it lets the purchase succeed; no Vault token (`hvs.`), Vault-held value or issued token in
+  responses, logs or a database dump.
 
 ## Consequences
 
@@ -273,9 +377,12 @@ Fake ERP gets only the JWKS; on Kubernetes the e2e script inlines the key into t
   platform rotates the assertion, and revoking the federated credential at the IdP stops new tokens.
 - With `private_key_jwt` (Rev 1.2) the IdP holds only a public key: a leak of its client registration
   cannot authenticate as the worker, and the worker's key never leaves it.
-- SPIFFE JWT-SVIDs, token exchange (RFC 8693), AWS and GCP STS, Vault and HSM/KMS-held keys (later phases)
-  implement the same seam: a provider that returns a credential valid for `validFor`, reports availability
-  and drops a rejected value.
+- With Vault (Rev 1.3) a credential is rotated in Vault, not in the worker's file, and needs no restart; on
+  Kubernetes the worker's only Vault secret is a projected token the platform rotates. A Vault outage longer
+  than the refresh interval withholds the affected bindings' work, exactly like a token endpoint outage.
+- SPIFFE JWT-SVIDs, token exchange (RFC 8693), AWS and GCP STS, Vault dynamic secrets and HSM/KMS-held keys
+  (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
+  availability and drops a rejected value.
 
 ## Unresolved assumptions (conservative choices)
 
@@ -308,3 +415,12 @@ Fake ERP gets only the JWKS; on Kubernetes the e2e script inlines the key into t
 | Signing algorithms | RS256, PS256 and ES256 only; the key type must match. |
 | The key in logs | Its PEM and each of its base64 lines of 16 or more characters are redacted permanently; it never enters `Values()`. |
 | Fake ERP's `jti` record | Kept for the life of its log (demo scale). |
+| Vault down at start | The worker starts; bindings that need Vault back off until it answers (Rev 1.3). |
+| Stale Vault values | Never served past `refresh_seconds`; a failed read means no credential. |
+| Refresh interval | 300 s by default, 30–3600 s. |
+| Vault token lifetime | Used for two thirds of `min(lease_duration, 3600)`, then a new login; never renewed or persisted. |
+| A 403 from Vault | Drops the Vault token; the binding backs off; the next attempt logs in again. |
+| Rotation on rejection | A static Vault binding re-reads Vault after the target answers `unauthorized`; an OAuth binding re-reads its client secret after a failed mint. |
+| Soft-deleted or destroyed version | Treated as missing: no credential. |
+| Two tokens on Kubernetes | Separate audiences for the ERP's IdP and Vault; neither can replay the other's. |
+| Vault in the demo | Dev mode, in memory, a dev-only root token known to Vault, its init and the demo's CLI only; on compose the AppRole `secret_id` has no TTL or use limit, because the worker reuses it at every login. |
