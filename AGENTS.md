@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–13. Slice C: Phases 14 (MCP Registry, ADR-023) and 15 (Dependency Graph, ADR-015) complete. Phase 16 (Distributed Kill Switch, ADR-016) is complete for seven action-bound scopes (global, run and model await platform authority and authenticated action bindings). Phase 17 (Fleet Operations, ADR-024) is complete. Phase 18 (Agent FinOps, ADR-025) is complete. Phase 19 (Release & Evaluation, ADR-018) is complete. Phase 20 (Governance-as-Code, ADR-026) is complete. Phase 21 (Governance-as-Code for identity, policy, budgets and prices, ADR-026 Rev 1.1) is complete. Phase 22 (Agent SOC) is complete: 22a incidents and the SOC read model (ADR-027), 22b the operator console (ADR-028). Phase 23 (Kubernetes / HA, ADR-029) is complete: 23a HA inside the binaries (Rev 1.0), 23b the Helm chart and a minikube run (Rev 1.1).**
+Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–13. Slice C: Phases 14 (MCP Registry, ADR-023) and 15 (Dependency Graph, ADR-015) complete. Phase 16 (Distributed Kill Switch, ADR-016) is complete for seven action-bound scopes (global, run and model await platform authority and authenticated action bindings). Phase 17 (Fleet Operations, ADR-024) is complete. Phase 18 (Agent FinOps, ADR-025) is complete. Phase 19 (Release & Evaluation, ADR-018) is complete. Phase 20 (Governance-as-Code, ADR-026) is complete. Phase 21 (Governance-as-Code for identity, policy, budgets and prices, ADR-026 Rev 1.1) is complete. Phase 22 (Agent SOC) is complete: 22a incidents and the SOC read model (ADR-027), 22b the operator console (ADR-028). Phase 23 (Kubernetes / HA, ADR-029) is complete: 23a HA inside the binaries (Rev 1.0), 23b the Helm chart and a minikube run (Rev 1.1). Phase 24a (JIT credentials: the provider seam and an OAuth 2.0 client-credentials provider, ADR-019) is complete; 24b/24c (Vault, SPIFFE, cloud identity) are next.**
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -44,6 +44,7 @@ Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–1
 - Incidents observe and never decide (ADR-027). Only the `incident` system actor opens automatic incidents, through `eacp.incident_evaluate()`, one per signal occurrence. PostgreSQL computes severity, title, detail and the affected snapshot (`eacp.blast_radius_versions`, shared with `registry.BlastRadius`). Operators and admins acknowledge, assign, note, link and resolve; a critical incident is resolved by someone other than its acknowledger. The timeline is insert-only and journaled. Never add incident writes to action, kill, circuit or scan transactions.
 - Replicas share nothing that decides (ADR-029). There is no leader election: a background loop that evaluates per tenant takes `storage.TryLoopLock` in its tenant transaction and skips the tenant when another replica holds it; a loop that moves rows relies on row locks and compare-and-set, treats a row another replica already moved as nothing to do, and counts only real moves. The lock never decides: keep a test showing the outcome is the same without it. On shutdown a service fails `/readyz` (`draining`), cancels its background loops and serves for `EACP_SHUTDOWN_DELAY` before the graceful stop.
 - The operator console is a client, never an authority (ADR-028). Add no route for it: every route it calls is in `internal/ui/static/api.js` ROUTES, and `TestEveryConsoleCallIsARealRoute` keeps them real; every `.call(` names its route by a string literal. Build DOM only through `dom.js` (`h`, `replace`); `TestConsoleUsesNoDangerousSinks` bans HTML sinks, browser storage, cookies, other origins and `fetch(` outside `api.js`/`session.js`, comments included. The key lives in `session.js` memory only. Every write goes through `confirm.js`; a fleet operation is previewed with `dry_run` first and never sends `selector.all`. Add a new served file to `consoleFiles` in `internal/ui/ui_test.go`.
+- Connector credentials come from providers in the execution worker only (ADR-019). Ask `SecretStore.Credential` with the call budget plus `worker.CredentialSkew`: a credential must outlive the whole call. Claims use `SecretStore.Available()`, so a backing-off provider gets no work; without a credential nothing is dispatched, the lease is released and the circuit is untouched, and the reconciler and scanner record nothing. OAuth tokens are minted with `client_secret_basic`, refused unless Bearer with an integer `expires_in` of at most 3600, never follow a redirect, never persist and are redacted through `logging.SecretSet` until a day after expiry. A rejected token (`unauthorized`) is dropped, never reclassified.
 - The Helm chart (ADR-029 Rev 1.1) never renders a secret value, keeps the compose boundary with NetworkPolicies and refuses dangerous values at render time; change it only with `test/helm` (`EACP_HELM_REQUIRED=1`) and rerun `scripts/k8s-e2e.sh`. PostgreSQL and NATS stay outside the chart; `deployments/k8s/dev` is development only.
 
 ## Commands
@@ -56,7 +57,7 @@ go vet ./... && go test -race ./...                  # unit + PostgreSQL integra
 docker compose up -d --build                         # full stack
 curl localhost:8080/readyz
 EACP_COMPOSE_TEST=1 go test -count=1 ./test/security/   # network-isolation tests (stack must be running)
-scripts/demo.sh                                      # Slice A demo on an isolated stack (docs/DEMO.md)
+scripts/demo.sh                                      # Slice A, Slice C and JIT demos on an isolated stack (DEMO=A|C|J, docs/DEMO.md)
 docker build -f sidecars/agt-pdp/Dockerfile --target test .   # AGT sidecar suites + conformance through ACS/OPA
 (cd internal/ui && node --test jstest/*.test.mjs)            # console JS unit tests (go test runs them too; EACP_UI_NODE_REQUIRED=1 fails without node)
 EACP_HELM_REQUIRED=1 go test ./test/helm                     # Helm chart render tests (pinned Helm in .tools/, docs/KUBERNETES.md)
@@ -72,7 +73,7 @@ On Git Bash for Windows, prefix `docker compose run ... /binary` with `MSYS_NO_P
 ```text
 cmd/                 controlplane-api, execution-worker, fakeerp, eacpctl
 internal/config      env configuration (EACP_*)
-internal/logging     slog with secret redaction
+internal/logging     slog with secret redaction (a SecretSet that grows after startup)
 internal/telemetry   OpenTelemetry + W3C propagation
 internal/health      /healthz, /readyz
 internal/httpserver  graceful shutdown
@@ -88,7 +89,8 @@ internal/governance/conformance  the ADR-002 reference set loader and checker
 internal/approval    approval request, vote and one-time grant transactions
 internal/action      Action API engine: submission, evaluation, release boundary, cancel, sweeper,
                      operator resolution, evidence
-internal/worker      claim, heartbeat, fenced dispatch intent and results, host-bound secrets, worker loop,
+internal/worker      claim, heartbeat, fenced dispatch intent and results, host-bound credentials and the OAuth 2.0
+                     client-credentials provider (ADR-019), worker loop,
                      reconciler (lookup under the pinned proof standard), MCP scanner (fenced scan lease)
 internal/messaging   outbox relay and pruner, inbox, the worker's work-hint consumer (NATS JetStream)
 internal/messaging/natstest  embedded JetStream server for tests (never skips)
@@ -102,7 +104,7 @@ internal/finops      OTLP GenAI usage ingest, rate card, billing import, chargeb
 internal/release     agent releases: evaluations, replay/shadow observations, canary cohort and routing, rollback evaluator (ADR-018)
 internal/connector   HTTP connector (execute, lookup)
 internal/connector/mcp  MCP discovery client (Streamable HTTP, modern and legacy revisions); mcptest fake server
-internal/fakeerp     credential-protected Fake ERP with a durable operation log
+internal/fakeerp     credential-protected Fake ERP with a durable operation log and an OAuth token endpoint
 internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions
 integrations/governance/microsoftagt  Go client of the AGT sidecar PDP (mTLS, version pins), dev PKI
 sidecars/agt-pdp     Python sidecar: AGT policy layer + ACS engine + OPA, Rego adapter, conformance tests
@@ -111,7 +113,7 @@ migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests
 test/invariants      checks docs/INVARIANTS.md against MASTER_PLAN §103 and the tests
 test/conformance     governance reference set shared by Go and the sidecar
-test/demo            the Slice A and C demos (EACP_DEMO=1, scripts/demo.sh) and the Kubernetes disruption run (EACP_DEMO_PLATFORM=k8s)
+test/demo            the Slice A, Slice C and JIT demos (EACP_DEMO=1, scripts/demo.sh) and the Kubernetes disruption run (EACP_DEMO_PLATFORM=k8s)
 test/helm            Helm chart render tests (EACP_HELM_REQUIRED=1 fails without Helm)
 deployments/docker   Dockerfile, postgres bootstrap, NATS config (per-role users)
 deployments/demo     compose override for the isolated demo project

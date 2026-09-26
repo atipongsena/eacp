@@ -59,7 +59,7 @@ This claim is scoped to conforming deployments; see [ADR-001 §3a](docs/adr/ADR-
 | Tenant isolation: RLS catalog test with reviewed cross-tenant paths; every table swept after a full flow | `internal/storage/rls_catalog_test.go`, `internal/worker/isolation_integration_test.go` |
 | Chaos: connection storms under live loops, restarted services, killed worker, duplicate submissions; governance outages block no cancellation | `internal/worker/chaos_integration_test.go` |
 | Slice A invariant map, checked against MASTER_PLAN §103 | `docs/INVARIANTS.md`, `test/invariants` |
-| Slice A and Slice C demos on an isolated stack (§111) | `scripts/demo.sh`, [docs/DEMO.md](docs/DEMO.md) |
+| Slice A, Slice C and JIT credential demos on an isolated stack (§111, §96) | `scripts/demo.sh`, [docs/DEMO.md](docs/DEMO.md) |
 
 ## Slice B (Phase 9): the AGT sidecar PDP
 
@@ -186,6 +186,18 @@ A release moves an agent from its `ACTIVE` (stable) version to a candidate: `EVA
 Run as many `controlplane-api` and `execution-worker` replicas as you like against one database: there is no leader, and PostgreSQL arbitrates every background loop (ADR-029). The incident, FinOps and release evaluators skip a tenant another replica is evaluating, the sweeper tolerates actions another replica moved first, and each worker needs a unique `EACP_WORKER_ID` (the host name by default). Set `EACP_SHUTDOWN_DELAY` (0s–60s, default 0s) behind a load balancer: on SIGTERM the service fails `/readyz`, closes kept-alive connections after each response, stops its loops and keeps serving for that long before shutting down. `internal/worker` `TestReplicasShareTheWorkAndSurviveLosingOne` runs three API loop sets and three workers and stops one of each mid-run.
 
 On Kubernetes, install the Helm chart `deployments/helm/eacp` (Phase 23b, ADR-029 Rev 1.1): hardened, replicated Deployments for the API, the worker and the PDP, the compose network boundary as NetworkPolicies, Secrets referenced by name only, migrations as a hook, disruption budgets and optional CPU autoscaling. PostgreSQL and NATS stay external. See [docs/KUBERNETES.md](docs/KUBERNETES.md); `bash scripts/k8s-e2e.sh` proves it on a 2-node minikube cluster.
+
+## Phase 24a: just-in-time credentials
+
+A connector credential no longer has to be a static secret (ADR-019). An entry of the worker's connector-secrets file may name an OAuth 2.0 client-credentials provider instead of a `value`:
+
+```json
+{"tenant_id": "…", "secret_ref": "erp-jit", "host": "erp.internal:8443",
+ "oauth2": {"token_url": "https://idp.internal/oauth2/token", "client_id": "eacp-worker",
+            "client_secret_file": "/run/secrets/idp", "scope": "erp.purchase"}}
+```
+
+The worker mints a Bearer token (it must expire within an hour) just before a call, reuses it only while it outlives the whole call plus 30 s, and never stores it. If the token endpoint fails, nothing is dispatched and the worker stops claiming that binding's work during a 1–60 s back-off. Tokens and client secrets are redacted from every log. Only the worker holds any of this; agents, the API and PostgreSQL never do. `DEMO=J scripts/demo.sh` runs the JIT demo.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 

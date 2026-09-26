@@ -1,6 +1,6 @@
-# Slice A and Slice C demos
+# Slice A, Slice C and JIT credential demos
 
-Two demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme) and Slice C (tenant Globex, [below](#slice-c-demo)).
+Three demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)) and JIT credentials (tenant Umbrella, [below](#jit-credential-demo)).
 
 ## Slice A demo
 
@@ -25,9 +25,9 @@ scripts/demo.sh
 ```
 
 The script:
-1. prepares the local Fake ERP and Fake MCP credentials;
+1. prepares the local Fake ERP and Fake MCP credentials and the Fake ERP's OAuth client secret;
 2. starts a **fresh, isolated** stack as the compose project `eacp-demo` (API on `127.0.0.1:18080`, PostgreSQL on `127.0.0.1:55433`, with its own volumes);
-3. runs both demos (`DEMO=A` or `DEMO=C` runs one);
+3. runs every demo (`DEMO` picks some: letters from `A`, `C` and `J`, e.g. `DEMO=J`);
 4. removes the demo stack and its volumes.
 
 A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The two demos take about two minutes after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
@@ -113,6 +113,17 @@ The walk-through below is what `docs/reviews/2026-09-26-phase22b-console-e2e.md`
 - **Overview.** The overview shows the SOC counters, and the incidents page lists the drift and kill incidents.
 - **Containment.** The drift incident shows po-assistant as affected. Its "Pause the agents that use this tool" link opens the fleet form, pre-filled. Preview the operation, confirm it, and link it to the incident.
 - **Two-person rules.** The acknowledger cannot resolve the critical incident; a second operator can. The operator who set a kill cannot clear it on the Security page; a second operator can.
+
+## JIT credential demo
+
+`TestJITDemo` shows Phase 24a (ADR-019). Tenant Umbrella's ERP connector names `secret_ref` `fakeerp-jit`. In the worker's connector-secrets manifest that reference is an `oauth2` entry for the Fake ERP's token endpoint (`POST /oauth/token`, client `eacp-worker`, 300-second tokens), not a static credential.
+
+- **J0.** Bootstrap the tenant and a policy that allows routine ERP work.
+- **J1.** Register the connector, tools and agent as in Slice A; five purchases each end `SUCCEEDED` with exactly one purchase order.
+- **J2.** The Fake ERP audit shows every purchase made by principal `oauth:eacp-worker`, not the static credential. It records each token issuance by the token's SHA-256, never the token.
+- **J3.** The secret scan: the OAuth client secret appears in no API response, service log or database dump. Every issued token is also absent: the demo hashes every 43-character window of base64url text in all three and compares against the issued hashes.
+
+The agent cannot reach the token endpoint any more than the ERP (`test/security` `TestAgentCannotReachTheTokenEndpoint`). The JIT demo also runs on Kubernetes (`scripts/k8s-e2e.sh`).
 
 ## Scope
 

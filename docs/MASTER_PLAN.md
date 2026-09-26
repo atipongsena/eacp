@@ -3742,6 +3742,8 @@ leader election where required
 
 # 96. Phase 24 — JIT Credentials (Later)
 
+> **Status (2026-09-26): 24a delivered (ADR-019 Rev 1.0).** The execution worker resolves every connector credential through a provider. Besides the static secret, a secrets-file entry may name an OAuth 2.0 client-credentials provider: the worker mints a short-lived Bearer token (at most one hour) just in time, reuses it only while it outlives the whole call, and never persists it. A failing token endpoint dispatches nothing and withholds the binding from claims during a 1–60 s back-off. Minted tokens are redacted from every log until a day after they expire. Fake ERP gains a token endpoint; `TestJITDemo` buys with minted tokens on compose and Kubernetes and finds no client secret or token in responses, logs or the database. **Next (24b/24c):** Vault, SPIFFE/SPIRE and cloud workload identity behind the same seam.
+
 Implement:
 
 ```text

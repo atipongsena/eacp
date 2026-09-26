@@ -1,0 +1,144 @@
+# ADR-019: Credential custody — providers and just-in-time credentials
+
+Status: Accepted (Rev 1.0, 2026-09-26). Phase 24a. Scope: MASTER_PLAN §96.
+Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
+bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
+(circuits and backpressure withhold work), ADR-023 (the MCP scanner), ADR-029 (the worker runs as several
+replicas).
+
+## Context
+
+Since Slice A only `execution-worker` holds connector credentials:
+
+- it loads them from `EACP_CONNECTOR_SECRETS_FILE`, keyed by tenant and `secret_ref`;
+- each credential is bound to the exact `host[:port]` of its connector;
+- values are redacted from logs, scrubbed from connector results, and never stored, journaled or returned;
+- every other service refuses the file (`config.Options.AllowConnectorSecrets`).
+
+Those credentials were static: a long-lived secret per target. §96 asks for short-lived credentials minted
+just in time, then Vault, SPIFFE and cloud workload identity. This revision adds the provider seam and its
+first real provider, OAuth 2.0 client credentials (RFC 6749 §4.4), the pattern behind Entra ID, Okta, Keycloak
+and most enterprise token brokers. Custody does not change.
+
+## Decision
+
+### 1. Custody (unchanged, now written down)
+
+- Providers run only inside `execution-worker`. No API, table, message or log learns a credential or a
+  provider's configuration; the registry knows only the connector's `secret_ref`.
+- A credential is bound to one connector host. The OAuth token endpoint is a second, separately configured
+  host; the client secret is sent only to it.
+- An invalid entry rejects the whole secrets file at startup (fail closed). Errors never contain a value.
+- Nothing is dispatched without a credential.
+
+### 2. The provider seam
+
+`worker.SecretStore` (loaded by `worker.LoadSecrets(path, opts...)`) keeps its name and file. Each entry has
+exactly one of `value`, `value_file` (a static credential, as before) or `oauth2` (a provider):
+
+- `Credential(ctx, tenant, ref, endpoint, validFor)` returns a credential that stays valid for at least
+  `validFor`. `ErrNoCredential`: no binding for this tenant, reference and exact host.
+  `ErrCredentialUnavailable`: the provider cannot produce one now. `Resolve` is `Credential` with `validFor` 0.
+- `validFor` is the caller's call budget plus `worker.CredentialSkew` (30 s): the worker uses
+  `eacp.call_timeout` of the pinned contract (read with the job, at most 300 s), the reconciler its lookup
+  budget, the MCP scanner its scan timeout. A token that could expire during the call is never sent.
+- `Available()` lists the bindings the worker can serve now. Claims (`Claimable`, `Reconcilable`, `ScansDue`)
+  use it, so a binding whose provider is backing off gets no work: nothing is claimed only to be released.
+- `Rejected(tenant, ref, secret)`: when a call ends with error class `unauthorized`, the worker (and the MCP
+  scanner) tell the provider, which drops the token so the next attempt mints another. The attempt's outcome
+  is classified exactly as before (ADR-004).
+- `Values()` returns every live value (static secrets, client secrets, unexpired tokens) for the scrubbers.
+
+### 3. The OAuth 2.0 client-credentials provider
+
+Entry: `token_url` (absolute, lowercase host, no user info, query or fragment; `https`, or `http` only when
+`EACP_ENV` is `development` or `test`), `client_id` (1–256 printable characters without spaces or `:`),
+exactly one of `client_secret` and `client_secret_file` (1–4096 bytes), optional `scope` (RFC 6749 scope
+tokens, ≤ 1024 bytes) and `resource` (RFC 8707, an absolute URL without fragment).
+
+Token request: `POST token_url`, form `grant_type=client_credentials[&scope][&resource]`, client
+authentication `client_secret_basic` with the id and secret form-urlencoded (RFC 6749 §2.3.1). Its own HTTP
+client: 10 s timeout, **no redirects** (a redirect could carry the client secret elsewhere), response at most
+64 KiB.
+
+Only this response is a token: HTTP 200, a JSON object, `access_token` of 1–8192 printable ASCII characters
+without spaces, `token_type` `Bearer` (case-insensitive, RFC 6750) and `expires_in` a bare JSON integer from 1
+to 3600. Anything else is a failed mint, and so is a token whose lifetime is shorter than the call's
+`validFor` (it is kept for shorter calls).
+
+- The expiry is measured from before the request, so network time never extends a token.
+- A cached token is reused only while `now + validFor` is before its expiry. Tokens live in worker memory only.
+- One mint runs at a time per binding; callers waiting for it reuse its token.
+- A failed mint backs the binding off for 1 s, doubling to at most 60 s; a success resets it. During the
+  back-off `Credential` fails at once without a request and `Available()` omits the binding.
+- Mints and failures are logged with tenant, reference, token host, lifetime or failure class only.
+
+### 4. Redaction
+
+`logging.SecretSet` holds the values a logger redacts and may grow after the logger is built
+(`logging.NewWithSet`). `service.Deps` owns one set (`Redaction()`); `RedactSecrets` adds permanent values.
+The worker adds each client secret permanently and each minted token until its expiry plus 24 h, keeping at
+most 10 000 temporary values (the oldest go first).
+
+### 5. Failure handling
+
+- **Worker.** Without a credential the lease is released before the dispatch intent, with reason
+  `credential unavailable` (or `worker cannot serve this connector` for a missing binding). No call is made,
+  no attempt is recorded and the circuit is unchanged: the target was never contacted.
+- **Reconciler.** Nothing is looked up and no check is recorded; the lease lapses and the action waits for its
+  next reconciliation (T33). An unavailable credential never counts as evidence.
+- **MCP scanner.** The scan is not recorded (not even as failed); its lease expires and it is retried.
+
+### 6. Fake ERP token endpoint (demo and tests)
+
+With `EACP_FAKEERP_OAUTH_CLIENT_ID`, `EACP_FAKEERP_OAUTH_CLIENT_SECRET_FILE` and `EACP_FAKEERP_OAUTH_TTL`
+(default 300 s, 1 s–1 h), Fake ERP serves `POST /oauth/token` under §3's contract. It issues random 32-byte
+base64url tokens and keeps only their SHA-256 and expiry, in its durable operation log, so tokens survive a
+restart like every effect. An unexpired token authorises as principal `oauth:<client_id>`; issuance and
+refusals are audited with the hash and expiry, never the token. Compose and the Kubernetes dev manifests bind
+tenant `…00a4`, `secret_ref` `fakeerp-jit`, to it; the TTL is 300 s because a 60 s token could never outlive
+the default 30 s call plus the 30 s skew.
+
+### 7. Proof
+
+- `internal/logging`: `TestALoggerRedactsASecretAddedAfterItWasBuilt`, `TestTemporarySecretsExpireAndAreBounded`.
+- `internal/worker` unit tests (`oauth2_test.go`): reuse while the token outlives the call, a fresh mint when
+  it would not, every refused response, no redirects, one mint under concurrency, back-off and its one-minute
+  cap, dropping a rejected token, redaction, host binding; `TestInvalidOAuthEntriesRejectTheWholeFile`.
+- `internal/worker` PostgreSQL tests (`jit_integration_test.go`) with the real HTTP connector and Fake ERP:
+  three calls with one minted token and no token or client secret in the database or logs; a token shorter
+  than the call never dispatches; a failing token endpoint withholds claims until the back-off passes; a
+  refused token is replaced; the reconciler looks up with a minted token and records nothing while the
+  credential is unavailable; `TestAScanWithoutACredentialIsNotRecorded`.
+- `internal/fakeerp`: issuance, expiry, refused clients and grants, tokens across a restart.
+- `test/demo` `TestJITDemo` (compose and Kubernetes): purchases as `oauth:eacp-worker`, one PO each; the client
+  secret and every issued token (found by hashing every 43-character window of base64url text) are absent
+  from API responses, service logs and a database dump.
+- `test/security`: the agent cannot reach the token endpoint; only Fake ERP mounts the OAuth client secret;
+  an unauthenticated token request gets 401.
+
+## Consequences
+
+- A connector moves to just-in-time credentials by changing its secrets-file entry; the registry, policies
+  and contracts do not change.
+- A token endpoint outage stops that binding's work without churning leases or tripping the target's circuit.
+  Work waits in `QUEUED`; it is never failed for a missing credential.
+- Each worker replica mints its own tokens (ADR-029: replicas share nothing that decides).
+- Vault, SPIFFE/SPIRE and cloud workload identity (24b/24c) implement the same seam: a provider that returns a
+  credential valid for `validFor`, reports availability and drops a rejected value.
+
+## Unresolved assumptions (conservative choices)
+
+| Assumption | Choice |
+|---|---|
+| Where providers run | Inside the worker only; a broker sidecar is deferred. |
+| Client authentication | `client_secret_basic` only; `private_key_jwt` and mTLS are deferred. |
+| Token lifetime | `expires_in` is required and at most 3600 s; longer or missing is refused. |
+| Reuse | Only while the token outlives the whole call (`validFor`); never persisted. |
+| A token shorter than the call | Unavailable for that call, and the binding backs off (a misconfigured IdP is not hammered). |
+| Token endpoint failure | No dispatch, lease released, binding withheld from claims with a 1–60 s back-off. |
+| The target rejects a token | Classified as before (ADR-004); the worker and scanner drop the token. The reconciler's lookup carries no error class, so a refused token is reused for lookups until it expires. |
+| Redirects from the token endpoint | Refused. |
+| Plain `http` token endpoint | Only when `EACP_ENV` is `development` or `test`. |
+| Credential evidence in PostgreSQL | None; logs carry the binding and lifetime, never a value. |
+| Minted tokens in the redactor | Kept until expiry + 24 h, at most 10 000. |

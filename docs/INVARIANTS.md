@@ -24,7 +24,7 @@ Phase 21 extends it to identity, the tenant policy, budgets and prices (ADR-026 
 
 Phase 22a adds incidents and the Agent SOC read model (ADR-027). An incident observes and never decides. Its tests join invariant 17. `internal/incident/schema_test.go` also checks every guard in raw SQL (automatic incidents only from the `incident` system actor, manual ones by operators, the one-move lifecycle, two-person critical resolution, an insert-only timeline, tenant isolation). `evaluate_test.go` checks one incident per signal occurrence, operator containment opening nothing, and the affected snapshot agreeing with `registry.BlastRadius`.
 
-Phase 23a adds high availability without a leader (ADR-029). `internal/worker` TestReplicasShareTheWorkAndSurviveLosingOne (three API loop sets, three workers, one of each stopped mid-run) joins invariants 4 and 16, and `internal/action` TestTwoSweepersReclaimEachLapsedLeaseOnce joins invariant 4. Phase 23b (the Helm chart, ADR-029 Rev 1.1) adds `test/demo` TestKubernetesDisruption on a 2-node minikube cluster (scripts/k8s-e2e.sh); like the demos it needs a running stack, so it is not in the map.
+Phase 23a adds high availability without a leader (ADR-029). `internal/worker` TestReplicasShareTheWorkAndSurviveLosingOne (three API loop sets, three workers, one of each stopped mid-run) joins invariants 4 and 16, and `internal/action` TestTwoSweepersReclaimEachLapsedLeaseOnce joins invariant 4. Phase 23b (the Helm chart, ADR-029 Rev 1.1) adds `test/demo` TestKubernetesDisruption on a 2-node minikube cluster (scripts/k8s-e2e.sh); like the demos it needs a running stack, so it is not in the map. Phase 24a (JIT credentials, ADR-019) adds `internal/worker` TestTheWorkerExecutesWithAMintedToken to invariant 11; `test/demo` TestJITDemo scans responses, logs and the database for every issued token.
 
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
@@ -163,6 +163,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/config` TestConnectorSecretsOnlyInTheWorker — every other service refuses a connector-secrets file
 - `internal/worker` TestSecretCanaryNeverLeaks — a canary secret appears in no row, journal, outbox or log
 - `internal/fakeerp` TestFakeERPRejectsUnauthenticatedPrivilegedCalls — privileged ERP calls need the worker credential
+- `internal/worker` TestTheWorkerExecutesWithAMintedToken — a just-in-time token is minted in the worker, reused, and appears in no row, journal, outbox or log (ADR-019)
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 
