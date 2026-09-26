@@ -7,7 +7,9 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -223,6 +225,31 @@ func SetSystem(ctx context.Context, tx pgx.Tx, component string) error {
 		return fmt.Errorf("storage: set system actor: %w", err)
 	}
 	return nil
+}
+
+// loopName is a background loop's name in its lock key.
+var loopName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// TryLoopLock takes the transaction-scoped advisory lock of background loop
+// loop for the transaction's tenant (set by InTenantTx) without waiting,
+// and reports whether it got it. The lock only keeps replicas from doing the
+// same tenant's work at once (ADR-029): it decides nothing, and it ends with
+// the transaction, so a crashed replica never holds it.
+func TryLoopLock(ctx context.Context, tx pgx.Tx, loop string) (bool, error) {
+	if !loopName.MatchString(loop) {
+		return false, fmt.Errorf("storage: invalid loop name %q", loop)
+	}
+	var got *bool
+	err := tx.QueryRow(ctx, `SELECT CASE WHEN eacp.current_tenant_id() IS NULL THEN NULL
+		ELSE pg_try_advisory_xact_lock(hashtextextended('eacp.loop:' || $1 || ':' || eacp.current_tenant_id()::text, 0)) END`,
+		loop).Scan(&got)
+	if err != nil {
+		return false, fmt.Errorf("storage: loop lock: %w", err)
+	}
+	if got == nil {
+		return false, errors.New("storage: loop lock needs a tenant transaction")
+	}
+	return *got, nil
 }
 
 // SetWorker records that execution worker workerID, holding (or claiming)

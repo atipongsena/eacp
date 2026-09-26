@@ -556,3 +556,25 @@ func (f *Fixture) SetLimit(t testing.TB, account uuid.UUID, limit string) {
 		t.Fatalf("registrytest: approve limit: %v", err)
 	}
 }
+
+// HoldLoopLock takes background loop loop's lock for the fixture's tenant in
+// an open transaction, as another replica evaluating the tenant would, and
+// returns the function that ends that transaction.
+func (f *Fixture) HoldLoopLock(t testing.TB, loop string) (release func()) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := f.App.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, f.Tenant.String()); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	got, err := storage.TryLoopLock(ctx, tx, loop)
+	if err != nil || !got {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("hold loop lock %s = %v, %v", loop, got, err)
+	}
+	return func() { _ = tx.Rollback(ctx) }
+}
