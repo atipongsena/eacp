@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -47,6 +48,9 @@ type Deps struct {
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bg       sync.WaitGroup
+
+	// draining is set when shutdown starts; /readyz then fails.
+	draining atomic.Bool
 }
 
 // Background runs fn in its own goroutine until the service stops or the
@@ -135,33 +139,72 @@ func (d *Deps) Handler(mux *http.ServeMux) http.Handler {
 	return otelhttp.NewHandler(mux, d.Name)
 }
 
+// errDraining fails readiness once shutdown has started.
+var errDraining = errors.New("service is shutting down")
+
 func (d *Deps) readinessChecks() []health.Check {
-	if d.DB == nil {
+	checks := []health.Check{{Name: "draining", Fn: func(context.Context) error {
+		if d.draining.Load() {
+			return errDraining
+		}
 		return nil
+	}}}
+	if d.DB == nil {
+		return checks
 	}
-	return []health.Check{
-		{Name: "database", Fn: d.DB.Ping},
-		{Name: "role_safety", Fn: func(ctx context.Context) error { return storage.CheckRoleSafety(ctx, d.DB) }},
-		{Name: "schema_version", Fn: func(ctx context.Context) error {
+	return append(checks,
+		health.Check{Name: "database", Fn: d.DB.Ping},
+		health.Check{Name: "role_safety", Fn: func(ctx context.Context) error { return storage.CheckRoleSafety(ctx, d.DB) }},
+		health.Check{Name: "schema_version", Fn: func(ctx context.Context) error {
 			return storage.CheckSchemaVersion(ctx, d.DB, migrations.Latest())
 		}},
-	}
+	)
 }
 
 // Serve listens on the configured address and serves h until ctx is
-// cancelled, then shuts down gracefully within the configured timeout.
+// cancelled (see ServeOn).
 func (d *Deps) Serve(ctx context.Context, h http.Handler) error {
 	ln, err := net.Listen("tcp", d.Config.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("%s: listen: %w", d.Name, err)
 	}
+	return d.ServeOn(ctx, ln, h)
+}
+
+// ServeOn serves h on ln until ctx is cancelled, then drains (ADR-029):
+// /readyz fails at once, background tasks are cancelled, the listener keeps
+// serving for EACP_SHUTDOWN_DELAY so a load balancer can stop routing here,
+// and the graceful shutdown then waits up to EACP_SHUTDOWN_TIMEOUT for
+// in-flight requests. A listener failure returns at once.
+func (d *Deps) ServeOn(ctx context.Context, ln net.Listener, h http.Handler) error {
 	d.Log.Info("http listening", "addr", ln.Addr().String())
 	srv := &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(d.Log.Handler(), slog.LevelWarn),
 	}
-	err = httpserver.Serve(ctx, srv, ln, d.Config.ShutdownTimeout)
+	serving, stopServing := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopServing()
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-serving.Done(): // the server failed first
+			return
+		}
+		d.draining.Store(true)
+		d.bgCancel()
+		if delay := d.Config.ShutdownDelay; delay > 0 {
+			d.Log.Info("draining: not ready, still serving", "delay", delay)
+			t := time.NewTimer(delay)
+			select {
+			case <-t.C:
+			case <-serving.Done():
+				t.Stop()
+			}
+		}
+		stopServing()
+	}()
+	err := httpserver.Serve(serving, srv, ln, d.Config.ShutdownTimeout)
 	if err == nil {
 		d.Log.Info("http stopped cleanly")
 	} else if errors.Is(err, context.DeadlineExceeded) {

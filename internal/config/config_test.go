@@ -328,3 +328,26 @@ func TestConsoleSetting(t *testing.T) {
 		}
 	}
 }
+
+func TestShutdownDelaySetting(t *testing.T) {
+	load := func(v string) (Config, error) {
+		m := map[string]string{"EACP_DATABASE_URL": "postgres://app@localhost/eacp"}
+		if v != "" {
+			m["EACP_SHUTDOWN_DELAY"] = v
+		}
+		return Load(env(m), Options{RequireDatabase: true})
+	}
+	if cfg, err := load(""); err != nil || cfg.ShutdownDelay != 0 {
+		t.Fatalf("default = %v, %v; want 0", cfg.ShutdownDelay, err)
+	}
+	for v, want := range map[string]time.Duration{"0s": 0, "5s": 5 * time.Second, "60s": time.Minute} {
+		if cfg, err := load(v); err != nil || cfg.ShutdownDelay != want {
+			t.Errorf("%s = %v, %v; want %v", v, cfg.ShutdownDelay, err, want)
+		}
+	}
+	for _, bad := range []string{"-1s", "61s", "soon", "5"} {
+		if _, err := load(bad); err == nil || !strings.Contains(err.Error(), "EACP_SHUTDOWN_DELAY") {
+			t.Errorf("EACP_SHUTDOWN_DELAY=%q: err = %v", bad, err)
+		}
+	}
+}

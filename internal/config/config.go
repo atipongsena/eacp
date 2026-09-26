@@ -35,6 +35,10 @@ type Config struct {
 	OTelExporter    string
 	OTelEndpoint    string
 	ShutdownTimeout time.Duration
+	// ShutdownDelay is how long a stopping service keeps serving, reporting
+	// not-ready, before its graceful HTTP shutdown (EACP_SHUTDOWN_DELAY,
+	// 0s-60s, default 0s), so a load balancer stops routing to it first.
+	ShutdownDelay time.Duration
 
 	// Action API (controlplane-api): admission limits on released and on
 	// unreleased unfinished actions (MASTER_PLAN §26, ADR-022 §1), the
@@ -169,6 +173,14 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 		errs = append(errs, errors.New("EACP_SHUTDOWN_TIMEOUT: must be positive"))
 	}
 	cfg.ShutdownTimeout = timeout
+	delay, err := time.ParseDuration(get("EACP_SHUTDOWN_DELAY", "0s"))
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("EACP_SHUTDOWN_DELAY: %w", err))
+	case delay < 0 || delay > time.Minute:
+		errs = append(errs, errors.New("EACP_SHUTDOWN_DELAY: must be between 0s and 60s"))
+	}
+	cfg.ShutdownDelay = delay
 
 	limit := func(key, def string) int64 {
 		n, err := strconv.ParseInt(get(key, def), 10, 64)
@@ -304,6 +316,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("otel_exporter", c.OTelExporter),
 		slog.String("otel_endpoint", c.OTelEndpoint),
 		slog.Duration("shutdown_timeout", c.ShutdownTimeout),
+		slog.Duration("shutdown_delay", c.ShutdownDelay),
 		slog.Int64("action_max_queued_per_tenant", c.MaxQueuedPerTenant),
 		slog.Int64("action_max_queued_global", c.MaxQueuedGlobal),
 		slog.Int64("action_max_pending_per_tenant", c.MaxPendingPerTenant),
