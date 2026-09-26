@@ -1,0 +1,126 @@
+# DEVELOPMENT ONLY: a dev-mode Vault (in memory, unsealed, a fixed root token)
+# for the Vault demo (ADR-019 Rev 1.3, TestVaultDemo). The worker logs in with
+# Kubernetes auth: its projected token (audience vault) is reviewed by the API
+# server with Vault's own service account, which holds system:auth-delegator.
+# Only the worker and the init Job reach it.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: vault, namespace: eacp-deps}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: eacp-dev-vault-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects:
+  - {kind: ServiceAccount, name: vault, namespace: eacp-deps}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: eacp-deps
+spec:
+  selector: {app: vault}
+  ports: [{name: http, port: 8200, targetPort: 8200}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: eacp-deps
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: vault}
+  template:
+    metadata:
+      labels: {app: vault}
+    spec:
+      serviceAccountName: vault # its token reviews the worker's (TokenReview)
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""} # the node the disruption test never drains
+      securityContext: {runAsNonRoot: true, runAsUser: 100, runAsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: vault
+          image: hashicorp/vault:2.1.1
+          imagePullPolicy: Never
+          args: [server, -dev, -dev-root-token-id=dev-only-vault-root-token, -dev-listen-address=0.0.0.0:8200]
+          env:
+            - {name: SKIP_SETCAP, value: "true"} # dev mode does not lock memory
+            - {name: HOME, value: /tmp}          # the dev server writes its token helper file there
+          ports: [{containerPort: 8200}]
+          readinessProbe:
+            httpGet: {path: /v1/sys/health, port: 8200}
+            periodSeconds: 2
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: logs, mountPath: /vault/logs}
+            - {name: file, mountPath: /vault/file}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: logs, emptyDir: {}}
+        - {name: file, emptyDir: {}}
+---
+# Kubernetes auth bound to the worker's service account and audience, a
+# policy that can only read secret/data/eacp/*, and the demo's KV values from
+# the dev Secrets. Safe to run again against the same Vault.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-init
+  namespace: eacp-deps
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: {app: vault-init}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 100, runAsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: vault-init
+          image: hashicorp/vault:2.1.1
+          imagePullPolicy: Never
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              until vault status >/dev/null 2>&1; do sleep 1; done
+              vault auth list -format=json | grep -q '"kubernetes/"' || vault auth enable kubernetes
+              vault write auth/kubernetes/config kubernetes_host="https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT" >/dev/null
+              printf 'path "secret/data/eacp/*" {\n  capabilities = ["read"]\n}\n' | vault policy write eacp-worker -
+              vault write auth/kubernetes/role/eacp-worker bound_service_account_names=eacp-worker \
+                bound_service_account_namespaces=eacp audience=vault token_policies=eacp-worker \
+                token_ttl=1h token_max_ttl=1h >/dev/null
+              vault kv put -mount=secret eacp/fakeerp token="$(tr -d '\r\n' </run/secrets/fakeerp/token)" >/dev/null
+              vault kv put -mount=secret eacp/fakeerp-oauth client_secret="$(tr -d '\r\n' </run/secrets/fakeerp-oauth/secret)" >/dev/null
+              echo "vault-init: kubernetes auth, role eacp-worker (eacp/eacp-worker, audience vault), KV values written"
+          env:
+            - {name: VAULT_ADDR, value: "http://vault.eacp-deps.svc:8200"}
+            - {name: VAULT_TOKEN, value: dev-only-vault-root-token}
+            - {name: HOME, value: /tmp}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: token, mountPath: /run/secrets/fakeerp, readOnly: true}
+            - {name: oauth-client, mountPath: /run/secrets/fakeerp-oauth, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: token
+          secret: {secretName: fakeerp-token}
+        - name: oauth-client
+          secret: {secretName: fakeerp-oauth-client}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: vault, namespace: eacp-deps}
+spec:
+  podSelector: {matchLabels: {app: vault}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp}}
+          podSelector: {matchLabels: {app.kubernetes.io/component: worker}}
+        - podSelector: {matchLabels: {app: vault-init}}
+      ports: [{protocol: TCP, port: 8200}]
