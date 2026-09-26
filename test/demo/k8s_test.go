@@ -3,8 +3,12 @@ package demo
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"os"
+	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,9 +21,11 @@ import (
 const tenantK = "00000000-0000-4000-8000-0000000000e2"
 
 // TestKubernetesDisruption shows ADR-029 on a 2-node cluster (Phase 23b):
-// purchases keep executing, one PO each, while the API rolls, the workers
-// scale out and a node drains, and the API never stops answering. Then it
-// checks the chart's isolation and pod security from inside the cluster.
+// purchases keep executing, one PO each, while the API and the PDP roll,
+// the workers scale out and the node holding every API and PDP replica
+// drains; neither Service ever runs out of ready endpoints and no request
+// has to be sent twice. Then it checks the chart's isolation and pod
+// security from inside the cluster.
 func TestKubernetesDisruption(t *testing.T) {
 	if os.Getenv("EACP_DEMO_PLATFORM") != "k8s" {
 		t.Skip("set EACP_DEMO_PLATFORM=k8s and run scripts/k8s-e2e.sh (docs/KUBERNETES.md)")
@@ -41,16 +47,25 @@ func TestKubernetesDisruption(t *testing.T) {
 
 	node := strings.TrimSpace(k.must("get", "nodes", "-l", "!node-role.kubernetes.io/control-plane",
 		"-o", "jsonpath={.items[0].metadata.name}"))
-	if node == "" {
-		t.Fatal("the disruption run needs a second (worker) node")
+	control := strings.TrimSpace(k.must("get", "nodes", "-l", "node-role.kubernetes.io/control-plane",
+		"-o", "jsonpath={.items[0].metadata.name}"))
+	if node == "" || control == "" {
+		t.Fatal("the disruption run needs a control-plane node and a second node")
 	}
 	t.Cleanup(func() {
+		_, _ = k.kubectl("uncordon", control)
 		_, _ = k.kubectl("uncordon", node)
 		_, _ = k.kubectl("-n", "eacp", "scale", "deploy/eacp-worker", "--replicas=2")
 	})
 
-	d.step("K1. 30 purchases while the API rolls, the workers scale to 3 and node " + node + " drains")
+	d.step("K1. 30 purchases while the API and the PDP roll onto " + node + ", the workers scale to 3 and " +
+		node + " drains")
+	lowest := watchReady(t, k, "eacp-api", "eacp-pdp")
 	stopProbe, probed := probe(d.api + "/healthz")
+	// A new connection per request: the transport never replays a request
+	// on its own, and call counts every one it has to send again.
+	d.client = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	d.retries.Store(0)
 	const n = 30
 	type submitted struct {
 		code int
@@ -58,6 +73,7 @@ func TestKubernetesDisruption(t *testing.T) {
 	}
 	results := make([]submitted, n)
 	var wg sync.WaitGroup
+	defer wg.Wait() // a failure below still waits for the submitter
 	wg.Go(func() {
 		for i := range n {
 			payload := map[string]any{"amount": 100}
@@ -69,16 +85,29 @@ func TestKubernetesDisruption(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 		}
 	})
+	// The API and the PDP roll while the control-plane node is cordoned, so
+	// every replica lands on the node that drains next: the drain has to go
+	// through their PodDisruptionBudgets one pod at a time.
 	began := time.Now()
-	k.must("-n", "eacp", "rollout", "restart", "deploy/eacp-api")
-	k.must("-n", "eacp", "rollout", "status", "deploy/eacp-api", "--timeout=5m")
-	d.logf("API rolled (maxUnavailable 0, maxSurge 1) in %v", time.Since(began).Round(time.Second))
+	k.must("cordon", control)
+	k.must("-n", "eacp", "rollout", "restart", "deploy/eacp-api", "deploy/eacp-pdp")
+	for _, c := range []string{"api", "pdp"} {
+		k.must("-n", "eacp", "rollout", "status", "deploy/eacp-"+c, "--timeout=5m")
+	}
+	k.must("uncordon", control)
+	for _, c := range []string{"api", "pdp"} {
+		on := k.nodesOf("app.kubernetes.io/instance=eacp,app.kubernetes.io/component=" + c)
+		if len(on) < 2 || slices.ContainsFunc(on, func(n string) bool { return n != node }) {
+			t.Fatalf("%s pods run on %v, want every one on %s", c, on, node)
+		}
+	}
+	d.logf("API and PDP rolled (maxUnavailable 0, maxSurge 1) onto %s in %v", node, time.Since(began).Round(time.Second))
 	k.must("-n", "eacp", "scale", "deploy/eacp-worker", "--replicas=3")
 	k.must("-n", "eacp", "rollout", "status", "deploy/eacp-worker", "--timeout=5m")
 	d.logf("workers scaled to 3")
 	began = time.Now()
 	k.must("drain", node, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=5m")
-	d.logf("node %s drained within its PodDisruptionBudgets in %v", node, time.Since(began).Round(time.Second))
+	d.logf("node %s (every API and PDP replica) drained in %v", node, time.Since(began).Round(time.Second))
 	k.must("uncordon", node)
 	wg.Wait()
 
@@ -90,6 +119,22 @@ func TestKubernetesDisruption(t *testing.T) {
 		}
 		ids[i] = id
 	}
+	if r := d.retries.Load(); r != 0 {
+		t.Fatalf("%d requests failed to connect during the disruption and were sent again", r)
+	}
+	d.logf("%d purchases accepted on the first attempt, each on a new connection", n)
+	ok, failed, failures := stopProbe()
+	low := lowest()
+	for _, svc := range []string{"eacp-api", "eacp-pdp"} {
+		if low[svc] < 1 {
+			t.Fatalf("Service %s had %d ready endpoints at some point during the disruption", svc, low[svc])
+		}
+	}
+	d.logf("ready endpoints never fell below %d (API) and %d (PDP)", low["eacp-api"], low["eacp-pdp"])
+	if failed != 0 {
+		t.Fatalf("the API failed %d of %d health probes during the disruption: %v", failed, ok+failed, failures)
+	}
+	d.logf("%d health probes every 100 ms over %v: none failed", ok, probed().Round(time.Second))
 	for _, id := range ids {
 		d.until(id, "SUCCEEDED")
 	}
@@ -100,11 +145,6 @@ func TestKubernetesDisruption(t *testing.T) {
 		}
 	}
 	d.logf("%d purchases SUCCEEDED with exactly one PO each", n)
-	ok, failed, failures := stopProbe()
-	if failed != 0 {
-		t.Fatalf("the API failed %d of %d health probes during the disruption: %v", failed, ok+failed, failures)
-	}
-	d.logf("%d health probes every 100 ms over %v: none failed", ok, probed().Round(time.Second))
 
 	d.step("K2. Isolation: the agent reaches only the API")
 	if out, err := d.p.agent("wget", "-q", "-T", "3", "-O-", "http://controlplane-api:8080/healthz"); err != nil {
@@ -220,4 +260,90 @@ func probe(url string) (stop func() (ok, failed int64, failures []string), elaps
 		return okN.Load(), failN.Load(), reasons
 	}
 	return stop, func() time.Duration { return took }
+}
+
+// watchReady follows the EndpointSlices of the Services in eacp from now on
+// and returns a function that ends the watch and reports the fewest ready
+// endpoints each Service had at any moment.
+func watchReady(t *testing.T, k *k8sPlatform, services ...string) (lowest func() map[string]int) {
+	t.Helper()
+	cmd := exec.Command("kubectl", "--context", k.context, "-n", "eacp", "get", "endpointslices",
+		"-l", "kubernetes.io/service-name in ("+strings.Join(services, ",")+")",
+		"--watch", "--output-watch-events", "-o", "json")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	ready, service := map[string]int{}, map[string]string{} // by EndpointSlice
+	low := map[string]int{}                                 // by Service, once seen
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		dec := json.NewDecoder(stdout)
+		for {
+			var ev struct {
+				Type   string `json:"type"`
+				Object struct {
+					Metadata struct {
+						Name   string            `json:"name"`
+						Labels map[string]string `json:"labels"`
+					} `json:"metadata"`
+					Endpoints []struct {
+						Conditions struct {
+							Ready *bool `json:"ready"`
+						} `json:"conditions"`
+					} `json:"endpoints"`
+				} `json:"object"`
+			}
+			if dec.Decode(&ev) != nil {
+				return
+			}
+			n := 0
+			if ev.Type != "DELETED" {
+				for _, e := range ev.Object.Endpoints {
+					if r := e.Conditions.Ready; r == nil || *r { // unset means ready (discovery.k8s.io/v1)
+						n++
+					}
+				}
+			}
+			mu.Lock()
+			ready[ev.Object.Metadata.Name] = n
+			service[ev.Object.Metadata.Name] = ev.Object.Metadata.Labels["kubernetes.io/service-name"]
+			sums := map[string]int{}
+			for slice, c := range ready {
+				sums[service[slice]] += c
+			}
+			for svc, c := range sums {
+				if l, seen := low[svc]; !seen || c < l {
+					low[svc] = c
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		mu.Lock()
+		seen := len(low)
+		mu.Unlock()
+		if seen == len(services) {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("watching the EndpointSlices of %v: %d seen", services, seen)
+		}
+	}
+	return func() map[string]int {
+		_ = cmd.Process.Kill()
+		<-done
+		_ = cmd.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		return maps.Clone(low)
+	}
 }

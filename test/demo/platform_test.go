@@ -276,6 +276,32 @@ func (k *k8sPlatform) waitPods(w k8sWorkload, want int) {
 	}
 }
 
+// nodesOf returns the node of every pod in eacp that matches selector and
+// is not terminating.
+func (k *k8sPlatform) nodesOf(selector string) []string {
+	k.t.Helper()
+	var pods struct {
+		Items []struct {
+			Metadata struct {
+				DeletionTimestamp *string `json:"deletionTimestamp"`
+			} `json:"metadata"`
+			Spec struct {
+				NodeName string `json:"nodeName"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(k.must("-n", "eacp", "get", "pods", "-l", selector, "-o", "json")), &pods); err != nil {
+		k.t.Fatalf("pods %s: %v", selector, err)
+	}
+	var nodes []string
+	for _, p := range pods.Items {
+		if p.Metadata.DeletionTimestamp == nil {
+			nodes = append(nodes, p.Spec.NodeName)
+		}
+	}
+	return nodes
+}
+
 func (k *k8sPlatform) agent(args ...string) (string, error) {
 	return k.kubectl(append([]string{"-n", "agents", "exec", "deploy/agent", "--"}, args...)...)
 }

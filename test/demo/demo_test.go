@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,6 +46,8 @@ type demo struct {
 	keys      map[string]string
 	reader    string // who reads actions: the submitting agent by default
 	subject   string // the purchases' subject (post)
+	client    *http.Client
+	retries   atomic.Int64 // requests call had to send again
 	ids       map[string]string
 	contracts map[string]map[string]any
 }
@@ -64,7 +67,7 @@ func newDemo(t *testing.T, tenant string) *demo {
 	}
 	d := &demo{t: t, tenant: tenant, root: root, p: newPlatform(t, root),
 		api: env("EACP_DEMO_API", "http://127.0.0.1:18080"), token: strings.TrimSpace(string(token)),
-		subject: "carol@acme.test", keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
+		subject: "carol@acme.test", client: http.DefaultClient, keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
 	d.ready()
 	return d
 }
@@ -261,10 +264,11 @@ func (d *demo) call(who, method, path string, body any, headers ...string) (int,
 	}
 	var resp *http.Response
 	for try := 0; ; try++ { // ride out a restart in progress
-		resp, err = http.DefaultClient.Do(req)
+		resp, err = d.client.Do(req)
 		if err == nil || try == 20 {
 			break
 		}
+		d.retries.Add(1)
 		time.Sleep(500 * time.Millisecond)
 		if rd != nil {
 			b, _ := json.Marshal(body)
