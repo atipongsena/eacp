@@ -25,12 +25,13 @@ var sensitiveKeyFragments = []string{
 // Any value in secrets is redacted wherever it appears in the message or in
 // attribute values; attributes with sensitive-looking keys are always redacted.
 func New(w io.Writer, level slog.Leveler, format string, secrets ...string) *slog.Logger {
-	r := redactor{}
-	for _, s := range secrets {
-		if s != "" {
-			r.secrets = append(r.secrets, s)
-		}
-	}
+	return NewWithSet(w, level, format, NewSecretSet(secrets...))
+}
+
+// NewWithSet returns a logger like New that redacts every value in set,
+// including values added to it after the logger was built.
+func NewWithSet(w io.Writer, level slog.Leveler, format string, set *SecretSet) *slog.Logger {
+	r := redactor{set: set}
 	opts := &slog.HandlerOptions{Level: level, ReplaceAttr: r.replace}
 	if format == "text" {
 		return slog.New(slog.NewTextHandler(w, opts))
@@ -39,7 +40,7 @@ func New(w io.Writer, level slog.Leveler, format string, secrets ...string) *slo
 }
 
 type redactor struct {
-	secrets []string
+	set *SecretSet
 }
 
 // replace is used as slog.HandlerOptions.ReplaceAttr. Built-in handlers call
@@ -49,16 +50,17 @@ func (r redactor) replace(_ []string, a slog.Attr) slog.Attr {
 	if isSensitiveKey(a.Key) {
 		return slog.String(a.Key, Redacted)
 	}
+	secrets := r.set.Values()
 	switch a.Value.Kind() {
 	case slog.KindString:
-		return slog.String(a.Key, r.scrub(a.Value.String()))
+		return slog.String(a.Key, scrub(a.Value.String(), secrets))
 	case slog.KindAny:
 		if err, ok := a.Value.Any().(error); ok {
-			return slog.String(a.Key, r.scrub(err.Error()))
+			return slog.String(a.Key, scrub(err.Error(), secrets))
 		}
-		if len(r.secrets) > 0 {
+		if len(secrets) > 0 {
 			s := fmt.Sprintf("%+v", a.Value.Any())
-			if scrubbed := r.scrub(s); scrubbed != s {
+			if scrubbed := scrub(s, secrets); scrubbed != s {
 				return slog.String(a.Key, scrubbed)
 			}
 		}
@@ -66,8 +68,8 @@ func (r redactor) replace(_ []string, a slog.Attr) slog.Attr {
 	return a
 }
 
-func (r redactor) scrub(s string) string {
-	for _, secret := range r.secrets {
+func scrub(s string, secrets []string) string {
+	for _, secret := range secrets {
 		s = strings.ReplaceAll(s, secret, Redacted)
 	}
 	return s

@@ -158,3 +158,20 @@ func TestRedactSecretsExtendsTheServiceLogger(t *testing.T) {
 		t.Fatalf("log = %s", s)
 	}
 }
+
+func TestTheServiceLoggerRedactsValuesAddedLater(t *testing.T) {
+	var out bytes.Buffer
+	deps, stop, err := service.Start(context.Background(), "execution-worker", envFrom(nil),
+		config.Options{AllowConnectorSecrets: true}, &out)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer stop()
+	log := deps.Log
+	deps.Redaction().Add("tok-canary-late", time.Now().Add(time.Hour))
+	deps.RedactSecrets("tok-canary-perm")
+	log.Info("minted", "value", "tok-canary-late tok-canary-perm")
+	if strings.Contains(out.String(), "tok-canary") {
+		t.Fatalf("a value added after the logger was taken leaked: %s", out.String())
+	}
+}

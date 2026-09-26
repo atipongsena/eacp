@@ -42,8 +42,7 @@ type Deps struct {
 	// DB is nil for services started without RequireDatabase.
 	DB *pgxpool.Pool
 
-	out     io.Writer
-	secrets []string
+	redaction *logging.SecretSet
 
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
@@ -61,13 +60,15 @@ func (d *Deps) Background(fn func(context.Context)) {
 	d.bg.Go(func() { fn(d.bgCtx) })
 }
 
-// RedactSecrets replaces Log with a logger that also redacts values, such
-// as connector credentials loaded after startup. Call it before handing Log
-// to any component.
+// RedactSecrets makes Log, and every logger derived from it, redact values
+// (such as connector credentials loaded after startup) from then on.
 func (d *Deps) RedactSecrets(values ...string) {
-	d.secrets = append(d.secrets, values...)
-	d.Log = logging.New(d.out, d.Config.LogLevel, d.Config.LogFormat, d.secrets...).With("service", d.Name)
+	d.redaction.AddPermanent(values...)
 }
+
+// Redaction is the service logger's redaction set: a value added to it is
+// redacted from every log line from then on (short-lived credentials).
+func (d *Deps) Redaction() *logging.SecretSet { return d.redaction }
 
 // Start initialises a service. It fails closed: invalid configuration, an
 // unreachable database, a database role able to bypass Row-Level Security,
@@ -78,8 +79,8 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: config: %w", name, err)
 	}
-	secrets := []string{dsnPassword(cfg.DatabaseURL), dsnPassword(cfg.NATSURL)}
-	log := logging.New(out, cfg.LogLevel, cfg.LogFormat, secrets...).With("service", name)
+	redaction := logging.NewSecretSet(dsnPassword(cfg.DatabaseURL), dsnPassword(cfg.NATSURL))
+	log := logging.NewWithSet(out, cfg.LogLevel, cfg.LogFormat, redaction).With("service", name)
 
 	shutdownTelemetry, err := telemetry.Setup(ctx, telemetry.Options{
 		ServiceName: name, Environment: cfg.Environment,
@@ -96,7 +97,7 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 		}
 	}
 
-	deps := &Deps{Name: name, Config: cfg, Log: log, out: out, secrets: secrets}
+	deps := &Deps{Name: name, Config: cfg, Log: log, redaction: redaction}
 	deps.bgCtx, deps.bgCancel = context.WithCancel(ctx)
 	if cfg.DatabaseURL != "" {
 		pool, err := storage.Open(ctx, cfg.DatabaseURL)
