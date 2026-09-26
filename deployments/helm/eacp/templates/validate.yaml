@@ -32,6 +32,7 @@
 {{- if gt $delay 60 -}}{{- fail "shutdown.delay must be whole seconds from 0s to 60s, like 10s" -}}{{- end -}}
 {{- $timeout := int (include "eacp.seconds" $v.shutdown.timeout) -}}
 {{- if lt (int $v.api.terminationGracePeriodSeconds) (add $delay $timeout) -}}{{- fail (printf "api.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout (%d)" (add $delay $timeout)) -}}{{- end -}}
+{{- if lt (int $v.pdp.terminationGracePeriodSeconds) (add $delay $timeout) -}}{{- fail (printf "pdp.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout (%d)" (add $delay $timeout)) -}}{{- end -}}
 {{- if lt (int $v.worker.terminationGracePeriodSeconds) (add $delay $timeout (int $v.worker.maxCallSeconds)) -}}{{- fail (printf "worker.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout + worker.maxCallSeconds (%d)" (add $delay $timeout (int $v.worker.maxCallSeconds))) -}}{{- end -}}
 {{- if and (not $v.worker.connectorEgress) (not $v.worker.allowNoConnectorEgress) -}}{{- fail "worker.connectorEgress is empty: list the enterprise systems the worker may reach, or set worker.allowNoConnectorEgress=true" -}}{{- end -}}
 {{- if not $v.database.peers -}}{{- fail "database.peers must select PostgreSQL for NetworkPolicy egress" -}}{{- end -}}

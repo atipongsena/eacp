@@ -1,7 +1,8 @@
 # ADR-029: High availability — replicas without a leader
 
-Status: Accepted (Rev 1.1, 2026-09-26). Rev 1.0: Phase 23a, the binaries (§1–§4). Rev 1.1: Phase 23b, the
-Kubernetes deployment (§5). Scope: MASTER_PLAN §95.
+Status: Accepted (Rev 1.2, 2026-09-26). Rev 1.0: Phase 23a, the binaries (§1–§4). Rev 1.1: Phase 23b, the
+Kubernetes deployment (§5). Rev 1.2: the PDP sidecar drains too (§3, §5), and the Go services resend a lost
+DNS query after 1 s (§5). Scope: MASTER_PLAN §95.
 Related: ADR-004 (leases, fencing, unknown outcomes), ADR-011 (scheduler), ADR-014 (PostgreSQL is the authority,
 NATS carries signals), ADR-022 (bulkheads, circuits), ADR-025/-027/-018 (the FinOps, incident and release
 evaluators).
@@ -68,6 +69,17 @@ action and re-checks it; when another replica moved it first the step does nothi
 
 A listener failure before any signal returns at once.
 
+The AGT sidecar PDP (`sidecars/agt-pdp`, Rev 1.2) drains the same way on SIGTERM (`Server.drain`): for
+`AGT_PDP_SHUTDOWN_DELAY` (default `0s`, `0s`–`60s`, whole seconds) it keeps accepting and answering and every
+response says `Connection: close`; then it serves the connections already in its listen backlog, closes the
+listener, closes idle kept-alive connections from its side, and waits up to `AGT_PDP_SHUTDOWN_TIMEOUT` (default
+`15s`) for the decisions it accepted. Until Rev 1.2 it closed its listener within half a second of SIGTERM.
+Kubernetes removes a terminating pod's endpoint while it signals the pod, and kube-proxy on each node takes a
+moment longer to stop routing new connections there, so an API call to a stopping PDP was refused
+(`connection refused`) or, once the pod's network was gone, hung until `EACP_PDP_TIMEOUT`. The action stayed
+`RECEIVED` and the API answered `503 governance_unavailable` — fail closed, but a rollout or a drain was not
+free of errors, whatever the PodDisruptionBudgets allowed. The Go client still never retries (ADR-002).
+
 ### 4. Proof
 
 `internal/worker` `TestReplicasShareTheWorkAndSurviveLosingOne` runs three API loop sets (sweeper, the three
@@ -111,9 +123,16 @@ The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the
   themselves the same way, so every target decides who reaches it.
 - **Availability.** PodDisruptionBudgets `maxUnavailable: 1`; rolling updates `maxUnavailable: 0`,
   `maxSurge: 1`; pods spread across nodes (`ScheduleAnyway`). `EACP_SHUTDOWN_DELAY` 10 s and
-  `EACP_SHUTDOWN_TIMEOUT` 15 s; the chart refuses a worker grace period below delay + timeout +
-  `worker.maxCallSeconds` and an API grace below delay + timeout. `worker.maxCallSeconds` defaults to 300, the
-  cap PostgreSQL puts on a call (`eacp.call_timeout`), so the default worker grace (330 s) covers every call.
+  `EACP_SHUTDOWN_TIMEOUT` 15 s, and the same values as `AGT_PDP_SHUTDOWN_DELAY` and `AGT_PDP_SHUTDOWN_TIMEOUT`
+  for the PDP (Rev 1.2); the chart refuses a worker grace period below delay + timeout +
+  `worker.maxCallSeconds` and an API or PDP grace below delay + timeout. `worker.maxCallSeconds` defaults to
+  300, the cap PostgreSQL puts on a call (`eacp.call_timeout`), so the default worker grace (330 s) covers every call.
+- **DNS (Rev 1.2).** The API and the worker run with the pod DNS options `timeout:1` and `attempts:3`. The API
+  resolves the PDP Service on every new connection, and Go's resolver resends a lost query only after the
+  resolv.conf timeout, 5 s unless set: the whole `EACP_PDP_TIMEOUT`. DNS queries are lost while pods start and
+  stop on a node (a probe resolving the PDP every 50 ms during the disruption run lost one or two queries per
+  run, each beside pod churn on its node; why the node loses them was not traced further). With the options a
+  lost query costs 1 s. Nothing is sent twice: the resend is a DNS query, before any byte of the call.
 - **Autoscaling.** CPU HPAs for the API and the worker exist but are off by default. Queue-depth scaling is
   deferred: it needs a new dependency (KEDA or a metrics adapter) and a read-only queue metric.
 - **Proof.** `test/helm` renders the chart and checks each rule above, including every refused value
@@ -124,7 +143,17 @@ The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the
   PDP Services never lose their last ready endpoint (an EndpointSlice watch); a `/healthz` probe through the
   Service every 100 ms never fails; the stand-in agent reaches the API and nothing else; every pod is non-root
   with a read-only root filesystem. With the PodDisruptionBudgets deleted the same run fails: the drain evicts
-  both PDP pods at once and a purchase gets `503 governance_unavailable`.
+  both PDP pods at once and a purchase gets `503 governance_unavailable`. The PodDisruptionBudgets were not
+  enough: on Rev 1.1 the run failed in most attempts the same way, one purchase at a time, while a single PDP
+  pod stopped. Captures of API and PDP logs, EndpointSlices, each node's kube-proxy rules and conntrack showed
+  the API dialling the PDP Service within a second of a PDP's SIGTERM, kube-proxy still sending it to that
+  pod, and the pod's listener already closed. `sidecars/agt-pdp` `tests.test_main` reproduces it without a
+  cluster (a SIGTERMed sidecar refused connections at once); `tests.test_server.DrainTest` pins the drain, and
+  `test/helm` `TestEveryServerDrainsOnShutdown` the chart's variables. With the drain the run still failed now
+  and then: a traced API call spent its 5 s without starting to connect, which is where Go resolves the name,
+  and in a container a DNS server that drops the first query of each name makes Go's lookup of `eacp-pdp` take
+  5.01 s with Kubernetes' default resolv.conf and 1 s with `timeout:1 attempts:3`. `test/helm`
+  `TestGoServicesResendALostDNSQueryAfterOneSecond` pins the options.
 
 ## Consequences
 
@@ -159,6 +188,9 @@ The Helm chart `deployments/helm/eacp` (guide: `docs/KUBERNETES.md`) deploys the
 | Autoscaling (Rev 1.1) | CPU HPAs, off by default; queue-depth scaling deferred. |
 | PDB (Rev 1.1) | `maxUnavailable: 1` for api, worker and pdp. |
 | Shutdown timing (Rev 1.1) | Delay 10 s, timeout 15 s; worker grace ≥ delay + timeout + longest call (default 300 s, PostgreSQL's cap). |
+| PDP shutdown (Rev 1.2) | The sidecar drains in-process with the chart's delay and timeout (no `preStop` hook, so compose and Kubernetes run the same code); PDP grace ≥ delay + timeout (default 30 s). |
+| Retrying a PDP call (Rev 1.2) | Not added: the client stays single-shot, and the drain removes the cause. A refused call still fails closed. |
+| DNS options (Rev 1.2) | `timeout:1`, `attempts:3` for the API and the worker, fixed in the chart; the PDP resolves nothing. A cluster with NodeLocal DNSCache keeps them harmlessly. A dead DNS now fails a lookup in 3 s instead of 10 s. |
 | Environment (Rev 1.1) | The chart sets `EACP_ENV=production` unless told otherwise; env entries never override a chart-set variable. |
 | PDP probes (Rev 1.1) | TCP connects, since its HTTP health needs a client certificate; each logs an `SSLEOFError` line. |
 | Namespace (Rev 1.1) | Dedicated, `restricted` Pod Security Standard; the default deny covers the whole namespace. |

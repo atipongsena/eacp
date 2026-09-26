@@ -102,12 +102,17 @@ systems should also accept only the worker, as the dev Fake ERP does.
 - PodDisruptionBudgets: `maxUnavailable: 1` for api, worker and pdp.
 - Rolling updates: `maxUnavailable: 0`, `maxSurge: 1`; pods spread across nodes (`ScheduleAnyway`).
 - Shutdown: `EACP_SHUTDOWN_DELAY` (default 10 s) keeps a pod serving but not ready while endpoints update;
-  `EACP_SHUTDOWN_TIMEOUT` (15 s) bounds the graceful HTTP shutdown. The chart refuses a worker
-  `terminationGracePeriodSeconds` below delay + timeout + `worker.maxCallSeconds` and an API grace below
-  delay + timeout. `worker.maxCallSeconds` defaults to 300, the longest call PostgreSQL allows (a contract's
-  `timeout_ms` is capped at 300 s), so the default worker grace is 330 s. The grace is only an upper bound: a
+  `EACP_SHUTDOWN_TIMEOUT` (15 s) bounds the graceful HTTP shutdown. The PDP gets the same values as
+  `AGT_PDP_SHUTDOWN_DELAY` and `AGT_PDP_SHUTDOWN_TIMEOUT`: it keeps accepting, closing each connection after its
+  answer, until kube-proxy on every node has stopped sending it new connections, then finishes the decisions
+  it accepted (ADR-029 Rev 1.2). The chart refuses a worker `terminationGracePeriodSeconds` below delay +
+  timeout + `worker.maxCallSeconds` and an API or PDP (`pdp.terminationGracePeriodSeconds`, default 30) grace
+  below delay + timeout. `worker.maxCallSeconds` defaults to 300, the longest call PostgreSQL allows (a
+  contract's `timeout_ms` is capped at 300 s), so the default worker grace is 330 s. The grace is only an upper bound: a
   worker exits as soon as its in-flight calls finish. Lower it only if every contract's timeout is shorter: a
   worker killed mid-call leaves an unknown outcome that reconciliation must settle.
+- DNS: the API and the worker run with the pod DNS options `timeout:1` and `attempts:3`, so a DNS query lost
+  while pods churn is resent after 1 s; Go's default, 5 s, is the whole budget of a PDP call (ADR-029 Rev 1.2).
 - Probes: `/readyz` and `/healthz` for api and worker. The PDP's HTTP health needs a client certificate, so its
   probes are TCP connects on 8443; each one logs a `connection_error` (`SSLEOFError`) line in the PDP. That is
   the probe, not a client.
@@ -151,7 +156,10 @@ pass their PodDisruptionBudgets one at a time. Every purchase must be accepted o
 (an EndpointSlice watch); a `/healthz` probe every 100 ms through the Service must never fail; the stand-in
 agent must reach the API and nothing else (PDP, PostgreSQL, NATS, Fake ERP, a worker pod); and every EACP pod
 must run non-root with a read-only root filesystem in a namespace that enforces `restricted`. Without the
-PodDisruptionBudgets the drain evicts both PDP pods at once and the run fails.
+PodDisruptionBudgets the drain evicts both PDP pods at once and the run fails. Without the PDP's shutdown delay
+it fails too, in most attempts: kube-proxy still routes a new connection to a PDP pod that got SIGTERM and has
+already closed its listener, and one purchase gets `503 governance_unavailable`. Without the DNS options it
+fails now and then the same way, when a DNS query lost during the churn stalls the API's lookup of the PDP.
 
 The Slice C demo copies a file into the distroless Fake MCP pod, so it runs on compose only
 (`scripts/demo.sh`); on Kubernetes it skips.

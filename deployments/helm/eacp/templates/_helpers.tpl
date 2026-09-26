@@ -53,6 +53,15 @@ topologySpreadConstraints:
         {{- include "eacp.selector" . | nindent 8 }}
 {{- end -}}
 
+{{- /* Go's resolver resends a lost DNS query only after the resolv.conf
+timeout, 5 s unless set: the whole budget of a PDP call (ADR-029 §5). */ -}}
+{{- define "eacp.goDNS" -}}
+dnsConfig:
+  options:
+    - {name: timeout, value: "1"}
+    - {name: attempts, value: "3"}
+{{- end -}}
+
 {{- /* Extra env from a values map; the validation template refuses secrets. */ -}}
 {{- define "eacp.extraEnv" -}}
 {{- range $k, $v := . }}

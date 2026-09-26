@@ -33,18 +33,27 @@ def main():
         print(f"agt-pdp: listen: {exc}", file=sys.stderr)
         return 1
     stop = threading.Event()
+    drained = threading.Event()
+
+    def drain():
+        log.info(json.dumps({"event": "draining", "delay_seconds": settings.shutdown_delay,
+                             "timeout_seconds": settings.shutdown_timeout}))
+        left = server.drain(settings.shutdown_delay, settings.shutdown_timeout)
+        if left:
+            log.warning(json.dumps({"event": "drain_timeout", "unanswered": left}))
+        drained.set()
 
     def shutdown(*_):
         if not stop.is_set():
             stop.set()
-            threading.Thread(target=server.shutdown, daemon=True).start()
+            threading.Thread(target=drain, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     log.info(json.dumps({"event": "started", "listen": settings.listen, "mtls": settings.tls,
                          "instance": settings.instance_id, "versions": stack}))
     server.serve_forever()
-    server.server_close()
+    drained.wait()
     log.info(json.dumps({"event": "stopped"}))
     return 0
 

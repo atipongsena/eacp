@@ -7,12 +7,21 @@ Transport (ADR-002 §2, §8): with a server certificate, key and client CA the
 sidecar speaks TLS 1.3 only and requires a client certificate from that CA;
 without them it refuses to listen anywhere but loopback. Bodies are bounded,
 concurrency is bounded (503 busy beyond it) and every socket has a timeout.
+
+Shutdown (ADR-029 §3): Server.drain keeps accepting and answering for
+AGT_PDP_SHUTDOWN_DELAY while every response closes its connection, then
+stops accepting, closes idle kept-alive connections and waits up to
+AGT_PDP_SHUTDOWN_TIMEOUT for the decisions it accepted. Kubernetes keeps
+routing new connections to a stopping pod until every node has seen its
+endpoint go, so a sidecar that stopped at once refused them.
 """
 
 import ipaddress
 import json
 import logging
 import os
+import re
+import select
 import socket
 import ssl
 import sys
@@ -29,10 +38,18 @@ log = logging.getLogger("agt_pdp.server")
 MAX_BODY = 4 << 20  # payload (1 MiB) + policy bundle + binding, with headroom
 MAX_CONCURRENT = 16
 SOCKET_TIMEOUT = 30
+MAX_SHUTDOWN_DELAY = 60  # seconds, as EACP_SHUTDOWN_DELAY
 
 
 class ConfigError(ValueError):
     pass
+
+
+def _seconds(env, key, default):
+    raw = env.get(key, default)
+    if not re.fullmatch(r"[0-9]+s", raw):
+        raise ConfigError(f"{key} must be whole seconds like 10s, not {raw!r}")
+    return int(raw[:-1])
 
 
 @dataclass(frozen=True)
@@ -44,6 +61,8 @@ class Settings:
     client_ca_file: str = ""
     max_body: int = MAX_BODY
     max_concurrent: int = MAX_CONCURRENT
+    shutdown_delay: int = 0  # seconds of serving after SIGTERM before the listener closes
+    shutdown_timeout: int = 15  # seconds to wait for accepted decisions after that
 
     @property
     def tls(self):
@@ -60,11 +79,17 @@ class Settings:
         s = cls(listen=env.get("AGT_PDP_LISTEN", cls.listen),
                 instance_id=env.get("AGT_PDP_INSTANCE_ID") or f"agt-pdp/{socket.gethostname()}",
                 cert_file=env.get("AGT_PDP_TLS_CERT_FILE", ""), key_file=env.get("AGT_PDP_TLS_KEY_FILE", ""),
-                client_ca_file=env.get("AGT_PDP_TLS_CLIENT_CA_FILE", ""))
+                client_ca_file=env.get("AGT_PDP_TLS_CLIENT_CA_FILE", ""),
+                shutdown_delay=_seconds(env, "AGT_PDP_SHUTDOWN_DELAY", "0s"),
+                shutdown_timeout=_seconds(env, "AGT_PDP_SHUTDOWN_TIMEOUT", "15s"))
         s.validate()
         return s
 
     def validate(self):
+        if not 0 <= self.shutdown_delay <= MAX_SHUTDOWN_DELAY:
+            raise ConfigError(f"AGT_PDP_SHUTDOWN_DELAY must be from 0s to {MAX_SHUTDOWN_DELAY}s")
+        if self.shutdown_timeout < 1:
+            raise ConfigError("AGT_PDP_SHUTDOWN_TIMEOUT must be at least 1s")
         host, sep, port = self.listen.rpartition(":")
         if not sep or not host or not port.isdigit() or not 0 <= int(port) <= 65535:
             raise ConfigError(f"AGT_PDP_LISTEN must be host:port, not {self.listen!r}")
@@ -106,11 +131,34 @@ class Handler(BaseHTTPRequestHandler):
             self.request.settimeout(self.timeout)
             self.request.do_handshake()
         super().setup()
+        self.answered = False
+        self.server.track(self)  # busy: a new connection carries a request
+
+    def finish(self):
+        try:
+            super().finish()
+        finally:
+            self.server.untrack(self)
+
+    def handle_one_request(self):
+        # After an answer the connection is idle, and a drain may close it.
+        if self.answered and not self.server.mark(self, busy=False):
+            self.close_connection = True
+            return
+        super().handle_one_request()
+        self.answered = True
+
+    def parse_request(self):
+        # A request line arrived: the drain now waits for the answer.
+        self.server.mark(self, busy=True)
+        return super().parse_request()
 
     def log_message(self, fmt, *args):
         pass
 
     def _send(self, status, body):
+        if self.server.draining.is_set():
+            self.close_connection = True  # the client moves to another replica
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -192,11 +240,81 @@ class Server(ThreadingHTTPServer):
         self.settings = settings
         self.engine = engine
         self.slots = threading.BoundedSemaphore(settings.max_concurrent)
+        self.draining = threading.Event()
+        self._conns = {}  # handler -> busy; guarded by _changed
+        self._changed = threading.Condition()
+        self._closing = False
+        self._closed = set()  # idle connections the drain closed
         if settings.tls:
             self.socket = server_tls_context(settings).wrap_socket(
                 self.socket, server_side=True, do_handshake_on_connect=False)
 
+    def track(self, handler):
+        with self._changed:
+            self._conns[handler] = True
+
+    def untrack(self, handler):
+        with self._changed:
+            self._conns.pop(handler, None)
+            self._changed.notify_all()
+
+    def mark(self, handler, busy):
+        """Record whether a connection is answering a request. Returns False
+        once the drain has closed idle connections: an idle one stops."""
+        with self._changed:
+            if not busy and self._closing:
+                return False
+            self._conns[handler] = busy
+            self._changed.notify_all()
+            return True
+
+    def drain(self, delay, timeout):
+        """Stop serving without refusing a request Kubernetes still routes
+        here (ADR-029 §3). For delay seconds the listener stays open and every
+        response closes its connection; then the listener closes after
+        serving the connections already in its backlog, idle kept-alive
+        connections are closed from this side while the network still works,
+        and the drain waits up to timeout seconds for requests being answered.
+        serve_forever must be running in another thread. Returns how many
+        connections were still unanswered."""
+        self.draining.set()
+        if delay > 0:
+            time.sleep(delay)
+        self.shutdown()
+        # Connections the kernel completed while the loop stopped would be
+        # reset by the close; serve them instead.
+        while select.select([self.socket], [], [], 0)[0]:
+            try:
+                request, client_address = self.get_request()
+            except OSError:
+                break  # a failing accept ends the backlog instead of spinning
+            try:
+                self.process_request(request, client_address)
+            except Exception:  # noqa: BLE001 - as socketserver does
+                self.handle_error(request, client_address)
+                self.shutdown_request(request)
+        self.server_close()
+        deadline = time.monotonic() + timeout
+        with self._changed:
+            self._closing = True
+            for handler, busy in self._conns.items():
+                if not busy:
+                    self._closed.add(handler.connection)
+                    try:
+                        # The plain socket's shutdown: a FIN, even under TLS.
+                        socket.socket.shutdown(handler.connection, socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+            while True:
+                left = sum(self._conns.values())
+                remaining = deadline - time.monotonic()
+                if not left or remaining <= 0:
+                    return left
+                self._changed.wait(remaining)
+
     def handle_error(self, request, client_address):
+        if request in self._closed:
+            return  # an idle connection the drain closed: its read ends without close_notify
         exc = sys.exc_info()[1]
         log.warning(json.dumps({"event": "connection_error", "error": type(exc).__name__, "detail": str(exc)[:200]}))
 

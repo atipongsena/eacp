@@ -23,6 +23,7 @@ spec:
       {{- include "eacp.podSecurity" (dict "root" . "sa" true) | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       {{- include "eacp.spread" $c | nindent 6 }}
+      {{- include "eacp.goDNS" . | nindent 6 }}
       containers:
         - name: execution-worker
           image: {{ include "eacp.image" . }}

@@ -38,8 +38,8 @@ otel:
   ports: []
 
 shutdown:
-  delay: 10s         # EACP_SHUTDOWN_DELAY: keep serving, not ready
-  timeout: 15s       # EACP_SHUTDOWN_TIMEOUT: graceful HTTP shutdown
+  delay: 10s         # EACP_SHUTDOWN_DELAY / AGT_PDP_SHUTDOWN_DELAY: keep serving, not ready
+  timeout: 15s       # EACP_SHUTDOWN_TIMEOUT / AGT_PDP_SHUTDOWN_TIMEOUT: graceful HTTP shutdown
 
 api:
   replicas: 2
@@ -67,6 +67,7 @@ worker:
 
 pdp:
   replicas: 2
+  terminationGracePeriodSeconds: 30
   image:
     repository: eacp-agt-pdp
     tag: ""
