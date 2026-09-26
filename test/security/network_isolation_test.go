@@ -122,10 +122,11 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":3`) {
+	if err != nil || !strings.Contains(string(logs), `"bindings":5`) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
-	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") {
+	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") ||
+		strings.Contains(string(logs), "dev-only-fakeerp-oauth-client-secret") {
 		t.Fatal("worker logged a connector secret")
 	}
 }
@@ -180,5 +181,41 @@ func TestFakeERPRejectsUnauthenticatedPrivilegedCall(t *testing.T) {
 		"wget", "-S", "-T", "3", "-O", "-", "--post-data={}", "http://fakeerp:8090/v1/execute").CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "401 Unauthorized") {
 		t.Fatalf("unauthenticated ERP call was not rejected with 401 (err=%v out=%q)", err, out)
+	}
+}
+
+// ADR-019: the agent cannot mint a token: the token endpoint lives on the
+// ERP, which the agent has no route to.
+func TestAgentCannotReachTheTokenEndpoint(t *testing.T) {
+	requireCompose(t)
+	out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", "--post-data", "grant_type=client_credentials",
+		"http://fakeerp:8090/oauth/token")
+	if err == nil {
+		t.Fatalf("agent reached the token endpoint: %q", out)
+	}
+}
+
+// ADR-019: the OAuth client secret the token endpoint verifies is mounted
+// into Fake ERP only; the worker holds it through its connector manifest.
+func TestTheOAuthClientSecretIsMountedOnlyIntoTheERP(t *testing.T) {
+	requireCompose(t)
+	if _, mounts := inspect(t, "fakeerp"); !strings.Contains(mounts, "/run/secrets/fakeerp_oauth_client") {
+		t.Fatalf("fakeerp has no OAuth client mount: %s", mounts)
+	}
+	for _, service := range []string{"controlplane-api", "execution-worker", "fakemcp", "agent", "postgres"} {
+		if _, mounts := inspect(t, service); strings.Contains(mounts, "fakeerp_oauth_client") {
+			t.Errorf("%s has the OAuth client mount: %s", service, mounts)
+		}
+	}
+}
+
+// A caller on the ERP network without the client secret gets no token.
+func TestTheTokenEndpointRejectsAnUnknownClient(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_erp", "busybox:1.37",
+		"wget", "-S", "-T", "3", "-O", "-", "--post-data=grant_type=client_credentials",
+		"http://fakeerp:8090/oauth/token").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "401 Unauthorized") {
+		t.Fatalf("an unauthenticated token request was not rejected with 401 (err=%v out=%q)", err, out)
 	}
 }

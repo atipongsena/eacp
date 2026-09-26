@@ -46,6 +46,7 @@ type demo struct {
 	keys      map[string]string
 	reader    string // who reads actions: the submitting agent by default
 	subject   string // the purchases' subject (post)
+	secretRef string // the ERP connector's secret_ref (register)
 	client    *http.Client
 	retries   atomic.Int64 // requests call had to send again
 	ids       map[string]string
@@ -67,7 +68,7 @@ func newDemo(t *testing.T, tenant string) *demo {
 	}
 	d := &demo{t: t, tenant: tenant, root: root, p: newPlatform(t, root),
 		api: env("EACP_DEMO_API", "http://127.0.0.1:18080"), token: strings.TrimSpace(string(token)),
-		subject: "carol@acme.test", client: http.DefaultClient, keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
+		subject: "carol@acme.test", secretRef: "fakeerp", client: http.DefaultClient, keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
 	d.ready()
 	return d
 }
@@ -364,7 +365,7 @@ func (d *demo) tenantWithCast(slug, name string, cast []member) {
 
 func (d *demo) register() {
 	conn := d.must(201, "erin", "POST", "/v1/connectors", map[string]any{"name": "erp", "protocol": "http",
-		"endpoint": "http://fakeerp:8090", "secret_ref": "fakeerp"})
+		"endpoint": "http://fakeerp:8090", "secret_ref": d.secretRef})
 	contracts := map[string]map[string]any{
 		"create_po": {"side_effects": []string{"IRREVERSIBLE_WRITE", "FINANCIAL"}, "idempotency_mode": "native",
 			"idempotency_key_field": "Idempotency-Key", "reconciliation_lookup": "by_operation_key",
@@ -630,24 +631,37 @@ func (d *demo) vote(who, request, want string) {
 // auditor of the ERP would).
 func (d *demo) committedPOs() map[string]int {
 	d.t.Helper()
-	out, err := d.p.erpAudit(d.token)
-	if err != nil {
-		d.t.Fatalf("reading the ERP audit: %v", err)
-	}
-	var entries []struct {
-		OperationKey string `json:"operation_key"`
-		Outcome      string `json:"outcome"`
-	}
-	if err := json.Unmarshal(out, &entries); err != nil {
-		d.t.Fatalf("ERP audit: %v", err)
-	}
 	pos := map[string]int{}
-	for _, e := range entries {
+	for _, e := range d.erpAudit() {
 		if e.Outcome == "effect_committed" {
 			pos[e.OperationKey]++
 		}
 	}
 	return pos
+}
+
+// erpEntry is one Fake ERP audit entry.
+type erpEntry struct {
+	Principal    string `json:"principal"`
+	Path         string `json:"path"`
+	OperationKey string `json:"operation_key"`
+	Outcome      string `json:"outcome"`
+	TokenSHA256  string `json:"token_sha256"` // a token issuance: never the token
+}
+
+// erpAudit reads the Fake ERP audit with the ERP credential, as an auditor
+// of the ERP would.
+func (d *demo) erpAudit() []erpEntry {
+	d.t.Helper()
+	out, err := d.p.erpAudit(d.token)
+	if err != nil {
+		d.t.Fatalf("reading the ERP audit: %v", err)
+	}
+	var entries []erpEntry
+	if err := json.Unmarshal(out, &entries); err != nil {
+		d.t.Fatalf("ERP audit: %v", err)
+	}
+	return entries
 }
 
 // onePO checks that Fake ERP committed exactly one purchase order for the

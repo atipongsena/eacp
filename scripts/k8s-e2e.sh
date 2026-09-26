@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: both)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -64,6 +64,7 @@ secret eacp eacp-connector-secrets \
 secret eacp-deps postgres-bootstrap --from-literal=POSTGRES_PASSWORD=postgres \
 	--from-literal=EACP_OWNER_PASSWORD=eacp_owner_dev --from-literal=EACP_APP_PASSWORD=eacp_app_dev
 secret eacp-deps fakeerp-token --from-file=token=deployments/docker/secrets/fakeerp-token.dev
+secret eacp-deps fakeerp-oauth-client --from-file=secret=deployments/docker/secrets/fakeerp-oauth-client.dev
 secret eacp-deps fakemcp-token --from-file=token=deployments/docker/secrets/fakemcp-token.dev
 k -n eacp-deps create configmap postgres-initdb --from-file=deployments/docker/postgres/initdb/01-roles.sh \
 	--dry-run=client -o yaml | k apply -f -
@@ -93,7 +94,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then

@@ -36,6 +36,10 @@ spec:
             - {name: EACP_HTTP_ADDR, value: ":8090"}
             - {name: EACP_FAKEERP_TOKEN_FILE, value: /run/secrets/fakeerp/token}
             - {name: EACP_FAKEERP_DATA_FILE, value: /data/operations.jsonl}
+            # ADR-019: the JIT demo's token endpoint (docs/DEMO.md)
+            - {name: EACP_FAKEERP_OAUTH_CLIENT_ID, value: eacp-worker}
+            - {name: EACP_FAKEERP_OAUTH_CLIENT_SECRET_FILE, value: /run/secrets/fakeerp-oauth/secret}
+            - {name: EACP_FAKEERP_OAUTH_TTL, value: 300s}
           ports: [{containerPort: 8090}]
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
@@ -43,10 +47,13 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           volumeMounts:
             - {name: token, mountPath: /run/secrets/fakeerp, readOnly: true}
+            - {name: oauth-client, mountPath: /run/secrets/fakeerp-oauth, readOnly: true}
             - {name: data, mountPath: /data}
       volumes:
         - name: token
           secret: {secretName: fakeerp-token}
+        - name: oauth-client
+          secret: {secretName: fakeerp-oauth-client}
         - {name: data, emptyDir: {}}
 ---
 apiVersion: v1
