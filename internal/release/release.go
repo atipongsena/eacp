@@ -620,10 +620,14 @@ func (s *Service) Route(ctx context.Context, a Agent, subject string) (Route, er
 // ------------------------------------------------------------ evaluator
 
 // Evaluate rolls back the tenant's breached canaries and returns how many.
+// It skips the tenant (0, nil) while another replica is evaluating it (ADR-029).
 func (s *Service) Evaluate(ctx context.Context, tenant uuid.UUID) (int, error) {
 	var n int
 	err := storage.InTenantTx(ctx, s.pool, tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetSystem(ctx, tx, SystemActor); err != nil {
+			return err
+		}
+		if got, err := storage.TryLoopLock(ctx, tx, "release"); err != nil || !got {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT eacp.release_evaluate()`).Scan(&n)

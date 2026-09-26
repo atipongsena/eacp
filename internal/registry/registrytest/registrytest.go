@@ -4,6 +4,7 @@ package registrytest
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -576,5 +577,10 @@ func (f *Fixture) HoldLoopLock(t testing.TB, loop string) (release func()) {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("hold loop lock %s = %v, %v", loop, got, err)
 	}
-	return func() { _ = tx.Rollback(ctx) }
+	// Ended on cleanup too: a transaction left open after a failed test would
+	// keep the pool from closing.
+	var once sync.Once
+	release = func() { once.Do(func() { _ = tx.Rollback(ctx) }) }
+	t.Cleanup(release)
+	return release
 }

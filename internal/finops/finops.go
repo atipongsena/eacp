@@ -459,10 +459,14 @@ func (s *Service) Acknowledge(ctx context.Context, a registry.Actor, id uuid.UUI
 
 // Evaluate runs the alert evaluator for one tenant and returns the number
 // of alerts raised.
+// It skips the tenant (0, nil) while another replica is evaluating it (ADR-029).
 func (s *Service) Evaluate(ctx context.Context, tenant uuid.UUID) (int, error) {
 	var n int
 	err := storage.InTenantTx(ctx, s.pool, tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetSystem(ctx, tx, SystemActor); err != nil {
+			return err
+		}
+		if got, err := storage.TryLoopLock(ctx, tx, "finops"); err != nil || !got {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT eacp.finops_evaluate()`).Scan(&n)

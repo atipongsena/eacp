@@ -14,10 +14,14 @@ import (
 
 // Evaluate runs eacp.incident_evaluate() for tenant as the incident system
 // actor and returns the number of incidents it opened.
+// It skips the tenant (0, nil) while another replica is evaluating it (ADR-029).
 func (s *Service) Evaluate(ctx context.Context, tenant uuid.UUID) (int, error) {
 	var n int
 	err := storage.InTenantTx(ctx, s.pool, tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetSystem(ctx, tx, "incident"); err != nil {
+			return err
+		}
+		if got, err := storage.TryLoopLock(ctx, tx, "incident"); err != nil || !got {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT eacp.incident_evaluate()`).Scan(&n)
