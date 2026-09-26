@@ -31,6 +31,9 @@ const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 // evidence.
 func TestSliceCDemo(t *testing.T) {
 	d := newDemo(t, tenantC)
+	if d.p.name() == "k8s" {
+		t.Skip("Slice C copies a file into the distroless Fake MCP pod; run it on compose (scripts/demo.sh)")
+	}
 	d.reader = "audra" // the auditor follows every agent's actions
 
 	d.step("C0. Bootstrap tenant Globex with two admins; people approved by a second admin")
@@ -214,7 +217,9 @@ func (d *demo) drift(mcpID string, getPO map[string]any) {
 	if err != nil {
 		d.t.Fatal(err)
 	}
-	d.compose("cp", filepath.ToSlash(rel), "fakemcp:/data/tools.json")
+	if err := d.p.copyToFakeMCP(filepath.ToSlash(rel), "/data/tools.json"); err != nil {
+		d.t.Fatalf("replacing the Fake MCP tool list: %v", err)
+	}
 	d.logf("fakemcp now lists get_po with a new description, an \"approve\" argument and destructiveHint: true")
 	d.must(200, "otto", "POST", "/v1/connectors/"+mcpID+"/mcp/scan", map[string]any{"reason": "vendor released sap-mcp 2.1"})
 	d.logf("otto requests a rescan: \"vendor released sap-mcp 2.1\"")

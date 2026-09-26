@@ -23,6 +23,7 @@ spec:
       labels: {app: nats}
     spec:
       automountServiceAccountToken: false
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""} # the node the disruption test never drains
       containers:
         - name: nats
           image: nats:2.15.0-alpine

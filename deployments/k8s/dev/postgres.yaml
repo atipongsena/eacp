@@ -1,5 +1,6 @@
 # DEVELOPMENT ONLY: a single PostgreSQL for the e2e. Production uses a managed
-# or HA PostgreSQL outside the chart (ADR-029 Rev 1.1). The roles come from
+# or HA PostgreSQL outside the chart (ADR-029 Rev 1.1). Its minikube hostPath
+# volume has no node affinity, so it stays on the control-plane node. The roles come from
 # deployments/docker/postgres/initdb/01-roles.sh (ConfigMap postgres-initdb).
 apiVersion: v1
 kind: Service
@@ -25,6 +26,7 @@ spec:
       labels: {app: postgres}
     spec:
       automountServiceAccountToken: false
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""} # the node the disruption test never drains
       containers:
         - name: postgres
           image: postgres:18-alpine

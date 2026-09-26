@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -34,17 +33,18 @@ const (
 )
 
 type demo struct {
-	t       *testing.T
-	tenant  string
-	root    string
-	project string
-	api     string
-	token   string // the Fake ERP credential: only the worker and the ERP hold it
+	t      *testing.T
+	tenant string
+	root   string
+	p      platform
+	api    string
+	token  string // the Fake ERP credential: only the worker and the ERP hold it
 
 	mu        sync.Mutex
 	responses []string // every API response body, for the secret scan
 	keys      map[string]string
 	reader    string // who reads actions: the submitting agent by default
+	subject   string // the purchases' subject (post)
 	ids       map[string]string
 	contracts map[string]map[string]any
 }
@@ -62,9 +62,9 @@ func newDemo(t *testing.T, tenant string) *demo {
 	if err != nil {
 		t.Fatalf("run deployments/docker/secrets/prepare_fakeerp_token.py first: %v", err)
 	}
-	d := &demo{t: t, tenant: tenant, root: root, project: env("EACP_DEMO_PROJECT", "eacp-demo"),
+	d := &demo{t: t, tenant: tenant, root: root, p: newPlatform(t, root),
 		api: env("EACP_DEMO_API", "http://127.0.0.1:18080"), token: strings.TrimSpace(string(token)),
-		keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
+		subject: "carol@acme.test", keys: map[string]string{}, ids: map[string]string{}, contracts: map[string]map[string]any{}}
 	d.ready()
 	return d
 }
@@ -104,7 +104,7 @@ func TestSliceADemo(t *testing.T) {
 	d.vote("amy", request, "PENDING")
 
 	d.step("6. Restart the API, the worker and PostgreSQL while the approval is pending")
-	d.compose("restart", "controlplane-api", "execution-worker", "postgres")
+	d.p.restart("controlplane-api", "execution-worker", "postgres")
 	d.ready()
 	code, body = d.call("ben", "GET", "/v1/approvals/"+request, nil)
 	if code != 200 || body["state"] != "PENDING" {
@@ -119,9 +119,9 @@ func TestSliceADemo(t *testing.T) {
 	killed := d.submit("killed-1", "purchase", "erp.create_po", map[string]any{"amount": 900,
 		"scenario": "slow_response", "delay_ms": 5000})
 	d.until(killed, "EXECUTING")
-	d.compose("kill", "execution-worker")
+	d.p.kill("execution-worker")
 	d.logf("execution-worker killed while its call was in flight")
-	d.compose("start", "execution-worker") // a new worker process
+	d.p.start("execution-worker") // a new worker process
 	d.until(killed, "SUCCEEDED")
 	// The journal shows the path: the lease lapsed during the call (T23),
 	// the outcome was reconciled (T28, T30), and nothing was re-dispatched.
@@ -180,7 +180,7 @@ func TestSliceADemo(t *testing.T) {
 	d.onePO(hidden)
 
 	d.step("11. The AGT PDP goes down: new actions wait, cancel still works, recovery resumes")
-	d.compose("stop", "agt-pdp")
+	d.p.stop("agt-pdp")
 	waiting := d.unavailable("pdp-down-1", map[string]any{"amount": 150})
 	dropped := d.unavailable("pdp-down-2", map[string]any{"amount": 175})
 	cancelled := d.must(200, "agent", "POST", "/v1/actions/"+dropped+"/cancel", map[string]any{"reason": "no longer needed"})
@@ -188,7 +188,7 @@ func TestSliceADemo(t *testing.T) {
 		d.t.Fatalf("cancel during the PDP outage = %v", cancelled)
 	}
 	d.logf("cancel needs no PDP: %s → CANCELLED", dropped[:8])
-	d.compose("start", "agt-pdp")
+	d.p.start("agt-pdp")
 	d.logf("agt-pdp restarted; the sweeper evaluates the waiting action")
 	d.until(waiting, "SUCCEEDED")
 	d.onePO(waiting)
@@ -219,25 +219,6 @@ func (d *demo) step(s string) { d.t.Logf("\n=== %s", s) }
 func (d *demo) logf(f string, a ...any) {
 	d.t.Helper()
 	d.t.Logf("    "+f, a...)
-}
-
-// compose runs docker compose against the demo project.
-func (d *demo) compose(args ...string) string {
-	d.t.Helper()
-	out, err := d.composeErr(args...)
-	if err != nil {
-		d.t.Fatalf("docker compose %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return out
-}
-
-func (d *demo) composeErr(args ...string) (string, error) {
-	base := []string{"compose", "-p", d.project, "-f", filepath.Join(d.root, "docker-compose.yml"),
-		"-f", filepath.Join(d.root, "deployments", "demo", "compose.demo.yml")}
-	cmd := exec.Command("docker", append(base, args...)...)
-	cmd.Dir = d.root
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }
 
 func (d *demo) ready() {
@@ -356,7 +337,7 @@ func (d *demo) tenantWithCast(slug, name string, cast []member) {
 		admins = append(admins, "--admin",
 			fmt.Sprintf("name=%s,subject=%s@%s.test,credential=%s,hash=%s", n, n, slug, cred, hash))
 	}
-	out, err := d.composeErr(append([]string{"run", "--rm", "migrate", "/eacpctl", "tenant", "create",
+	out, err := d.p.eacpctl(append([]string{"tenant", "create",
 		"--id", d.tenant, "--slug", slug, "--name", name}, admins...)...)
 	if err != nil {
 		d.t.Fatalf("eacpctl tenant create: %v\n%s\nThe demo needs a fresh stack: run scripts/demo.sh.", err, out)
@@ -427,17 +408,19 @@ func (d *demo) register() {
 // bypass shows that the agent runtime has no route to the ERP and no
 // credential, while it can reach the control plane.
 func (d *demo) bypass() {
-	if out, err := d.composeErr("exec", "-T", "agent", "wget", "-q", "-T", "3", "-O-",
+	if out, err := d.p.agent("wget", "-q", "-T", "3", "-O-",
 		"http://fakeerp:8090/v1/operations/x"); err == nil {
 		d.t.Fatalf("the agent reached Fake ERP directly:\n%s", out)
 	} else {
 		d.logf("agent → fakeerp:8090 fails: %s", strings.TrimSpace(firstLine(out)))
 	}
-	if out, err := d.composeErr("exec", "-T", "agent", "ls", "/run/secrets"); err == nil {
+	if out, err := d.p.agent("ls", "/run/secrets"); err == nil {
 		d.t.Fatalf("the agent has secrets mounted:\n%s", out)
 	}
 	d.logf("the agent has no /run/secrets and no ERP credential")
-	d.compose("exec", "-T", "agent", "wget", "-q", "-T", "3", "-O-", "http://controlplane-api:8080/readyz")
+	if out, err := d.p.agent("wget", "-q", "-T", "3", "-O-", "http://controlplane-api:8080/readyz"); err != nil {
+		d.t.Fatalf("the agent cannot reach the control plane: %v\n%s", err, out)
+	}
 	d.logf("agent → controlplane-api:8080 works: the control plane is its only path")
 }
 
@@ -450,7 +433,11 @@ func firstLine(s string) string {
 // returns its single value.
 func (d *demo) sql(query string) string {
 	d.t.Helper()
-	return strings.TrimSpace(d.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "eacp", "-tAc", query))
+	out, err := d.p.postgres("psql", "-U", "postgres", "-d", "eacp", "-tAc", query)
+	if err != nil {
+		d.t.Fatalf("psql %q: %v\n%s", query, err, out)
+	}
+	return strings.TrimSpace(out)
 }
 
 // natsOutage shows ADR-014 §1: NATS carries hints and events only. Before
@@ -463,7 +450,7 @@ func (d *demo) natsOutage() {
 	d.waitSQL(pending, "0")
 	d.logf("NATS up: %s outbox rows published as work hints and dashboard events",
 		d.sql(`SELECT count(*) FROM eacp.outbox_events WHERE published_at IS NOT NULL`))
-	d.compose("stop", "nats")
+	d.p.stop("nats")
 	id := d.submit("nats-down-1", "purchase", "erp.create_po", map[string]any{"amount": 120})
 	d.until(id, "SUCCEEDED")
 	d.onePO(id)
@@ -472,7 +459,7 @@ func (d *demo) natsOutage() {
 		d.t.Fatal("outbox rows were marked published while NATS was down")
 	}
 	d.logf("NATS down: %s executed by polling; %s outbox rows wait", id[:8], waiting)
-	d.compose("start", "nats")
+	d.p.start("nats")
 	d.waitSQL(pending, "0")
 	d.logf("NATS restarted: the relay published every waiting row")
 }
@@ -571,7 +558,7 @@ func (d *demo) submit(idem, operation, tool string, payload map[string]any) stri
 func (d *demo) post(idem, operation, tool string, payload map[string]any) (int, map[string]any) {
 	d.t.Helper()
 	payload["currency"] = "THB"
-	return d.call("agent", "POST", "/v1/actions?wait=2s", map[string]any{"subject": "carol@acme.test",
+	return d.call("agent", "POST", "/v1/actions?wait=2s", map[string]any{"subject": d.subject,
 		"operation": operation, "target": "erp", "tool": tool, "tool_schema_version": "1", "resource": "po",
 		"payload": payload}, "Idempotency-Key", idem)
 }
@@ -639,9 +626,7 @@ func (d *demo) vote(who, request, want string) {
 // auditor of the ERP would).
 func (d *demo) committedPOs() map[string]int {
 	d.t.Helper()
-	cmd := exec.Command("docker", "run", "--rm", "--network", d.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
-		"--header", "Authorization: Bearer "+d.token, "http://fakeerp:8090/v1/audit")
-	out, err := cmd.Output()
+	out, err := d.p.erpAudit(d.token)
 	if err != nil {
 		d.t.Fatalf("reading the ERP audit: %v", err)
 	}
@@ -788,11 +773,13 @@ func (d *demo) secretScan() {
 	d.mu.Unlock()
 	find("an API response", responses)
 	d.logf("%d API responses: no credential", len(d.responses))
-	logs := d.compose("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "fakemcp", "migrate",
-		"postgres", "agt-pdp", "nats")
+	logs := d.p.logs()
 	find("a service log", logs)
 	d.logf("%d lines of service logs: no credential", strings.Count(logs, "\n"))
-	dump := d.compose("exec", "-T", "postgres", "pg_dump", "-U", "postgres", "--data-only", "eacp")
+	dump, err := d.p.postgres("pg_dump", "-U", "postgres", "--data-only", "eacp")
+	if err != nil {
+		d.t.Fatalf("pg_dump: %v", err)
+	}
 	find("the database", dump)
 	d.logf("database dump of %d bytes: no credential", len(dump))
 }

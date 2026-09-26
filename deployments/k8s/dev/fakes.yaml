@@ -23,6 +23,7 @@ spec:
       labels: {app: fakeerp}
     spec:
       automountServiceAccountToken: false
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""} # the node the disruption test never drains
       securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: fakeerp
@@ -71,6 +72,7 @@ spec:
       labels: {app: fakemcp}
     spec:
       automountServiceAccountToken: false
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""} # the node the disruption test never drains
       securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: fakemcp
