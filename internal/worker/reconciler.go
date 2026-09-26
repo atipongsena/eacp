@@ -94,7 +94,7 @@ func NewReconciler(pool *pgxpool.Pool, o ReconcilerOptions) (*Reconciler, error)
 // RunOnce claims up to Concurrency due actions, reconciles them
 // concurrently and returns how many it reconciled.
 func (r *Reconciler) RunOnce(ctx context.Context) (int, error) {
-	cands, err := r.store.Reconcilable(ctx, r.protocols, r.o.Secrets.Bindings(), r.o.Concurrency*2)
+	cands, err := r.store.Reconcilable(ctx, r.protocols, r.o.Secrets.Available(), r.o.Concurrency*2)
 	if err != nil {
 		return 0, err
 	}
@@ -150,9 +150,17 @@ func (r *Reconciler) reconcile(ctx context.Context, l Lease) {
 
 	res := LookupResult{Status: LookupUnknown}
 	conn := r.o.Connectors[job.Protocol]
-	secret, err := r.o.Secrets.Resolve(l.TenantID, job.SecretRef, job.Endpoint)
+	budget := min(job.Timeout, r.o.Lease/2)
+	secret, err := r.o.Secrets.Credential(ctx, l.TenantID, job.SecretRef, job.Endpoint, budget+CredentialSkew)
+	if errors.Is(err, ErrCredentialUnavailable) {
+		// Nothing was looked up, so nothing is decided and no check is
+		// recorded: the lease lapses and the action waits for its next
+		// reconciliation (T33, ADR-019).
+		log.WarnContext(ctx, "credential unavailable; not reconciling now")
+		return
+	}
 	if conn != nil && err == nil {
-		lookupCtx, cancel := context.WithTimeout(ctx, min(job.Timeout, r.o.Lease/2))
+		lookupCtx, cancel := context.WithTimeout(ctx, budget)
 		res = safeLookup(lookupCtx, conn, LookupCall{TenantID: l.TenantID, OperationKey: job.OperationKey,
 			Endpoint: job.Endpoint, Secret: secret})
 		cancel()

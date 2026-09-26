@@ -78,7 +78,7 @@ func NewScanner(pool *pgxpool.Pool, o ScannerOptions) (*Scanner, error) {
 // RunOnce claims up to Concurrency due servers, scans them concurrently and
 // returns how many it scanned.
 func (s *Scanner) RunOnce(ctx context.Context) (int, error) {
-	cands, err := s.store.ScansDue(ctx, s.o.Secrets.Bindings(), s.o.Concurrency*2)
+	cands, err := s.store.ScansDue(ctx, s.o.Secrets.Available(), s.o.Concurrency*2)
 	if err != nil {
 		return 0, err
 	}
@@ -125,7 +125,13 @@ func (s *Scanner) Run(ctx context.Context) {
 func (s *Scanner) scan(ctx context.Context, l ScanLease) {
 	log := s.o.Log.With("tenant_id", l.TenantID, "connector_id", l.ConnectorID, "generation", l.Generation)
 	var d Discovery
-	secret, err := s.o.Secrets.Resolve(l.TenantID, l.SecretRef, l.Endpoint)
+	secret, err := s.o.Secrets.Credential(ctx, l.TenantID, l.SecretRef, l.Endpoint, s.o.Timeout+CredentialSkew)
+	if errors.Is(err, ErrCredentialUnavailable) {
+		// Not recorded: the scan lease expires and the scan is retried once
+		// the credential is available again (ADR-019).
+		log.WarnContext(ctx, "credential unavailable; mcp scan not recorded")
+		return
+	}
 	if err != nil {
 		err = &DiscoveryError{Class: "no_credential", Err: errors.New("no credential bound to this server")}
 	} else {
@@ -138,6 +144,9 @@ func (s *Scanner) scan(ctx context.Context, l ScanLease) {
 	}
 	if err != nil {
 		log.WarnContext(ctx, "mcp scan failed", "class", DiscoveryClass(err))
+		if DiscoveryClass(err) == "unauthorized" {
+			s.o.Secrets.Rejected(l.TenantID, l.SecretRef, secret)
+		}
 	}
 	if rerr := s.store.RecordScan(ctx, l, d, err, s.o.Interval); rerr != nil && ctx.Err() == nil {
 		log.ErrorContext(ctx, "mcp scan not recorded", "err", rerr)

@@ -175,6 +175,7 @@ type Job struct {
 	ConnectorID                               uuid.UUID
 	Protocol, Endpoint, SecretRef             string
 	Contract                                  Contract
+	CallTimeout                               time.Duration // eacp.call_timeout of the pinned contract
 }
 
 // Load reads the leased action with its pinned contract and connector.
@@ -184,12 +185,14 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 		var state string
 		var gen int64
 		var input, enforced string
+		var callSecs float64
 		err := tx.QueryRow(ctx, `SELECT a.state, a.lease_generation, a.agent_id, a.agent_version_id, a.subject,
 			a.operation, a.target, a.tool, a.tool_schema_version, a.resource, a.operation_key,
 			a.input_payload::text, a.enforced_payload::text, a.enforced_digest, a.attempt_count,
 			c.id, c.protocol, c.endpoint, c.secret_ref, k.version, k.side_effects, k.idempotency_mode,
 			COALESCE(k.idempotency_key_field, ''), COALESCE(k.correlation_field, ''),
-			k.no_effect_errors, k.max_attempts
+			k.no_effect_errors, k.max_attempts,
+			extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8
 			FROM eacp.actions a
 			JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
 			JOIN eacp.tools t ON t.tenant_id = a.tenant_id AND t.id = a.tool_id
@@ -199,13 +202,14 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 			&input, &enforced, &j.EnforcedDigest, &j.Attempts, &j.ConnectorID, &j.Protocol, &j.Endpoint, &j.SecretRef,
 			&j.Contract.Version, &j.Contract.SideEffects, &j.Contract.IdempotencyMode,
 			&j.Contract.IdempotencyKeyField, &j.Contract.CorrelationField, &j.Contract.NoEffectErrors,
-			&j.Contract.MaxAttempts)
+			&j.Contract.MaxAttempts, &callSecs)
 		if err != nil {
 			return err
 		}
 		if state != "LEASED" || gen != l.Generation {
 			return ErrLeaseLost
 		}
+		j.CallTimeout = time.Duration(callSecs * float64(time.Second))
 		j.InputPayload, j.EnforcedPayload = json.RawMessage(input), json.RawMessage(enforced)
 		return nil
 	})

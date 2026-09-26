@@ -224,3 +224,29 @@ func TestScannerScansOnlyServersItHoldsSecretsFor(t *testing.T) {
 		t.Fatalf("%d servers unscanned, want the one without a secret", unscanned)
 	}
 }
+
+// ADR-019: a scan whose credential cannot be minted is not recorded as a
+// failed scan, and the server is not claimed again during the back-off.
+func TestAScanWithoutACredentialIsNotRecorded(t *testing.T) {
+	e := newScanEnv(t, scanGetPO)
+	idp := newIDP(t)
+	idp.set(func(int64) (int, any) { return 503, map[string]any{"error": "temporarily_unavailable"} })
+	secrets, err := worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"sap-mcp","host":%q,
+		"oauth2":{"token_url":%q,"client_id":"eacp-worker","client_secret":"s"}}]}`,
+		e.f.Tenant, strings.TrimPrefix(e.server.Server.URL, "http://"), idp.srv.URL)), worker.AllowPlainTokenURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.secrets = secrets
+	sc := e.scanner(t, "scan-a")
+	runScan(t, sc, 1)
+	var scans int
+	e.row(t, `SELECT count(*) FROM eacp.mcp_scans WHERE connector_id = $1`, []any{e.connector}, &scans)
+	if scans != 0 {
+		t.Fatalf("%d scans recorded without a credential", scans)
+	}
+	runScan(t, sc, 0)
+	if idp.mints.Load() != 1 {
+		t.Fatalf("%d mints, want 1: the back-off withholds the server", idp.mints.Load())
+	}
+}

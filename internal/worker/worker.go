@@ -192,7 +192,7 @@ func (w *Worker) claim(ctx context.Context, n int) ([]claimed, error) {
 	var leases []claimed
 	attempted := make(map[Candidate]bool)
 	for len(leases) < n {
-		cands, err := w.store.Claimable(ctx, w.protocols, w.o.Secrets.Bindings(), 100, w.skipList())
+		cands, err := w.store.Claimable(ctx, w.protocols, w.o.Secrets.Available(), 100, w.skipList())
 		if err != nil {
 			return leases, err
 		}
@@ -289,10 +289,21 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 		return
 	}
 	conn := w.o.Connectors[job.Protocol]
-	secret, err := w.o.Secrets.Resolve(l.TenantID, job.SecretRef, job.Endpoint)
-	if conn == nil || err != nil {
+	if conn == nil {
 		log.WarnContext(exec, "worker cannot serve this connector; releasing", "protocol", job.Protocol)
 		w.release(exec, l, log, "worker cannot serve this connector")
+		return
+	}
+	// ADR-019: the credential must outlive the whole call, so a token that
+	// could expire mid-call is never sent. Nothing is dispatched without one.
+	secret, err := w.o.Secrets.Credential(exec, l.TenantID, job.SecretRef, job.Endpoint, job.CallTimeout+CredentialSkew)
+	if err != nil {
+		reason := "worker cannot serve this connector"
+		if errors.Is(err, ErrCredentialUnavailable) {
+			reason = "credential unavailable"
+		}
+		log.WarnContext(exec, "no credential for this call; releasing", "reason", reason)
+		w.release(exec, l, log, reason)
 		return
 	}
 	// Invariant 14: dispatch only the enforced payload whose digest the
@@ -367,6 +378,11 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	cancel()
 	stop()
 	res = classify(scrub(res, w.o.Secrets.Values()), job.Contract)
+	if res.ErrorClass == "unauthorized" {
+		// The target refused the credential: a minted token is dropped so
+		// the next attempt mints another. The outcome stays as classified.
+		w.o.Secrets.Rejected(l.TenantID, job.SecretRef, secret)
+	}
 	probe = signalOf(res, cancelled.Load())
 
 	var comp Completion

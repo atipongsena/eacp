@@ -37,7 +37,12 @@ func main() {
 			var secrets *worker.SecretStore
 			if path := d.Config.ConnectorSecretsFile; path != "" {
 				var err error
-				if secrets, err = worker.LoadSecrets(path); err != nil {
+				// Minted tokens join the redaction set as they are issued (ADR-019).
+				opts := []worker.LoadOption{worker.WithRedaction(d.Redaction()), worker.WithLogger(d.Log)}
+				if env := d.Config.Environment; env == "development" || env == "test" {
+					opts = append(opts, worker.AllowPlainTokenURL())
+				}
+				if secrets, err = worker.LoadSecrets(path, opts...); err != nil {
 					return err
 				}
 				d.RedactSecrets(secrets.Values()...)
