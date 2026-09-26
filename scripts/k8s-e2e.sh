@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -59,8 +59,18 @@ secret eacp eacp-db-app --from-literal=url='postgres://eacp_app:eacp_app_dev@pos
 secret eacp eacp-db-owner --from-literal=url='postgres://eacp_owner:eacp_owner_dev@postgres.eacp-deps.svc:5432/eacp?sslmode=disable'
 secret eacp eacp-nats-relay --from-literal=url='nats://relay:relay_dev@nats.eacp-deps.svc:4222'
 secret eacp eacp-nats-worker --from-literal=url='nats://worker:worker_dev@nats.eacp-deps.svc:4222'
-secret eacp eacp-connector-secrets \
-	--from-file=connector-secrets.json=deployments/docker/secrets/connector-secrets.dev.json
+# The worker's secrets on Kubernetes: the dev manifest plus the federated
+# binding, whose client assertion is the worker's projected token (ADR-019
+# Rev 1.1). Compose never sees that entry: it has no such token.
+"$python" - deployments/docker/secrets/connector-secrets.dev.json deployments/k8s/connector-secrets.federated.json \
+	"$(winpath "$work/connector-secrets.json")" <<'PY'
+import json, sys
+merged = {"secrets": []}
+for path in sys.argv[1:3]:
+    merged["secrets"] += json.load(open(path, encoding="utf-8"))["secrets"]
+json.dump(merged, open(sys.argv[3], "w", encoding="utf-8"), indent=2)
+PY
+secret eacp eacp-connector-secrets --from-file=connector-secrets.json="$(winpath "$work/connector-secrets.json")"
 secret eacp-deps postgres-bootstrap --from-literal=POSTGRES_PASSWORD=postgres \
 	--from-literal=EACP_OWNER_PASSWORD=eacp_owner_dev --from-literal=EACP_APP_PASSWORD=eacp_app_dev
 secret eacp-deps fakeerp-token --from-file=token=deployments/docker/secrets/fakeerp-token.dev
@@ -68,6 +78,12 @@ secret eacp-deps fakeerp-oauth-client --from-file=secret=deployments/docker/secr
 secret eacp-deps fakemcp-token --from-file=token=deployments/docker/secrets/fakemcp-token.dev
 k -n eacp-deps create configmap postgres-initdb --from-file=deployments/docker/postgres/initdb/01-roles.sh \
 	--dry-run=client -o yaml | k apply -f -
+# Fake ERP trusts the cluster's service-account issuer: its issuer and JWKS.
+k get --raw /.well-known/openid-configuration >"$work/oidc.json"
+k get --raw /openid/v1/jwks >"$work/jwks.json"
+issuer=$("$python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["issuer"])' "$(winpath "$work/oidc.json")")
+k -n eacp-deps create configmap fakeerp-federation --from-literal=issuer="$issuer" \
+	--from-file=jwks.json="$(winpath "$work/jwks.json")" --dry-run=client -o yaml | k apply -f -
 k -n eacp-deps create configmap nats-config --from-file=nats.conf=deployments/docker/nats/nats.conf \
 	--dry-run=client -o yaml | k apply -f -
 k apply -f deployments/k8s/dev/
@@ -94,7 +110,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then

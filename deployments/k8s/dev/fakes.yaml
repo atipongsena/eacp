@@ -40,6 +40,14 @@ spec:
             - {name: EACP_FAKEERP_OAUTH_CLIENT_ID, value: eacp-worker}
             - {name: EACP_FAKEERP_OAUTH_CLIENT_SECRET_FILE, value: /run/secrets/fakeerp-oauth/secret}
             - {name: EACP_FAKEERP_OAUTH_TTL, value: 300s}
+            # ADR-019 Rev 1.1: a federated client that trusts the cluster's
+            # service-account issuer (scripts/k8s-e2e.sh writes the ConfigMap)
+            - {name: EACP_FAKEERP_OAUTH_FEDERATED_CLIENT_ID, value: eacp-worker-wif}
+            - name: EACP_FAKEERP_OAUTH_FEDERATED_ISSUER
+              valueFrom: {configMapKeyRef: {name: fakeerp-federation, key: issuer}}
+            - {name: EACP_FAKEERP_OAUTH_FEDERATED_AUDIENCE, value: fakeerp}
+            - {name: EACP_FAKEERP_OAUTH_FEDERATED_SUBJECT, value: "system:serviceaccount:eacp:eacp-worker"}
+            - {name: EACP_FAKEERP_OAUTH_FEDERATED_JWKS_FILE, value: /run/config/fakeerp-federation/jwks.json}
           ports: [{containerPort: 8090}]
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
@@ -48,12 +56,15 @@ spec:
           volumeMounts:
             - {name: token, mountPath: /run/secrets/fakeerp, readOnly: true}
             - {name: oauth-client, mountPath: /run/secrets/fakeerp-oauth, readOnly: true}
+            - {name: federation, mountPath: /run/config/fakeerp-federation, readOnly: true}
             - {name: data, mountPath: /data}
       volumes:
         - name: token
           secret: {secretName: fakeerp-token}
         - name: oauth-client
           secret: {secretName: fakeerp-oauth-client}
+        - name: federation
+          configMap: {name: fakeerp-federation, items: [{key: jwks.json, path: jwks.json}]}
         - {name: data, emptyDir: {}}
 ---
 apiVersion: v1
