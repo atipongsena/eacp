@@ -36,7 +36,7 @@ var (
 	exchangeAudience = regexp.MustCompile(`^[\x21-\x7e]+$`) // at most 1024 bytes
 	// impersonationPath is IAM Credentials' generateAccessToken for one
 	// service account.
-	impersonationPath = regexp.MustCompile(`^/v1/projects/-/serviceAccounts/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+):generateAccessToken$`)
+	impersonationPath = regexp.MustCompile(`^/v1/projects/-/serviceAccounts/([A-Za-z0-9._+-]+@[A-Za-z0-9.-]+):generateAccessToken$`)
 	scopeToken        = regexp.MustCompile(`^[\x21\x23-\x5b\x5d-\x7e]+$`) // at most 1024 bytes
 )
 

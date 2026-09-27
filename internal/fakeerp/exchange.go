@@ -26,7 +26,7 @@ const (
 var (
 	subjectTypes = map[string]bool{"urn:ietf:params:oauth:token-type:jwt": true,
 		"urn:ietf:params:oauth:token-type:id_token": true, "urn:ietf:params:oauth:token-type:id-token": true}
-	accountPattern  = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`)
+	accountPattern  = regexp.MustCompile(`^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$`)
 	lifetimePattern = regexp.MustCompile(`^[1-9][0-9]{0,3}s$`)
 )
 

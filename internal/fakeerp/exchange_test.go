@@ -228,3 +228,51 @@ func TestExchangeOptionsFailClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestAnExchangeAuditKeepsTheClient: an exchange that authenticates a
+// client records it beside the subject's principal.
+func TestAnExchangeAuditKeepsTheClient(t *testing.T) {
+	srv, k8s, _ := exchangeERP(t)
+	if status, got := postToken(t, srv, exchangeForm(k8sToken(k8s, nil)), true); status != 200 {
+		t.Fatalf("%d %v", status, got)
+	}
+	_, raw := auditOf(t, srv)
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e["outcome"] == "token_issued" && e["principal"] == "sts:"+k8sSubject {
+			if e["client"] != oauthClient {
+				t.Fatalf("the exchange audit lost its client: %v", e)
+			}
+			return
+		}
+	}
+	t.Fatalf("no exchange issuance in %s", raw)
+}
+
+// TestAMissingSubjectIsNotDigested: a refusal without a subject token
+// records no digest (the digest of nothing is not evidence).
+func TestAMissingSubjectIsNotDigested(t *testing.T) {
+	srv, _, _ := exchangeERP(t)
+	f := exchangeForm("x")
+	f.Del("subject_token")
+	if status, _ := postToken(t, srv, f, false); status != 400 {
+		t.Fatalf("status %d", status)
+	}
+	if _, raw := auditOf(t, srv); strings.Contains(raw, "subject_sha256") {
+		t.Fatalf("a missing subject was digested: %s", raw)
+	}
+}
+
+func TestAPercentAccountIsRefused(t *testing.T) {
+	k := newKeyPair(t, "k8s")
+	subject := fakeerp.ExchangeSubject{Issuer: k8sIssuer, Audience: "fakeerp", Subject: k8sSubject,
+		Keys: []fakeerp.PublicKey{{KID: "k8s-rsa", Key: &k.rsa.PublicKey}}}
+	o := fakeerp.Options{Exchange: &fakeerp.TokenExchange{Audience: stsAudience, Subjects: []fakeerp.ExchangeSubject{subject}},
+		Impersonation: &fakeerp.Impersonation{Accounts: []string{"a%2Fb@x.y"}}}
+	if _, err := fakeerp.NewWithOptions(credential, filepath.Join(t.TempDir(), "erp.log"), o); err == nil {
+		t.Fatal("a percent-escaped account was accepted")
+	}
+}

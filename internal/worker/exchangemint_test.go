@@ -93,6 +93,13 @@ func TestExchangeClientAuthentication(t *testing.T) {
 				t.Fatalf("form %v, basic %v", form, auth)
 			}
 		}},
+		"private_key_jwt": {fmt.Sprintf(`,"client_id":"eacp","private_key_jwt":{"alg":"RS256","key":%q}`, pkcs8PEM(t, rsaKey(t, 2048))),
+			func(t *testing.T, form map[string][]string, auth [2]string) {
+				if auth != [2]string{} || fmt.Sprint(form["client_id"]) != "[eacp]" ||
+					fmt.Sprint(form["client_assertion_type"]) != "["+jwtBearer+"]" || len(form["client_assertion"]) != 1 {
+					t.Fatalf("form %v, basic %v", form, auth)
+				}
+			}},
 		"client assertion": {fmt.Sprintf(`,"client_id":"eacp","client_assertion_file":%q`, clientAssertion),
 			func(t *testing.T, form map[string][]string, auth [2]string) {
 				if auth != [2]string{} || fmt.Sprint(form["client_id"]) != "[eacp]" ||
@@ -228,5 +235,69 @@ func TestExchangeTokensAreRedactedAndScrubbed(t *testing.T) {
 		if !strings.Contains(live, v) {
 			t.Errorf("Values lacks the %s", name)
 		}
+	}
+}
+
+// TestTheSubjectTokenIsReadAfterClientAuthentication: the subject token is
+// read just before the request, after any client-authentication fetch, so a
+// slow fetch cannot spend its margin (the kubelet may rotate it meanwhile).
+func TestTheSubjectTokenIsReadAfterClientAuthentication(t *testing.T) {
+	signer := jwttest.New(t)
+	file := subjectFile(t, signer, time.Hour)
+	a := spiffetest.New(t)
+	var rotated string
+	a.Handle(func(r *workload.JWTSVIDRequest) (string, error) {
+		// The platform rotates the subject token while the SVID is fetched.
+		rotated = assertion(signer, time.Now().Add(time.Second), time.Hour, stsSubject)
+		writeAssertion(t, file, rotated)
+		return a.SVID(r.SpiffeId, r.Audience, time.Hour), nil
+	})
+	p := newIDP(t)
+	p.set(exchanged)
+	spiffe := fmt.Sprintf(`{"endpoint":%q,"spiffe_id":%q}`, a.Addr(), spiffeWorker)
+	s := exchangeStore(t, p.srv.URL, &clock{t: time.Now()}, spiffe,
+		fileSubject(file)+`,"client_id":"eacp","client_assertion_spiffe":{"audience":"sts-client"}`)
+	if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if form, _ := p.last(); form.Get("subject_token") != rotated || form.Get("client_assertion") == "" {
+		t.Fatal("the subject token was read before the client assertion was fetched")
+	}
+}
+
+func TestAShortSPIFFESubjectIsRefused(t *testing.T) {
+	a := spiffetest.New(t)
+	a.Handle(func(r *workload.JWTSVIDRequest) (string, error) {
+		return a.SVID(r.SpiffeId, r.Audience, 5*time.Second), nil
+	})
+	p := newIDP(t)
+	p.set(exchanged)
+	buf := &safeBuffer{}
+	spiffe := fmt.Sprintf(`{"endpoint":%q,"spiffe_id":%q}`, a.Addr(), spiffeWorker)
+	s := exchangeStore(t, p.srv.URL, &clock{t: time.Now()}, spiffe, `"subject_token":{"spiffe":{"audience":"sts"}}`,
+		worker.WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Second); !errors.Is(err, worker.ErrCredentialUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if p.mints.Load() != 0 || !strings.Contains(buf.String(), `"class":"assertion_expired"`) {
+		t.Fatalf("%d requests; log %s", p.mints.Load(), buf.String())
+	}
+}
+
+func TestATooShortLogNamesTheGrant(t *testing.T) {
+	p := newIDP(t)
+	p.set(func(int64) (int, any) {
+		return 200, map[string]any{"access_token": "short-" + canary, "issued_token_type": accessToken,
+			"token_type": "Bearer", "expires_in": 60}
+	})
+	buf := &safeBuffer{}
+	s := exchangeStore(t, p.srv.URL, &clock{t: time.Now()}, "", fileSubject(subjectFile(t, jwttest.New(t), time.Hour)),
+		worker.WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, 2*time.Minute); !errors.Is(err, worker.ErrCredentialTooShort) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(buf.String(), `"msg":"credential lifetime shorter than the call"`) ||
+		!strings.Contains(buf.String(), `"grant":"token_exchange"`) {
+		t.Fatalf("log: %s", buf.String())
 	}
 }

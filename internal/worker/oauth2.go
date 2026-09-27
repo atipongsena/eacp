@@ -288,8 +288,8 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 		p.backoff, p.backoffUntil = 0, time.Time{}
 		if !now.Add(validFor).Before(expiry) {
 			// Kept for shorter calls; this one cannot be served.
-			p.log.ErrorContext(ctx, "credential lifetime shorter than the call", "tenant", p.binding.TenantID.String(),
-				"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "lifetime", lifetime, "needed", validFor)
+			p.log.ErrorContext(ctx, "credential lifetime shorter than the call",
+				append(p.mintAttrs(), "lifetime", lifetime, "needed", validFor)...)
 			return Secret{}, ErrCredentialTooShort
 		}
 	}
@@ -340,12 +340,9 @@ func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
 func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Time, time.Duration, string) {
 	form := url.Values{"grant_type": {"client_credentials"}}
 	if p.exchange != nil {
-		// RFC 8693: the worker's own identity token is the subject (§3e).
-		subject, class := p.subjectToken(ctx)
-		if class != "" {
-			return Secret{}, time.Time{}, time.Time{}, 0, class
-		}
-		form = url.Values{"grant_type": {grantTokenExchange}, "subject_token": {subject.v},
+		// RFC 8693: the worker's own identity token is the subject (§3e); it
+		// is read last, just before the request.
+		form = url.Values{"grant_type": {grantTokenExchange},
 			"subject_token_type": {p.exchange.subjectType}, "requested_token_type": {tokenTypeAccess}}
 		if p.exchange.audience != "" {
 			form.Set("audience", p.exchange.audience)
@@ -405,6 +402,15 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	}
 	if p.publicClient {
 		form.Set("client_id", p.clientID) // RFC 6749 §3.2.1: a public client identifies itself in the form
+	}
+	if p.exchange != nil {
+		// After client authentication, which may wait on Vault or the Workload
+		// API: the subject's 10 s margin covers the request itself.
+		subject, class := p.subjectToken(ctx)
+		if class != "" {
+			return Secret{}, time.Time{}, time.Time{}, 0, class
+		}
+		form.Set("subject_token", subject.v)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, tokenRequestTimeout) // the impersonation hop gets its own
 	defer cancel()

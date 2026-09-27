@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"eacp/internal/jwttest"
 	"eacp/internal/logging"
 )
 
@@ -35,7 +36,8 @@ type fakeIDP struct {
 	pub    *rsa.PublicKey
 	x5t    string
 	mints  int
-	seen   []string // the client secrets or x5t values presented, in order
+	seen   []string   // the client secrets or x5t values presented, in order
+	form   url.Values // the last request's form
 }
 
 func newFakeIDP(t *testing.T) *fakeIDP {
@@ -45,6 +47,7 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		_ = r.ParseForm()
+		p.form = r.PostForm
 		ok := false
 		if a := r.PostForm.Get("client_assertion"); a != "" {
 			parts := strings.Split(a, ".")
@@ -71,7 +74,7 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 		}
 		p.mints++
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": fmt.Sprintf("tok-%d", p.mints),
-			"token_type": "Bearer", "expires_in": 600})
+			"token_type": "Bearer", "expires_in": 600, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"})
 	}))
 	t.Cleanup(p.srv.Close)
 	return p
@@ -226,5 +229,28 @@ func TestInvalidOAuthVaultEntriesRejectTheWholeFile(t *testing.T) {
 		"client_id":"eacp","private_key_jwt":{"alg":"PS256","key":%q,"certificate_vault":%s}}`, keyPEM, ref))
 	if _, err := LoadSecrets(writeFile(t, "secrets.json", inlineKey), AllowPlainTokenURL()); err != nil {
 		t.Errorf("an inline key with a certificate from Vault was refused: %v", err)
+	}
+}
+
+// TestAnExchangeClientSecretComesFromVault: a token exchange that
+// authenticates its client with a Vault-held secret reads it at the mint.
+func TestAnExchangeClientSecretComesFromVault(t *testing.T) {
+	f, idp := newFakeVault(t), newFakeIDP(t)
+	f.put("secret/data/eacp/idp", map[string]any{"client_secret": "cs1-" + vaultCanary})
+	idp.set(func(p *fakeIDP) { p.secret = "cs1-" + vaultCanary })
+	now := time.Now()
+	subject := jwttest.New(t).Sign(map[string]any{"sub": "system:serviceaccount:eacp:eacp-worker", "aud": "sts",
+		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix()})
+	file := writeFile(t, "subject", subject)
+	s := oauthVaultStore(t, f, idp, &vclock{t: now}, nil, fmt.Sprintf(`"grant":"token_exchange","subject_token":{"file":%q},`+
+		`"client_secret_vault":{"path":"eacp/idp","key":"client_secret"}`, file))
+	if _, err := s.Credential(context.Background(), vaultTenant, "erp", vaultEndpoint, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	idp.mu.Lock()
+	defer idp.mu.Unlock()
+	if !slices.Equal(idp.seen, []string{"cs1-" + vaultCanary}) || idp.form.Get("subject_token") != subject ||
+		idp.form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" {
+		t.Fatalf("the IdP saw %v, form %v", idp.seen, idp.form)
 	}
 }

@@ -110,6 +110,7 @@ func TestInvalidTokenExchangeEntriesRejectTheWholeFile(t *testing.T) {
 		"imp wrong path":        imp("https://iam.example/v1/projects/p/serviceAccounts/a@b.c:generateAccessToken", ""),
 		"imp no at":             imp("https://iam.example/v1/projects/-/serviceAccounts/nobody:generateAccessToken", ""),
 		"imp wrong verb":        imp("https://iam.example/v1/projects/-/serviceAccounts/a@b.c:generateIdToken", ""),
+		"imp percent account":   imp("https://iam.example/v1/projects/-/serviceAccounts/a%2Fb@x.y:generateAccessToken", ""),
 		"imp plain http":        imp("http://iam.example"+impersonation, ""),
 		"imp no scope":          base + `,"impersonate":{"url":"` + good + `","scope":[]}`,
 		"imp 33 scopes":         base + `,"impersonate":{"url":"` + good + `","scope":[` + strings.Join(scopes, ",") + `]}`,

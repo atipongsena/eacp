@@ -49,8 +49,10 @@ type audit struct {
 	AssertionJTI string `json:"assertion_jti,omitempty"`
 	// A call authorised by a JWT-SVID records its SHA-256, never the SVID.
 	SVIDSHA256 string `json:"svid_sha256,omitempty"`
-	// A token exchange records the subject token's SHA-256, never the token.
+	// A token exchange records the subject token's SHA-256, never the token,
+	// and the client that authenticated it, if any.
 	SubjectSHA256 string `json:"subject_sha256,omitempty"`
+	Client        string `json:"client,omitempty"`
 }
 
 type event struct {
@@ -321,7 +323,10 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 		ev.Audit.Outcome, status, reply = "invalid_client", 401, map[string]any{"error": "invalid_client"}
 	case exchange:
 		sub, code := e.oauth.Exchange.subject(r.PostForm, now)
-		ev.Audit.SubjectSHA256 = subjectDigest(r.PostForm.Get("subject_token"))
+		ev.Audit.Client = id
+		if s := r.PostForm.Get("subject_token"); s != "" {
+			ev.Audit.SubjectSHA256 = subjectDigest(s)
+		}
 		if code != "" {
 			ev.Audit.Outcome, status, reply = code, 400, map[string]any{"error": code}
 			break
