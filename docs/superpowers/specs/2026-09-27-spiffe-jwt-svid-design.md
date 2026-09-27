@@ -91,8 +91,8 @@ A top-level `spiffe` object configures one Workload API client per worker:
 
 ### 3.2 The Workload API client (`internal/worker/spiffe.go`)
 
-- One `spiffeClient` per secrets file; the go-spiffe `Client` is created at the first fetch (and again after
-  a transport failure closes it), never at load.
+- One `spiffeClient` per secrets file; the go-spiffe `Client` is created at the first fetch, never at load
+  (creation that fails is retried at the next fetch; gRPC reconnects an existing client by itself).
 - `svid(ctx, audience, minLife)` returns a JWT-SVID for `audience` that lives at least `minLife`, or a failure
   class. Per audience it caches the latest SVID; the cache answers while `now + minLife` is before its `exp`.
   Otherwise it fetches: **one fetch per audience at a time** with a 10 s timeout; callers queued behind a fetch
@@ -102,7 +102,9 @@ A top-level `spiffe` object configures one Workload API client per worker:
   The worker never verifies the signature: only the relying party judges it.
 - **Failure classes:** `spiffe_unavailable` (the client cannot be created, transport errors, `Unavailable`,
   `DeadlineExceeded`, any other gRPC status), `spiffe_denied` (`PermissionDenied`: no entry matches the
-  worker), `spiffe_invalid` (no SVID, a parse failure, the wrong `sub`, a bad token shape).
+  worker), `spiffe_invalid` (no SVID, a parse failure, the wrong `sub`, a bad token shape),
+  `spiffe_expiring` (a `value_spiffe` SVID with less than 10 s left, e.g. the agent's cached copy while its
+  server is unreachable).
 - Every SVID received is added to the redaction set until its `exp` plus 24 h (ADR-019 §4). Fetches are logged
   with the audience, class or remaining lifetime only.
 
