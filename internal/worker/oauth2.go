@@ -297,12 +297,27 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 		p.backoff = min(max(2*p.backoff, minMintBackoff), maxMintBackoff)
 		p.backoffUntil = now.Add(p.backoff)
 		p.log.WarnContext(ctx, "credential mint failed", "tenant", p.binding.TenantID.String(),
-			"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "class", class, "retry_after", p.backoff)
+			"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "grant", p.grant(), "impersonated", p.impersonates(),
+			"class", class, "retry_after", p.backoff)
 		return Secret{}, ErrCredentialUnavailable
 	}
 	p.log.InfoContext(ctx, "credential minted", "tenant", p.binding.TenantID.String(),
-		"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "expires_in", expiry.Sub(now).Round(time.Second))
+		"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "grant", p.grant(), "impersonated", p.impersonates(),
+		"expires_in", expiry.Sub(now).Round(time.Second))
 	return tok, nil
+}
+
+// grant names the binding's OAuth grant for the log.
+func (p *oauthProvider) grant() string {
+	if p.exchange != nil {
+		return "token_exchange"
+	}
+	return "client_credentials"
+}
+
+// impersonates reports whether a mint ends with service-account impersonation.
+func (p *oauthProvider) impersonates() bool {
+	return p.exchange != nil && p.exchange.impersonate != nil
 }
 
 func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {

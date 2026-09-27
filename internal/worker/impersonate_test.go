@@ -202,6 +202,45 @@ func TestTheImpersonationEndpointMayNotRedirect(t *testing.T) {
 	}
 }
 
+// TestAMintLogNamesTheGrant: an operator can tell from the log which kind of
+// mint a binding made, and never learns a token from it.
+func TestAMintLogNamesTheGrant(t *testing.T) {
+	file := subjectFile(t, jwttest.New(t), time.Hour)
+	for name, c := range map[string]struct {
+		store func(t *testing.T, g *gcp, buf *safeBuffer) *worker.SecretStore
+		want  string
+	}{
+		"exchange": {func(t *testing.T, g *gcp, buf *safeBuffer) *worker.SecretStore {
+			return exchangeStore(t, g.srv.URL+"/sts", &clock{t: time.Now()}, "", fileSubject(file),
+				worker.WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+		}, `"grant":"token_exchange","impersonated":false`},
+		"impersonation": {func(t *testing.T, g *gcp, buf *safeBuffer) *worker.SecretStore {
+			return g.store(t, &clock{t: time.Now()}, file, worker.WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+		}, `"grant":"token_exchange","impersonated":true`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newGCP(t)
+			buf := &safeBuffer{}
+			s := c.store(t, g, buf)
+			if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(buf.String(), c.want) || strings.Contains(buf.String(), canary) {
+				t.Fatalf("log lacks %s, or holds a token: %s", c.want, buf.String())
+			}
+		})
+	}
+	p := newIDP(t)
+	buf := &safeBuffer{}
+	s := assertionStore(t, p.srv.URL, &clock{t: time.Now()}, file, worker.WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"grant":"client_credentials","impersonated":false`) {
+		t.Fatalf("a client-credentials mint: %s", buf.String())
+	}
+}
+
 func TestTheFederatedTokenIsRedactedAndScrubbed(t *testing.T) {
 	g := newGCP(t)
 	set := logging.NewSecretSet()
