@@ -109,7 +109,7 @@ type k8sPlatform struct {
 	t        *testing.T
 	context  string
 	replicas map[string]string // replicas of a stopped workload
-	killed   map[string]bool   // pods deleted by kill, which start waits past
+	killed   map[string]int    // "pod/container" killed by kill: its restart count then
 }
 
 // k8sWorkload maps a compose service to its namespace, workload and pod selector.
@@ -196,21 +196,57 @@ func (k *k8sPlatform) restart(services ...string) {
 	}
 }
 
-// kill force-deletes every pod of the service. The kubelet signals the
-// containers and kills them within its minimum grace period (about two
-// seconds); the controller starts replacements at once.
+// kill SIGKILLs every container of the service's pods through its node's
+// container runtime, as docker compose kill does: no process gets SIGTERM
+// or any time to record what it was doing. (A forced pod delete still lets
+// the kubelet send SIGTERM first, and a draining worker whose in-flight call
+// the teardown broke records an ambiguous result before it dies.) The
+// kubelet restarts the containers in place, in the same pods; start waits
+// for them. The kube context names the minikube profile (scripts/k8s-e2e.sh).
 func (k *k8sPlatform) kill(s string) {
 	k.t.Helper()
 	w := workload(s)
 	if k.killed == nil {
-		k.killed = map[string]bool{}
+		k.killed = map[string]int{}
 	}
-	for _, p := range strings.Fields(k.must("-n", w.ns, "get", "pods", "-l", w.selector,
-		"-o", "jsonpath={.items[*].metadata.name}")) {
-		k.killed[p] = true
+	byNode := map[string][]string{}
+	for _, p := range k.pods(w) {
+		for _, c := range p.Status.ContainerStatuses {
+			_, id, ok := strings.Cut(c.ContainerID, "://")
+			if !ok || c.State.Running == nil || p.Metadata.DeletionTimestamp != nil {
+				continue
+			}
+			k.killed[p.Metadata.Name+"/"+c.Name] = c.RestartCount
+			byNode[p.Spec.NodeName] = append(byNode[p.Spec.NodeName], id)
+		}
 	}
-	k.must("-n", w.ns, "delete", "pod", "-l", w.selector, "--grace-period=0", "--force", "--wait=false")
+	if len(byNode) == 0 {
+		k.t.Fatalf("%s: no running containers to kill", w.ref)
+	}
+	// One shell per node, all nodes at once: the call in flight must not
+	// finish while the kill is on its way.
+	errs := make(chan error, len(byNode))
+	for node, ids := range byNode {
+		go func() {
+			script := `for id in "$@"; do pid=$(crictl inspect -o go-template --template '{{.info.pid}}' "$id") && ` +
+				`[ "$pid" -gt 1 ] && kill -KILL "$pid" || exit 1; done`
+			out, err := exec.Command("minikube", append([]string{"-p", k.context, "ssh", "-n", node, "--",
+				"sudo", "sh", "-c", shellQuote(script), "kill"}, ids...)...).CombinedOutput()
+			if err != nil {
+				err = fmt.Errorf("SIGKILL %v on %s: %w\n%s", ids, node, err, out)
+			}
+			errs <- err
+		}()
+	}
+	for range byNode {
+		if err := <-errs; err != nil {
+			k.t.Fatal(err)
+		}
+	}
 }
+
+// shellQuote quotes s for the remote shell minikube ssh runs its command in.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // stop scales the workload to zero and waits until none of its pods remain.
 func (k *k8sPlatform) stop(s string) {
@@ -221,7 +257,7 @@ func (k *k8sPlatform) stop(s string) {
 	k.waitPods(w, 0)
 }
 
-// start undoes stop (scale back) or waits for kill's replacements.
+// start undoes stop (scale back) or waits for kill's restarted containers.
 func (k *k8sPlatform) start(s string) {
 	k.t.Helper()
 	w := workload(s)
@@ -234,43 +270,74 @@ func (k *k8sPlatform) start(s string) {
 	k.waitPods(w, want)
 }
 
+// k8sPod is the part of a pod waitPods and kill read.
+type k8sPod struct {
+	Metadata struct {
+		Name              string  `json:"name"`
+		DeletionTimestamp *string `json:"deletionTimestamp"`
+	} `json:"metadata"`
+	Spec struct {
+		NodeName string `json:"nodeName"`
+	} `json:"spec"`
+	Status struct {
+		Conditions        []struct{ Type, Status string } `json:"conditions"`
+		ContainerStatuses []struct {
+			Name         string `json:"name"`
+			ContainerID  string `json:"containerID"`
+			Ready        bool   `json:"ready"`
+			RestartCount int    `json:"restartCount"`
+			State        struct {
+				Running *struct{} `json:"running"`
+			} `json:"state"`
+		} `json:"containerStatuses"`
+	} `json:"status"`
+}
+
+func (k *k8sPlatform) pods(w k8sWorkload) []k8sPod {
+	k.t.Helper()
+	var list struct {
+		Items []k8sPod `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(k.must("-n", w.ns, "get", "pods", "-l", w.selector, "-o", "json")), &list); err != nil {
+		k.t.Fatalf("pods of %s: %v", w.ref, err)
+	}
+	return list.Items
+}
+
 // waitPods waits until exactly want pods of w exist, all Ready, none of
-// them terminating or deleted by kill.
+// them terminating, and every container kill signalled restarted and Ready.
 func (k *k8sPlatform) waitPods(w k8sWorkload, want int) {
 	k.t.Helper()
 	deadline := time.Now().Add(5 * time.Minute)
 	for {
-		var list struct {
-			Items []struct {
-				Metadata struct {
-					Name              string  `json:"name"`
-					DeletionTimestamp *string `json:"deletionTimestamp"`
-				} `json:"metadata"`
-				Status struct {
-					Conditions []struct{ Type, Status string } `json:"conditions"`
-				} `json:"status"`
-			} `json:"items"`
-		}
-		out := k.must("-n", w.ns, "get", "pods", "-l", w.selector, "-o", "json")
-		if err := json.Unmarshal([]byte(out), &list); err != nil {
-			k.t.Fatalf("pods of %s: %v", w.ref, err)
-		}
-		ready, total := 0, len(list.Items)
-		for _, p := range list.Items {
-			if p.Metadata.DeletionTimestamp != nil || k.killed[p.Metadata.Name] {
+		pods := k.pods(w)
+		ready := 0
+		for _, p := range pods {
+			if p.Metadata.DeletionTimestamp != nil {
 				continue
 			}
+			restarted := true
+			for _, c := range p.Status.ContainerStatuses {
+				if n, ok := k.killed[p.Metadata.Name+"/"+c.Name]; ok && (c.RestartCount <= n || !c.Ready) {
+					restarted = false
+				}
+			}
 			for _, c := range p.Status.Conditions {
-				if c.Type == "Ready" && c.Status == "True" {
+				if c.Type == "Ready" && c.Status == "True" && restarted {
 					ready++
 				}
 			}
 		}
-		if total == want && ready == want {
+		if len(pods) == want && ready == want {
+			for _, p := range pods {
+				for _, c := range p.Status.ContainerStatuses {
+					delete(k.killed, p.Metadata.Name+"/"+c.Name)
+				}
+			}
 			return
 		}
 		if time.Now().After(deadline) {
-			k.t.Fatalf("%s: %d pods, %d ready, want %d", w.ref, total, ready, want)
+			k.t.Fatalf("%s: %d pods, %d ready, want %d", w.ref, len(pods), ready, want)
 		}
 		time.Sleep(time.Second)
 	}
