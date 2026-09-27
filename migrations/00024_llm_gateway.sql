@@ -229,6 +229,9 @@ CREATE TABLE eacp.llm_calls (
 CREATE INDEX llm_calls_agent_time ON eacp.llm_calls (tenant_id, agent_id, created_at);
 CREATE INDEX llm_calls_time ON eacp.llm_calls (tenant_id, created_at);
 CREATE INDEX llm_calls_overdue ON eacp.llm_calls (tenant_id, deadline) WHERE state = 'ADMITTED';
+-- Calls that cost more than their reservation (eacp.llm_admit counts them).
+CREATE INDEX llm_calls_overrun ON eacp.llm_calls (tenant_id, agent_id, cost_unit)
+    WHERE cost_amount > committed_amount;
 
 ALTER TABLE eacp.llm_calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE eacp.llm_calls FORCE ROW LEVEL SECURITY;
@@ -831,6 +834,7 @@ DECLARE
     req_out bigint;
     est     numeric;
     room    numeric;
+    over    numeric;
     allowed boolean;
     call_id uuid := gen_random_uuid();
     due     timestamptz;
@@ -903,7 +907,13 @@ BEGIN
             PERFORM eacp.budget_fold(acct.id);
             SELECT hard_limit - allocated - reserved - committed INTO room FROM eacp.budget_accounts
             WHERE tenant_id = tenant AND id = acct.id;
-            IF est > room THEN
+            -- A settled call's cost above its reservation was not committed
+            -- (a reservation never commits more than it holds); it is real
+            -- spend, so it counts against every later admission.
+            SELECT COALESCE(sum(cost_amount - committed_amount), 0) INTO over FROM eacp.llm_calls
+            WHERE tenant_id = tenant AND agent_id = ag.id AND cost_unit = pr.unit
+              AND cost_amount > committed_amount;
+            IF est + over > room THEN
                 denial := 'budget_exceeded';
             END IF;
         END IF;

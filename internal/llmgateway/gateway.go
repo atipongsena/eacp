@@ -185,7 +185,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, a api) {
 	if err != nil {
 		var bad invalid
 		errors.As(err, &bad)
-		g.fail(w, a, http.StatusBadRequest, "invalid_request", bad.why)
+		g.fail(w, a, http.StatusBadRequest, bad.errorCode(), bad.why)
 		return
 	}
 	subject := r.Header.Get("EACP-Subject")

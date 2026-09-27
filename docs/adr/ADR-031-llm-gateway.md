@@ -64,7 +64,7 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
 
 - `eacp.budget_reservations` gains `llm_call_id`; `action_id` and `contract_id` become nullable, and a CHECK requires exactly one subject.
 - The guard keeps every action rule. Its LLM branch runs before `actor_context()`: a call's reservation is inserted only inside `llm_admit`, on the agent's leaf account in the price's unit, for exactly the estimate. It is committed or released only by `llm_settle` or `llm_sweep`, and the committed amount never exceeds the amount reserved.
-- Account counters, fold and escrow are unchanged, so **LLM spend is bound by the same hard limit as tool spend**.
+- Account counters, fold and escrow are unchanged.
 - The estimate is computed in PostgreSQL:
 
   ```text
@@ -72,7 +72,12 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
     + max_output_tokens × output price / 10⁶
   ```
 
-  Request bytes bound input tokens from above.
+  Request bytes bound input tokens from above **only for inline input**. Two rules keep the hard limit binding:
+  - **Unbounded inputs are refused** (400 `unbounded_input`, before the PDP, nothing recorded). The check reads the request's structure, never its content: message and system content blocks and the tools' types, never tool schemas or arguments.
+    - Anthropic: a content `source` other than `base64`, `text` or `content` (URLs, files), any `file_id`, a tool whose `type` is not `custom` (server tools and Anthropic-defined tools), `mcp_servers` and `container`.
+    - OpenAI: an `image_url` that is not a `data:` URL, a `file` by `file_id`, an earlier answer's `audio`, a tool that is not `function` or `custom`, `web_search_options`, `audio`, `prediction`, `modalities` other than text, and a `service_tier` other than `auto`, `default` or `flex`.
+    - Test: `TestUnboundedInputsAreRefused`.
+  - **An overrun counts against the next admission.** A call can still cost more than its reservation: a provider-side price above the rate card (long-context pricing, a project's default tier), or fixed per-request tokens on a tiny request. The reservation commits only what it holds, and the call's `cost_amount − committed_amount` is real spend. `llm_admit` adds every such excess of the agent in the price's unit to the estimate it checks against the room. One overrun can exceed the limit once; after it the agent spends nothing more until an admin raises the limit (two-person). Test: `TestAnOverrunCountsAgainstTheNextAdmission`.
 - An agent with no leaf account in the price's unit runs unreserved, and its cost is still recorded.
 
 ### 5. The request flow
@@ -151,7 +156,8 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
 |---|---|---|
 | Providers do not bill a request answered with an error status | Released at cost 0 | Failed calls undercounted |
 | Usage of a cut, killed, timed-out or abandoned call | Unknown: commit the full reservation, record no usage row | Overcharged budget, never undercharged |
-| Input tokens | Bounded by request bytes for the reservation; the provider's usage for the cost | Reservations larger than needed |
+| Input tokens of an admitted request | Bounded by request bytes once unbounded inputs are refused; the provider's usage for the cost | One call can exceed its reservation (and once, the limit); the overrun then blocks further spend |
+| The refused shapes list | Covers the providers' fetched, stored, server-run and premium-priced features known on 2026-09-27 | A new provider feature that fetches input or prices higher is admitted until listed; the overrun rule still stops the agent after one such call |
 | Cache writes without a cache-write price | Cost NULL (unpriced, ADR-025); the full reservation is committed | As above |
 | OpenAI `cached_tokens` | Part of `prompt_tokens`: input = prompt − cached, cache read = cached | Mispriced cached input |
 | A canary candidate's LLM calls | Need an `EACP-Subject` inside the cohort, else denied `canary_cohort`; not exercised by a gateway test | A cohort bug surfaces only in review |

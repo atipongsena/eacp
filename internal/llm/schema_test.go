@@ -468,6 +468,27 @@ func TestTheLedgerCannotBeWrittenBySettingItsGate(t *testing.T) {
 	}
 }
 
+// A call can cost more than its reservation (usage the request's bytes did
+// not bound, or a price above the rate card): the budget commits only the
+// reservation, and the excess counts against the agent's room at every later
+// admission, so an overrun stops further spend instead of hiding (ADR-031 §4).
+func TestAnOverrunCountsAgainstTheNextAdmission(t *testing.T) {
+	e := newEnv(t) // limit 1 USD; sonnet 3/15 per million tokens
+	a := e.admit(t, req("sonnet", "anthropic", 100, 10))
+	// 300 000 input tokens cost 0.9 USD against a reservation of 0.00045.
+	s := e.settle(t, a.CallID, "succeeded", 200, 300000, 0, 0, 10, true)
+	if s.Cost == nil || *s.Cost != "0.900150" || s.Committed == nil || *s.Committed != "0.000450" {
+		t.Fatalf("overrun settlement = %+v", s)
+	}
+	// Room left: 1 - 0.00045 committed - 0.8997 overrun = 0.09985.
+	if b := e.admit(t, req("sonnet", "anthropic", 100, 4096)); b.Denial != "" { // 0.061740
+		t.Fatalf("a call that fits beside the overrun = %+v", b)
+	}
+	if c := e.admit(t, req("sonnet", "anthropic", 10000, 4096)); c.Denial != "budget_exceeded" { // 0.091440
+		t.Fatalf("a call that fits only without the overrun = %+v", c)
+	}
+}
+
 func TestKillScopesBindLLMCalls(t *testing.T) {
 	for _, scope := range []string{"tenant", "team", "agent", "agent_version", "model"} {
 		t.Run(scope, func(t *testing.T) {

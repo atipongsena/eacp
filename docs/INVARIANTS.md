@@ -72,6 +72,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/action` TestBudgetFailuresDenyClosed — no account or an invalid cost denies
 - `internal/llm` TestReservationGuardForLLMCalls — an LLM call's reservation is made only inside `llm_admit` by its agent, for the estimate, and committed or released only by the gateway or the sweeper, never above the amount (ADR-031)
 - `internal/llm` TestAdmitReservesTheEstimate — admission reserves PostgreSQL's estimate on the agent's leaf and denies `budget_exceeded` when it does not fit
+- `internal/llmgateway` TestUnboundedInputsAreRefused — URL, file, server-tool, MCP, container, web-search, audio, prediction and priority-tier requests, whose usage the request's bytes do not bound, are refused before admission (ADR-031 §4)
+- `internal/llm` TestAnOverrunCountsAgainstTheNextAdmission — a call's cost above its reservation counts against every later admission of the agent, so an overrun stops further spend
 - `internal/llmgateway` TestTheGatewayMetersAndLimitsSpend — through the real gateway and fakellm: exact cost committed, and a call that could overspend is denied before any provider request
 
 ## 4 [A] Duplicate messages, submissions or reclaims do not duplicate external effects

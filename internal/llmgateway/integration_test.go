@@ -120,7 +120,9 @@ func newLLMEnv(t *testing.T, afterAdmit func(*llmEnv)) *llmEnv {
 		ledger = ledgerHook{Store: e.store, after: func() { afterAdmit(e) }}
 	}
 	gw, err := llmgateway.New(llmgateway.Options{ID: "gw-it",
-		Auth:   func(ctx context.Context, key string) (identity.Caller, error) { return identity.Authenticate(ctx, f.App, key) },
+		Auth: func(ctx context.Context, key string) (identity.Caller, error) {
+			return identity.Authenticate(ctx, f.App, key)
+		},
 		Ledger: ledger, Policies: governance.NewStore(f.App), PDP: governance.LocalProvider{InstanceID: "llm-gateway"},
 		Secrets: secrets, AgentRisk: e.store.AgentRisk, KillPoll: 100 * time.Millisecond,
 		Log: slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})

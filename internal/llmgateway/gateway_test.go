@@ -590,3 +590,70 @@ func TestDenialIsProviderShaped(t *testing.T) {
 	}
 	x.ledger.noSettlement(t)
 }
+
+// Inputs the provider fetches or runs, or that price above the rate card,
+// are not bounded by the request's bytes, so the reservation cannot cover
+// them: they are refused before the PDP (ADR-031 §4). Look-alike keys inside
+// tool schemas and tool arguments are content, never inspected.
+func TestUnboundedInputsAreRefused(t *testing.T) {
+	x := newHarness(t, anthropicOK)
+	msg := func(content string) string {
+		return `{"model":"sonnet","max_tokens":1,"messages":[{"role":"user","content":[` + content + `]}]}`
+	}
+	chat := func(extra string) string {
+		return `{"model":"gpt","messages":[{"role":"user","content":"hi"}]` + extra + `}`
+	}
+	for name, c := range map[string]struct{ path, body string }{
+		"image by url":        {"/v1/messages", msg(`{"type":"image","source":{"type":"url","url":"https://x.test/a.png"}}`)},
+		"document by url":     {"/v1/messages", msg(`{"type":"document","source":{"type":"url","url":"https://x.test/a.pdf"}}`)},
+		"document by file":    {"/v1/messages", msg(`{"type":"document","source":{"type":"file","file_id":"file_1"}}`)},
+		"container upload":    {"/v1/messages", msg(`{"type":"container_upload","file_id":"file_1"}`)},
+		"url in tool result":  {"/v1/messages", msg(`{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://x.test/a.png"}}]}`)},
+		"url in content doc":  {"/v1/messages", msg(`{"type":"document","source":{"type":"content","content":[{"type":"image","source":{"type":"url","url":"u"}}]}}`)},
+		"source not object":   {"/v1/messages", msg(`{"type":"image","source":"https://x.test/a.png"}`)},
+		"server tool":         {"/v1/messages", `{"model":"sonnet","max_tokens":1,"messages":[],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`},
+		"mcp servers":         {"/v1/messages", `{"model":"sonnet","max_tokens":1,"messages":[],"mcp_servers":[{"type":"url","url":"https://m.test","name":"m"}]}`},
+		"container":           {"/v1/messages", `{"model":"sonnet","max_tokens":1,"messages":[],"container":"c_1"}`},
+		"image_url http":      {"/v1/chat/completions", `{"model":"gpt","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x.test/a.png"}}]}]}`},
+		"file by id":          {"/v1/chat/completions", `{"model":"gpt","messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"file_1"}}]}]}`},
+		"assistant audio ref": {"/v1/chat/completions", `{"model":"gpt","messages":[{"role":"assistant","audio":{"id":"audio_1"}}]}`},
+		"web search":          {"/v1/chat/completions", chat(`,"web_search_options":{}`)},
+		"audio output":        {"/v1/chat/completions", chat(`,"modalities":["text","audio"],"audio":{"voice":"alloy","format":"wav"}`)},
+		"priority tier":       {"/v1/chat/completions", chat(`,"service_tier":"priority"`)},
+		"prediction":          {"/v1/chat/completions", chat(`,"prediction":{"type":"content","content":"x"}`)},
+		"non-function tool":   {"/v1/chat/completions", chat(`,"tools":[{"type":"web_search"}]`)},
+	} {
+		h := anthropicKey()
+		if c.path == "/v1/chat/completions" {
+			h = openaiKey()
+		}
+		code, _, body := x.post(c.path, c.body, h)
+		if code != 400 || !strings.Contains(string(body), "unbounded_input") {
+			t.Errorf("%s: %d %s", name, code, body)
+			if code == 200 {
+				x.ledger.settlement(t)
+			}
+		}
+	}
+	if n := len(x.ledger.admitted()); n != 0 || x.pdp.callCount() != 0 || len(x.prov.requests()) != 0 {
+		t.Fatalf("admitted %d, PDP calls %d, provider requests %d", n, x.pdp.callCount(), len(x.prov.requests()))
+	}
+	for name, c := range map[string]struct{ path, body string }{
+		"base64 image":                       {"/v1/messages", msg(`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}`)},
+		"text document":                      {"/v1/messages", msg(`{"type":"document","source":{"type":"text","media_type":"text/plain","data":"hi"}}`)},
+		"custom tool with look-alike schema": {"/v1/messages", `{"model":"sonnet","max_tokens":1,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"f","input":{"source":{"type":"url"},"file_id":"x"}}]}],"tools":[{"name":"f","input_schema":{"type":"object","properties":{"source":{"type":"object"},"file_id":{"type":"string"}}}},{"type":"custom","name":"g","input_schema":{"type":"object"}}]}`},
+		"data image":                         {"/v1/chat/completions", `{"model":"gpt","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`},
+		"file data":                          {"/v1/chat/completions", `{"model":"gpt","messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"data:application/pdf;base64,AAAA","filename":"a.pdf"}}]}]}`},
+		"function tool":                      {"/v1/chat/completions", chat(`,"tools":[{"type":"function","function":{"name":"f","parameters":{"properties":{"image_url":{"type":"string"}}}}}],"service_tier":"default"`)},
+		"flex tier":                          {"/v1/chat/completions", chat(`,"service_tier":"flex","modalities":["text"]`)},
+	} {
+		h := anthropicKey()
+		if c.path == "/v1/chat/completions" {
+			h = openaiKey()
+		}
+		if code, _, body := x.post(c.path, c.body, h); code != 200 {
+			t.Errorf("%s: %d %s", name, code, body)
+		}
+		x.ledger.settlement(t)
+	}
+}
