@@ -40,7 +40,9 @@ func New(t testing.TB) *Agent {
 		t.Fatal(err)
 	}
 	a := &Agent{Signer: jwttest.New(t), addr: "tcp://" + l.Addr().String(), fetches: map[string]int{}}
-	a.handle = func(r *workload.JWTSVIDRequest) (string, error) { return a.SVID(r.SpiffeId, r.Audience, time.Hour), nil }
+	a.handle = func(r *workload.JWTSVIDRequest) (string, error) {
+		return a.SVID(r.SpiffeId, r.Audience, time.Hour), nil
+	}
 	srv := grpc.NewServer()
 	workload.RegisterSpiffeWorkloadAPIServer(srv, a)
 	go func() { _ = srv.Serve(l) }()
