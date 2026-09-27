@@ -291,7 +291,8 @@ A top-level `spiffe` object configures one Workload API client per worker (go-sp
   the binding unavailable with §5's back-off (1 s doubling to 60 s, counted from the end of the failed fetch
   and grown once however many callers shared it); `Available()` omits it. A fetched SVID that lives at least
   10 s but not beyond the call is `ErrCredentialTooShort`: kept for shorter calls, no back-off, and an equally
-  long call fails at once until a later fetch returns a longer-lived SVID. `Rejected` (the target answered
+  long call fails at once while that SVID lives; once it has expired the next call fetches again, so a stale
+  copy never withholds the binding for longer than its own life. `Rejected` (the target answered
   `unauthorized`) drops the cached SVID so the next call fetches again (the agent may return the same one);
   the attempt's outcome is never reclassified. `Values()` holds the current SVID until its `exp` and the one it
   replaced until that one's `exp`.
@@ -300,9 +301,10 @@ A top-level `spiffe` object configures one Workload API client per worker (go-sp
   failure is a failed mint with the `spiffe_*` class (§3's back-off, withheld from claims); an SVID with less
   than 10 s left is `assertion_expired`. A rejected token also drops the SVID. Tokens are cached, capped at an
   hour and redacted exactly as before.
-- **The SVID's TTL.** The SPIRE agent hands out a cached SVID until it is at about half its life, so operators
-  give the worker's registration entry a JWT-SVID TTL of at least twice the longest call budget plus
-  `CredentialSkew`; the demo uses 3600 s.
+- **The SVID's TTL.** The SPIRE agent hands out a cached SVID until it is at about half its life (±10 %), so
+  an SVID may arrive with 0.4 of its TTL left. Operators give the worker's registration entry a JWT-SVID TTL
+  of at least 2.5 × (the longest call budget + `CredentialSkew`), 825 s for the 300 s maximum budget; the
+  demo uses 3600 s.
 - **Kubernetes** (ADR-029, the chart): `worker.spiffe` (`enabled` default false, `csiDriver` default
   `csi.spiffe.io`) adds an inline, read-only `csi` volume to the worker pod alone, mounted at
   `/spiffe-workload-api`, where the SPIFFE CSI driver places the agent's socket. A `csi` volume is allowed by
@@ -466,7 +468,8 @@ audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Com
   `TestAnSVIDIsFetchedOnceAndCached` (one fetch under concurrency), `TestAShortRemainingLifeFetchesAgain`,
   `TestAResponseMustBeTheWorkersSVIDForTheAudience`, `TestQueuedCallersShareAFailedFetch`,
   `TestEverySVIDIsRedacted`; `spiffevalue_test.go`: `TestAnAgentFailureWithholdsTheBinding` (each class, the
-  back-off and `Available()`), `TestAnSVIDShorterThanTheCallIsTooShort`, `TestAnSVIDAboutToExpireIsNeverSent`,
+  back-off and `Available()`), `TestAnSVIDShorterThanTheCallIsTooShort`, `TestATooShortSVIDRecoversWhenItExpires`,
+  `TestAShortSharedSVIDDoesNotWedgeTheSecondBinding`, `TestAnSVIDAboutToExpireIsNeverSent`,
   `TestBindingsSharingAnAudienceFetchOnce`, `TestRejectedDropsOnlyTheCurrentSVID`,
   `TestValuesHoldTheSVIDsUntilTheyExpire`; `spiffeoauth_test.go`: `TestASPIFFEAssertionAuthenticatesTheMint`,
   `TestEveryMintFetchesAnAssertionOnlyWhenNeeded`, `TestASPIFFEFailureIsAFailedMint`,
@@ -497,8 +500,9 @@ audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Com
   Kubernetes the worker's only Vault secret is a projected token the platform rotates. A Vault outage longer
   than the refresh interval withholds the affected bindings' work, exactly like a token endpoint outage.
 - With SPIFFE (Rev 1.4) the worker holds no secret for the binding on any platform SPIRE attests; its
-  identity is its registration entry, and deleting the entry stops new SVIDs once the agent's cached copy
-  ages out (up to half the TTL).
+  identity is its registration entry. Deleting the entry stops new SVIDs, but the SVIDs already issued stay
+  valid and the worker keeps sending its cached one while it outlives the call: revocation takes up to the
+  full JWT-SVID TTL. Use a kill (ADR-016) or disable the connector's circuit for immediate containment.
 - Token exchange (RFC 8693), AWS and GCP STS, Vault dynamic secrets and HSM/KMS-held keys
   (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
   availability and drops a rejected value.

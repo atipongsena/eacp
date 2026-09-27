@@ -82,7 +82,7 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   `"endpoint": "unix:///spiffe-workload-api/spire-agent.sock"`. A `csi` volume is allowed by the `restricted`
   Pod Security Standard (a hostPath socket is not) and needs no egress rule. SPIRE, its agents and the CSI
   driver are yours to run; register the worker as `k8s:ns:<namespace>` and `k8s:sa:<release>-worker` with a
-  JWT-SVID TTL of at least twice the longest call budget.
+  JWT-SVID TTL of at least 2.5 × (the longest call budget + 30 s) (ADR-019 §3d).
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.

@@ -144,6 +144,61 @@ func TestAnSVIDShorterThanTheCallIsTooShort(t *testing.T) {
 	}
 }
 
+// TestATooShortSVIDRecoversWhenItExpires: a short SVID (the agent's cached
+// copy while its server was down) refuses longer calls only while it lives;
+// once it has expired the next call fetches again and gets a fresh SVID.
+func TestATooShortSVIDRecoversWhenItExpires(t *testing.T) {
+	a := spiffetest.New(t)
+	counting(a, func(n int64) time.Duration {
+		if n == 1 {
+			return 50 * time.Second
+		}
+		return time.Hour
+	})
+	c := &vclock{t: time.Now()}
+	s := spiffeStore(t, a, c, nil, valueSPIFFE)
+	ctx := context.Background()
+	if _, err := s.Credential(ctx, spiffeTenant, "erp-spiffe", spiffeEndpoint, time.Minute); !errors.Is(err, ErrCredentialTooShort) {
+		t.Fatalf("first call: %v", err)
+	}
+	c.add(2 * time.Minute) // past the short SVID's exp; the agent now issues hour-long SVIDs
+	if _, err := s.Credential(ctx, spiffeTenant, "erp-spiffe", spiffeEndpoint, time.Minute); err != nil {
+		t.Fatalf("after the short SVID expired: %v (%d fetches)", err, a.Fetches("erp-api"))
+	}
+	if n := a.Fetches("erp-api"); n != 2 {
+		t.Fatalf("%d fetches, want 2", n)
+	}
+}
+
+// TestAShortSharedSVIDDoesNotWedgeTheSecondBinding: the second binding's
+// short call is served from the shared cache; once that SVID expires, its
+// longer calls fetch a fresh one.
+func TestAShortSharedSVIDDoesNotWedgeTheSecondBinding(t *testing.T) {
+	a := spiffetest.New(t)
+	counting(a, func(n int64) time.Duration {
+		if n == 1 {
+			return 45 * time.Second
+		}
+		return time.Hour
+	})
+	c := &vclock{t: time.Now()}
+	second := strings.Replace(valueSPIFFE, `"erp-spiffe"`, `"erp-spiffe-2"`, 1)
+	s := spiffeStore(t, a, c, nil, valueSPIFFE, second)
+	ctx := context.Background()
+	for _, ref := range []string{"erp-spiffe", "erp-spiffe-2"} {
+		if _, err := s.Credential(ctx, spiffeTenant, ref, spiffeEndpoint, 20*time.Second); err != nil {
+			t.Fatalf("%s short call: %v", ref, err)
+		}
+	}
+	if _, err := s.Credential(ctx, spiffeTenant, "erp-spiffe-2", spiffeEndpoint, time.Minute); !errors.Is(err, ErrCredentialTooShort) {
+		t.Fatalf("long call while the shared SVID lives: %v", err)
+	}
+	c.add(time.Minute) // past the shared SVID's exp
+	if _, err := s.Credential(ctx, spiffeTenant, "erp-spiffe-2", spiffeEndpoint, time.Minute); err != nil {
+		t.Fatalf("long call after the shared SVID expired: %v (%d fetches)", err, a.Fetches("erp-api"))
+	}
+}
+
 func TestAnSVIDAboutToExpireIsNeverSent(t *testing.T) {
 	a := spiffetest.New(t)
 	a.Handle(func(r *workload.JWTSVIDRequest) (string, error) {

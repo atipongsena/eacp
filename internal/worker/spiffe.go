@@ -221,6 +221,7 @@ type spiffeValue struct {
 	current, previous       Secret // previous: replaced or rejected, scrubbed until it expires
 	currentExp, previousExp time.Time
 	lifetime                time.Duration // remaining life of the last SVID fetched: a longer call cannot be served
+	lifetimeExp             time.Time     // that SVID's exp: past it the lifetime says nothing and the next call fetches
 	backoff                 time.Duration
 	backoffUntil            time.Time
 }
@@ -236,7 +237,7 @@ func (v *spiffeValue) credential(ctx context.Context, validFor time.Duration) (S
 		s := v.current
 		v.mu.Unlock()
 		return s, nil
-	case v.lifetime > 0 && validFor >= v.lifetime:
+	case v.lifetime > 0 && validFor >= v.lifetime && now.Before(v.lifetimeExp):
 		v.mu.Unlock()
 		return Secret{}, ErrCredentialTooShort
 	}
@@ -266,7 +267,7 @@ func (v *spiffeValue) credential(ctx context.Context, validFor time.Duration) (S
 		}
 		v.current, v.currentExp = s, exp
 	}
-	v.lifetime = exp.Sub(started)
+	v.lifetime, v.lifetimeExp = exp.Sub(started), exp
 	if !now.Add(validFor).Before(exp) {
 		// Kept for shorter calls; this one cannot be served.
 		v.log.ErrorContext(ctx, "credential lifetime shorter than the call", "tenant", v.binding.TenantID.String(),

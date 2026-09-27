@@ -164,7 +164,7 @@ The agent cannot reach the token endpoint any more than the ERP (`test/security`
 - **S1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `spiffe:spiffe://eacp.test/ns/eacp/sa/eacp-worker` (the ERP audit records the SVID's SHA-256, never the SVID) and `oauth:eacp-worker-spiffe` (a token minted with the SVID as the client assertion).
 - **S2.** No issued token, audited SVID or JWT naming the worker's SPIFFE ID appears in API responses, service logs or a database dump.
 
-A withheld purchase is not shown: the agent caches an SVID for up to half its TTL, so deleting the registration entry would not stop the next purchase in a demo's time. `internal/worker` covers every failure path against a fake Workload API.
+A withheld purchase is not shown: the worker keeps using an SVID it already holds for up to its TTL (an hour here), so deleting the registration entry would not stop the next purchase in a demo's time. `internal/worker` covers every failure path against a fake Workload API.
 
 ## Scope
 

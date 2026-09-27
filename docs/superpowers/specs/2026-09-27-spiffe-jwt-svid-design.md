@@ -116,7 +116,8 @@ A top-level `spiffe` object configures one Workload API client per worker:
     the failed fetch, grown once however many callers shared it); `Available()` omits it.
   - A fetched SVID that lives at least 10 s but less than `validFor` is 24a's `ErrCredentialTooShort`: kept for
     shorter calls, no back-off. It is remembered like a token's lifetime, so an equally long call fails at once
-    until a later fetch returns a longer-lived SVID.
+    while that SVID lives; once it has expired the next call fetches again (final review: remembering it
+    beyond its `exp` wedged the binding after one stale copy).
   - `Rejected` (the target answered `unauthorized`) drops the cached SVID; the next call fetches again (the agent
     may return the same one; the attempt's outcome is never reclassified).
   - `Values()` holds the latest SVID until its `exp`, and the one it replaced until that one's `exp`.
@@ -125,8 +126,8 @@ A top-level `spiffe` object configures one Workload API client per worker:
   failure is a failed mint with the `spiffe_*` class (§3's 1–60 s back-off, withheld from claims); an SVID
   living less than 10 s is `assertion_expired`. The assertion is kept for `Values()` until its `exp`, as §3a.
   Tokens are cached, capped at an hour and redacted exactly as before.
-- Operators give the worker's entry a JWT-SVID TTL of at least twice the longest call budget plus
-  `CredentialSkew` (the agent may hand out an SVID at half its life); the demo uses 3600 s.
+- Operators give the worker's entry a JWT-SVID TTL of at least 2.5 × (the longest call budget +
+  `CredentialSkew`) (the agent may hand out an SVID with 0.4 of its life left); the demo uses 3600 s.
 
 ### 3.4 Kubernetes (Helm chart)
 
