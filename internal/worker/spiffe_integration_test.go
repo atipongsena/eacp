@@ -47,7 +47,11 @@ func (a *svidAgent) keys() []fakeerp.PublicKey {
 	return []fakeerp.PublicKey{{KID: a.Signer.KID, Key: &a.Signer.Key.PublicKey}}
 }
 
-func (a *svidAgent) svids() []string { a.mu.Lock(); defer a.mu.Unlock(); return append([]string(nil), a.issued...) }
+func (a *svidAgent) svids() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.issued...)
+}
 
 func (a *svidAgent) setRefuse(r bool) { a.mu.Lock(); a.refuse = r; a.mu.Unlock() }
 
