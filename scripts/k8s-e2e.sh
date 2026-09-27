@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE, token exchange)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -86,10 +86,11 @@ EACP_ENV=development go run ./cmd/eacpctl dev-client-key --dir "$(winpath "$work
 # Rev 1.1). Compose never sees that entry: it has no such token. The compose
 # key files under /run/secrets/eacp-client-key/ become inline PEM, the
 # vault block logs in with Kubernetes auth instead of AppRole (Rev 1.3), and
-# the spiffe block and its bindings reach the development SPIRE (Rev 1.4).
+# the spiffe block and its bindings reach the development SPIRE (Rev 1.4) and
+# the token-exchange bindings trade those identities at Fake ERP's STS (Rev 1.5).
 "$python" - deployments/docker/secrets/connector-secrets.dev.json deployments/k8s/connector-secrets.federated.json \
 	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" deployments/k8s/connector-secrets.vault.json \
-	deployments/k8s/connector-secrets.spiffe.json <<'PY'
+	deployments/k8s/connector-secrets.spiffe.json deployments/k8s/connector-secrets.exchange.json <<'PY'
 import json, os, sys
 merged = {"secrets": []}
 for path in sys.argv[1:3]:
@@ -98,6 +99,7 @@ merged["vault"] = json.load(open(sys.argv[5], encoding="utf-8"))["vault"]
 spiffe = json.load(open(sys.argv[6], encoding="utf-8"))
 merged["spiffe"] = spiffe["spiffe"]
 merged["secrets"] += spiffe["secrets"]
+merged["secrets"] += json.load(open(sys.argv[7], encoding="utf-8"))["secrets"]
 prefix = "/run/secrets/eacp-client-key/"
 for entry in merged["secrets"]:
     pk = entry.get("oauth2", {}).get("private_key_jwt")
@@ -153,7 +155,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo|TestTokenExchangeDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then

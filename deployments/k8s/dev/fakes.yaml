@@ -63,6 +63,19 @@ spec:
             - {name: EACP_FAKEERP_SPIFFE_AUDIENCE, value: fakeerp-api}
             - {name: EACP_FAKEERP_SPIFFE_SUBJECT, value: "spiffe://eacp.test/ns/eacp/sa/eacp-worker"}
             - {name: EACP_FAKEERP_SPIFFE_BUNDLE_FILE, value: /run/config/fakeerp-federation/spiffe-bundle.json}
+            # ADR-019 Rev 1.5: an STS (RFC 8693) for the worker's projected token
+            # and its JWT-SVID, and service-account impersonation for the latter
+            - {name: EACP_FAKEERP_STS_AUDIENCE, value: fakeerp-sts}
+            - name: EACP_FAKEERP_STS_K8S_ISSUER
+              valueFrom: {configMapKeyRef: {name: fakeerp-federation, key: issuer}}
+            - {name: EACP_FAKEERP_STS_K8S_AUDIENCE, value: fakeerp}
+            - {name: EACP_FAKEERP_STS_K8S_SUBJECT, value: "system:serviceaccount:eacp:eacp-worker"}
+            - {name: EACP_FAKEERP_STS_K8S_JWKS_FILE, value: /run/config/fakeerp-federation/jwks.json}
+            - {name: EACP_FAKEERP_STS_SPIFFE_ISSUER, value: "https://spire.eacp.test"}
+            - {name: EACP_FAKEERP_STS_SPIFFE_AUDIENCE, value: fakeerp-sts}
+            - {name: EACP_FAKEERP_STS_SPIFFE_SUBJECT, value: "spiffe://eacp.test/ns/eacp/sa/eacp-worker"}
+            - {name: EACP_FAKEERP_STS_SPIFFE_BUNDLE_FILE, value: /run/config/fakeerp-federation/spiffe-bundle.json}
+            - {name: EACP_FAKEERP_IMPERSONATE_ACCOUNTS, value: eacp-erp@eacp-demo.iam.gserviceaccount.com}
           ports: [{containerPort: 8090}]
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
