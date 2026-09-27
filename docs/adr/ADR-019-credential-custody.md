@@ -1,6 +1,7 @@
 # ADR-019: Credential custody — providers and just-in-time credentials
 
-Status: Accepted (Rev 1.3, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2) and 24d (Rev 1.3).
+Status: Accepted (Rev 1.4, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2), 24d (Rev 1.3) and
+24e (Rev 1.4).
 Scope: MASTER_PLAN §96.
 Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
 bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
@@ -38,6 +39,12 @@ say *where* a credential lives in Vault KV v2 instead of holding it: the worker 
 identity (Kubernetes auth with its projected token, or AppRole), reads the value when it needs it and picks up
 a rotation without a restart (§3c).
 
+Rev 1.4 (Phase 24e) gives the worker an identity that does not depend on its platform: a SPIFFE JWT-SVID.
+Rev 1.1's projected token has one issuer (the cluster) and one fixed audience per mounted token; the SPIRE
+agent issues a JWT-SVID for whatever audience the worker names, when it asks. A binding may now present the
+worker's JWT-SVID straight to a SPIFFE-aware target as its Bearer credential, or as the client assertion of
+an OAuth mint, and hold no secret at all (§3d).
+
 ## Decision
 
 ### 1. Custody (unchanged, now written down)
@@ -52,7 +59,8 @@ a rotation without a restart (§3c).
 ### 2. The provider seam
 
 `worker.SecretStore` (loaded by `worker.LoadSecrets(path, opts...)`) keeps its name and file. Each entry has
-exactly one of `value`, `value_file` (a static credential, as before) or `oauth2` (a provider):
+exactly one of `value`, `value_file` (a static credential, as before) or `oauth2` (a provider); Rev 1.3 adds
+`value_vault` and Rev 1.4 `value_spiffe`:
 
 - `Credential(ctx, tenant, ref, endpoint, validFor)` returns a credential that stays valid for at least
   `validFor`. `ErrNoCredential`: no binding for this tenant, reference and exact host.
@@ -241,13 +249,76 @@ form beside the inline value and the file:
 KV v2 only: dynamic secrets and leases, Vault Agent, response wrapping, KV v1 and renewing or revoking the
 Vault token are out of scope; the worker logs in again instead of renewing.
 
+### 3d. SPIFFE JWT-SVIDs (Rev 1.4)
+
+A top-level `spiffe` object configures one Workload API client per worker (go-spiffe v2.8.2):
+
+```json
+{"spiffe": {"endpoint": "unix:///spiffe-workload-api/spire-agent.sock",
+            "spiffe_id": "spiffe://eacp.test/ns/eacp/sa/eacp-worker"},
+ "secrets": [
+   {"tenant_id": "…", "secret_ref": "erp-spiffe", "host": "erp.internal:8443",
+    "value_spiffe": {"audience": "erp-api"}},
+   {"tenant_id": "…", "secret_ref": "erp-spiffe-oauth", "host": "erp.internal:8443",
+    "oauth2": {"token_url": "https://idp.internal/token", "client_id": "eacp-worker",
+               "client_assertion_spiffe": {"audience": "api://AzureADTokenExchange"}}}]}
+```
+
+- **At load** (any failure rejects the whole file; errors never contain a value): `endpoint` is `unix://` with
+  an absolute path and nothing else, or, only when `EACP_ENV` is `development` or `test`, `tcp://` to a
+  loopback IP literal with a port (the Workload API authenticates its caller by process, which a TCP listener
+  cannot do). `spiffe_id` is required: a SPIFFE ID of at most 2048 bytes with a path. `value_spiffe` is a
+  fourth static-credential form (exclusive with `value`, `value_file`, `value_vault` and `oauth2`);
+  `client_assertion_spiffe` a sixth client-authentication form (exclusive with `client_secret`,
+  `client_secret_file`, `client_secret_vault`, `client_assertion_file` and `private_key_jwt`). An audience is
+  1–256 printable ASCII characters without spaces. A `_spiffe` field needs the `spiffe` block. **The worker
+  never contacts the agent at load**, so it starts with the agent down.
+- **The client** (`internal/worker/spiffe.go`): the go-spiffe client is created at the first fetch, and again
+  at the next fetch if creating it failed. A fetch asks for the file's `spiffe_id` as the request's subject
+  and one audience, with a 10 s timeout. Per audience the latest SVID is cached and answers while it outlives
+  the caller's minimum; otherwise there is one fetch per audience at a time, and callers queued behind a fetch
+  that fails get its failure without a fetch of their own. Beyond go-spiffe's own checks (a SPIFFE-ID `sub`,
+  the audience, `exp` against the real clock, the algorithm) the worker requires `sub` to equal `spiffe_id`
+  (a registration mistake never lends it another identity), a token of at most 16 KiB of printable ASCII
+  without spaces, and an `exp` after the fetch started. It never verifies the signature: only the relying
+  party judges it. Fetches are logged with the audience and the class or remaining lifetime only.
+- **Failure classes:** `spiffe_unavailable` (the client cannot be created, transport errors, `Unavailable`,
+  `DeadlineExceeded` and any other gRPC status), `spiffe_denied` (`PermissionDenied`: no registration entry
+  matches the worker), `spiffe_invalid` (no SVID, a parse failure, the wrong `sub`, a bad token shape) and
+  `spiffe_expiring` (a `value_spiffe` SVID with less than 10 s left, e.g. the agent's cached copy while its
+  server is unreachable).
+- **`value_spiffe`**: `Credential(…, validFor)` asks for an SVID living at least `validFor`. A failure makes
+  the binding unavailable with §5's back-off (1 s doubling to 60 s, counted from the end of the failed fetch
+  and grown once however many callers shared it); `Available()` omits it. A fetched SVID that lives at least
+  10 s but not beyond the call is `ErrCredentialTooShort`: kept for shorter calls, no back-off, and an equally
+  long call fails at once until a later fetch returns a longer-lived SVID. `Rejected` (the target answered
+  `unauthorized`) drops the cached SVID so the next call fetches again (the agent may return the same one);
+  the attempt's outcome is never reclassified. `Values()` holds the current SVID until its `exp` and the one it
+  replaced until that one's `exp`.
+- **`client_assertion_spiffe`**: each mint asks for an SVID living at least the token request timeout (10 s)
+  and sends it exactly as §3a sends an assertion (RFC 7523 §2.2, `client_id`, no `Authorization` header). A
+  failure is a failed mint with the `spiffe_*` class (§3's back-off, withheld from claims); an SVID with less
+  than 10 s left is `assertion_expired`. A rejected token also drops the SVID. Tokens are cached, capped at an
+  hour and redacted exactly as before.
+- **The SVID's TTL.** The SPIRE agent hands out a cached SVID until it is at about half its life, so operators
+  give the worker's registration entry a JWT-SVID TTL of at least twice the longest call budget plus
+  `CredentialSkew`; the demo uses 3600 s.
+- **Kubernetes** (ADR-029, the chart): `worker.spiffe` (`enabled` default false, `csiDriver` default
+  `csi.spiffe.io`) adds an inline, read-only `csi` volume to the worker pod alone, mounted at
+  `/spiffe-workload-api`, where the SPIFFE CSI driver places the agent's socket. A `csi` volume is allowed by
+  the `restricted` Pod Security Standard; a hostPath socket would not be. No egress rule is needed.
+
+X509-SVIDs and mTLS to connectors, SPIFFE federation between trust domains, verifying SVIDs in the worker and
+watching the Workload API (the worker fetches on demand) are out of scope.
+
 ### 4. Redaction
 
 `logging.SecretSet` holds the values a logger redacts and may grow after the logger is built
 (`logging.NewWithSet`). `service.Deps` owns one set (`Redaction()`); `RedactSecrets` adds permanent values.
 The worker adds each client secret permanently, each client assertion until its `exp` plus 24 h and each minted
 token until its real expiry plus 24 h, keeping at most 10 000 temporary values (the oldest go first). Rev 1.3
-adds every Vault-held value permanently and each Vault token until its lease end plus 24 h.
+adds every Vault-held value permanently and each Vault token until its lease end plus 24 h. Rev 1.4 adds each
+JWT-SVID received until its `exp` plus 24 h.
 
 ### 5. Failure handling
 
@@ -304,6 +375,21 @@ account (`system:auth-delegator`); its init Job enables Kubernetes auth with rol
 service account `eacp-worker` in namespace `eacp` and audience `vault`, and a NetworkPolicy admits only the
 worker and the Job. The e2e script replaces the merged manifest's `vault` block with Kubernetes auth
 (`deployments/k8s/connector-secrets.vault.json`).
+
+Rev 1.4: `fakeerp.ParseSPIFFEBundle` reads the `jwt-svid` keys (RSA or P-256, with a `kid`) of a SPIFFE
+bundle. With `EACP_FAKEERP_OAUTH_SPIFFE_CLIENT_ID`, `_ISSUER`, `_AUDIENCE`, `_SUBJECT` and `_BUNDLE_FILE`
+(all or none) the token endpoint accepts an RFC 7523 assertion that is a JWT-SVID: RS256 or ES256 by `kid`,
+exactly that `iss` and `sub`, the audience in `aud`. With `EACP_FAKEERP_SPIFFE_AUDIENCE`, `_SUBJECT` and
+`_BUNDLE_FILE` (all or none) the ERP API accepts a JWT-SVID as its Bearer, verified the same way without an
+issuer; its principal is `spiffe:<sub>` and the audit records the SVID's SHA-256 (`svid_sha256`), never the
+SVID. A JWT-SVID is a bearer token: it can be replayed until `exp`, and its audience limits where. On
+Kubernetes only, a DEVELOPMENT-ONLY SPIRE 1.15.3 (`deployments/k8s/dev/spire.yaml`: one server with
+SQLite on an emptyDir, trust domain `eacp.test`, `jwt_issuer` `https://spire.eacp.test`, `k8s_psat` node
+attestation; an agent per node; the SPIFFE CSI driver) issues the worker
+`spiffe://eacp.test/ns/eacp/sa/eacp-worker` (selectors `k8s:ns:eacp`, `k8s:sa:eacp-worker`, JWT-SVID TTL
+3600 s). The e2e script snapshots the bundle into Fake ERP's `fakeerp-federation` ConfigMap and binds tenant
+`…00a8` `fakeerp-spiffe` (audience `fakeerp-api`) and `fakeerp-spiffe-oauth` (client `eacp-worker-spiffe`,
+audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Compose has no SPIRE.
 
 ### 7. Proof
 
@@ -373,6 +459,29 @@ worker and the Job. The e2e script replaces the merged manifest's `vault` block 
   and restoring it lets the purchase succeed; no Vault token (`hvs.`), Vault-held value or issued token in
   responses, logs or a database dump.
 
+- Rev 1.4, `internal/spiffetest`: a fake Workload API over loopback TCP that refuses a call without the
+  `workload.spiffe.io` header (`TestTheFakeAgentRequiresTheHeader`). `internal/worker` (`spiffe_test.go`):
+  `TestSPIFFEBlockLoads` (no contact at load), `TestSPIFFEBlockFailsClosed` (every field and exclusivity
+  rejecting the whole file), `TestTCPEndpointOnlyInDevelopment`; `spiffefetch_test.go`:
+  `TestAnSVIDIsFetchedOnceAndCached` (one fetch under concurrency), `TestAShortRemainingLifeFetchesAgain`,
+  `TestAResponseMustBeTheWorkersSVIDForTheAudience`, `TestQueuedCallersShareAFailedFetch`,
+  `TestEverySVIDIsRedacted`; `spiffevalue_test.go`: `TestAnAgentFailureWithholdsTheBinding` (each class, the
+  back-off and `Available()`), `TestAnSVIDShorterThanTheCallIsTooShort`, `TestAnSVIDAboutToExpireIsNeverSent`,
+  `TestBindingsSharingAnAudienceFetchOnce`, `TestRejectedDropsOnlyTheCurrentSVID`,
+  `TestValuesHoldTheSVIDsUntilTheyExpire`; `spiffeoauth_test.go`: `TestASPIFFEAssertionAuthenticatesTheMint`,
+  `TestEveryMintFetchesAnAssertionOnlyWhenNeeded`, `TestASPIFFEFailureIsAFailedMint`,
+  `TestTheSVIDAssertionIsRedactedAndScrubbed`; PostgreSQL (`spiffe_integration_test.go`):
+  `TestTheWorkerExecutesWithAnSVID`, `TestTheWorkerMintsWithAnSVIDAssertion` (the real HTTP connector and Fake
+  ERP, no SVID or token in the database or logs) and `TestAnAgentRefusalWithholdsWork` (nothing dispatched and
+  the agent not asked again during the back-off).
+- Rev 1.4, `internal/fakeerp` (`spiffe_test.go`): `TestParseSPIFFEBundleKeepsOnlyJWTAuthorities`, the SPIFFE
+  client and the SVID bearer accepting a good SVID and refusing a wrong `kid`, algorithm, signature, issuer,
+  subject, audience or an expired one (`TestTheSPIFFEClientRefusesBadSVIDs`, `TestAnSVIDBearerMustMatch`),
+  `TestSPIFFEOptionsFailClosed`; `cmd/fakeerp` `TestSPIFFESettingsComeTogether`; `test/helm` `TestTheSPIFFESocketIsTheWorkersOwn`
+  and the `csiDriver` refusal; `test/demo` `TestSPIFFEDemo` on minikube against a real SPIRE: purchases as
+  `spiffe:spiffe://eacp.test/ns/eacp/sa/eacp-worker` (with an SVID digest) and `oauth:eacp-worker-spiffe`, and
+  no SVID, JWT naming the worker's SPIFFE ID or issued token in responses, logs or a database dump.
+
 ## Consequences
 
 - A connector moves to just-in-time credentials by changing its secrets-file entry; the registry, policies
@@ -387,7 +496,10 @@ worker and the Job. The e2e script replaces the merged manifest's `vault` block 
 - With Vault (Rev 1.3) a credential is rotated in Vault, not in the worker's file, and needs no restart; on
   Kubernetes the worker's only Vault secret is a projected token the platform rotates. A Vault outage longer
   than the refresh interval withholds the affected bindings' work, exactly like a token endpoint outage.
-- SPIFFE JWT-SVIDs, token exchange (RFC 8693), AWS and GCP STS, Vault dynamic secrets and HSM/KMS-held keys
+- With SPIFFE (Rev 1.4) the worker holds no secret for the binding on any platform SPIRE attests; its
+  identity is its registration entry, and deleting the entry stops new SVIDs once the agent's cached copy
+  ages out (up to half the TTL).
+- Token exchange (RFC 8693), AWS and GCP STS, Vault dynamic secrets and HSM/KMS-held keys
   (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
   availability and drops a rejected value.
 
@@ -431,3 +543,10 @@ worker and the Job. The e2e script replaces the merged manifest's `vault` block 
 | Soft-deleted or destroyed version | Treated as missing: no credential. |
 | Two tokens on Kubernetes | Separate audiences for the ERP's IdP and Vault; neither can replay the other's. |
 | Vault in the demo | Dev mode, in memory, a dev-only root token known to Vault, its init and the demo's CLI only; on compose the AppRole `secret_id` has no TTL or use limit, because the worker reuses it at every login. |
+| The worker's SPIFFE identity | `spiffe_id` is required and must equal the SVID's `sub`; the worker never takes whatever identity the agent offers first (Rev 1.4). |
+| Workload API endpoint | `unix://` with an absolute path; `tcp://` loopback only in development and test (Rev 1.4). |
+| Unexpected Workload API status | `spiffe_unavailable`: withhold and retry, never a permanent refusal (Rev 1.4). |
+| The agent's cached SVID | Used only while it outlives the call; never past its `exp`; less than 10 s left is `spiffe_expiring` (Rev 1.4). |
+| Who validates a JWT-SVID | The relying party only; the worker checks its shape, `sub`, audience and `exp` (Rev 1.4). |
+| SVID bearer replay at Fake ERP | Accepted until `exp` (a JWT-SVID is a bearer token); the audience limits where (Rev 1.4). |
+| SPIRE in the demo | Kubernetes only, one server with SQLite on an emptyDir pinned to the control-plane node; the bundle is a snapshot taken at install (Rev 1.4). |

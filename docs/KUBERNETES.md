@@ -75,6 +75,14 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   audience, and list Vault's address in `worker.connectorEgress`. A Vault running outside the cluster reviews
   the token with a reviewer JWT or the cluster's issuer; one inside it needs `system:auth-delegator` (as
   `deployments/k8s/dev/vault.yaml` does).
+- `worker.spiffe` (ADR-019 Rev 1.4) — `enabled` (default `false`) and `csiDriver` (default `csi.spiffe.io`; an
+  empty or whitespace name is refused at render time). When enabled, the worker pod alone gets an inline,
+  read-only `csi` volume from the SPIFFE CSI driver at `/spiffe-workload-api`, where the SPIRE agent's socket
+  appears as `spire-agent.sock`: the secrets file's `spiffe` block names it as
+  `"endpoint": "unix:///spiffe-workload-api/spire-agent.sock"`. A `csi` volume is allowed by the `restricted`
+  Pod Security Standard (a hostPath socket is not) and needs no egress rule. SPIRE, its agents and the CSI
+  driver are yours to run; register the worker as `k8s:ns:<namespace>` and `k8s:sa:<release>-worker` with a
+  JWT-SVID TTL of at least twice the longest call budget.
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.
@@ -160,17 +168,21 @@ enforced:
 1. starts profile `eacp-e2e` (2 nodes, 3 CPUs and 2 800 MB each, Docker driver) unless it exists;
 2. builds `eacp:dev` and `eacp-agt-pdp:dev` and loads them and the dev images into the cluster (nothing is
    pulled inside it);
-3. creates namespaces `eacp` (restricted), `eacp-deps` and `agents`, the dev Secrets (from
+3. installs a DEVELOPMENT-ONLY SPIRE 1.15.3 in namespace `spire` (`deployments/k8s/dev/spire.yaml`: one server
+   with SQLite on an emptyDir pinned to the control-plane node, trust domain `eacp.test`, an agent per node and
+   the SPIFFE CSI driver), registers the worker as `spiffe://eacp.test/ns/eacp/sa/eacp-worker` (JWT-SVID TTL
+   3600 s) and snapshots the trust bundle for Fake ERP;
+4. creates namespaces `eacp` (restricted), `eacp-deps` and `agents`, the dev Secrets (from
    `deployments/docker/secrets` and `eacpctl pdp-dev-certs`) and the dev dependencies of
    `deployments/k8s/dev` — PostgreSQL, NATS, Fake ERP, Fake MCP, a dev-mode Vault with its init Job
    (Kubernetes auth for the worker) and a busybox stand-in agent, each protecting itself with its own
    NetworkPolicies, all pinned to the control-plane node;
-4. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml --wait`;
-5. opens `minikube service eacp-api --url` (through the Service, so it survives pod restarts) and runs
+5. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml --wait`;
+6. opens `minikube service eacp-api --url` (through the Service, so it survives pod restarts) and runs
    `TestSliceADemo`, `TestKubernetesDisruption` and the credential demos (`TestJITDemo`,
-   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`) from `test/demo` with
+   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`) from `test/demo` with
    `EACP_DEMO_PLATFORM=k8s`;
-6. deletes the profile.
+7. deletes the profile.
 
 ```bash
 bash scripts/k8s-e2e.sh                      # full run, then delete the cluster

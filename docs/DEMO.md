@@ -156,6 +156,16 @@ The agent cannot reach the token endpoint any more than the ERP (`test/security`
 
 `test/security` `TestAgentCannotReachVault`, `TestTheVaultAppRoleIsMountedOnlyIntoTheWorker` and `TestOnlyTheWorkerSharesTheVaultNetwork` check the compose boundary. Vault's data lives in memory: after restarting the `vault` service, run `docker compose up -d --force-recreate vault vault-init`.
 
+### SPIFFE demo (Kubernetes only)
+
+`TestSPIFFEDemo` shows Phase 24e (ADR-019 Rev 1.4) and runs only through `scripts/k8s-e2e.sh`, because it needs a real SPIRE. The script installs a DEVELOPMENT-ONLY SPIRE 1.15.3 (trust domain `eacp.test`, issuer `https://spire.eacp.test`), registers the worker as `spiffe://eacp.test/ns/eacp/sa/eacp-worker` with one-hour JWT-SVIDs, and gives Fake ERP the trust bundle. Fake ERP accepts the worker's JWT-SVID for audience `fakeerp-api` as a Bearer, and has an OAuth client `eacp-worker-spiffe` that authenticates with its JWT-SVID for audience `fakeerp-token`. The worker's secrets bind tenant Cyberdyne's `fakeerp-spiffe` (`value_spiffe`) and `fakeerp-spiffe-oauth` (`client_assertion_spiffe`); the SPIFFE CSI driver mounts the agent's socket into the worker pod alone. There is no secret for either binding.
+
+- **S0.** Bootstrap tenant Cyberdyne and a policy that allows routine ERP work.
+- **S1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `spiffe:spiffe://eacp.test/ns/eacp/sa/eacp-worker` (the ERP audit records the SVID's SHA-256, never the SVID) and `oauth:eacp-worker-spiffe` (a token minted with the SVID as the client assertion).
+- **S2.** No issued token, audited SVID or JWT naming the worker's SPIFFE ID appears in API responses, service logs or a database dump.
+
+A withheld purchase is not shown: the agent caches an SVID for up to half its TTL, so deleting the registration entry would not stop the next purchase in a demo's time. `internal/worker` covers every failure path against a fake Workload API.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

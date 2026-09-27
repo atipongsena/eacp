@@ -239,6 +239,19 @@ Any credential in the worker's secrets file can live in HashiCorp Vault KV v2 in
 
 On Kubernetes, `worker.vaultIdentity.enabled` projects a token with audience `vault` into the worker pod only; elsewhere use `"approle": {"role_id_file": …, "secret_id_file": …}`. The worker starts with Vault down and never contacts it at load. Values are cached for `refresh_seconds` (30–3600) and never served stale: a rotation in Vault takes effect within one interval, or at once after the target rejects the old value, without a restart. A Vault failure holds only the bindings that need it in `QUEUED`, with the usual back-off. Vault tokens and values are redacted from every log and never stored. `DEMO=J scripts/demo.sh` also runs `TestVaultDemo` against a dev-mode Vault with AppRole; `scripts/k8s-e2e.sh` runs it with Kubernetes auth.
 
+## Phase 24e: SPIFFE JWT-SVIDs
+
+Where SPIRE attests the worker, a binding can hold no secret at all (ADR-019 Rev 1.4): the worker asks the SPIRE agent for its JWT-SVID for the audience the binding names, and presents it straight to a SPIFFE-aware target as the Bearer (`value_spiffe`) or as the client assertion of an OAuth mint (`client_assertion_spiffe`):
+
+```json
+{"spiffe": {"endpoint": "unix:///spiffe-workload-api/spire-agent.sock",
+            "spiffe_id": "spiffe://example.org/ns/eacp/sa/eacp-worker"},
+ "secrets": [{"tenant_id": "…", "secret_ref": "erp", "host": "erp.internal:8443",
+              "value_spiffe": {"audience": "erp-api"}}]}
+```
+
+On Kubernetes, `worker.spiffe.enabled` mounts the Workload API socket into the worker pod only, through the SPIFFE CSI driver. The worker starts with the agent down and never contacts it at load; it refuses an SVID for any identity but `spiffe_id`, never sends one that could expire during the call, and withholds only that binding's work with the usual back-off while the agent is unreachable or has no entry for it. Give the worker's registration entry a JWT-SVID TTL of at least twice the longest call budget, since the agent hands out a cached SVID until half its life. SVIDs are redacted from every log and never stored. `scripts/k8s-e2e.sh` installs a development SPIRE and runs `TestSPIFFEDemo`.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start

@@ -3,6 +3,30 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 24e — go-spiffe and SPIRE (2026-09-27)
+
+Checked against the module source (`go mod download github.com/spiffe/go-spiffe/v2@v2.8.2`), the SPIRE v1.15.3 source (`doc/spire_server.md`, `pkg/agent/manager/manager.go`, `pkg/common/rotationutil`), the spiffe-csi v0.2.13 example (`example/config`) and a run on minikube (`scripts/k8s-e2e.sh`). ADR-019 Rev 1.4 relies on these.
+
+### Pinned artifacts
+
+- `github.com/spiffe/go-spiffe/v2` **v2.8.2** (adds go-jose v4 and, on Windows, go-winio); `google.golang.org/grpc` becomes a direct dependency.
+- Images: `ghcr.io/spiffe/spire-server:1.15.3`, `ghcr.io/spiffe/spire-agent:1.15.3`, `ghcr.io/spiffe/spiffe-csi-driver:0.2.13`, `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0` (development only).
+
+### go-spiffe API used
+
+- `workloadapi.New(ctx, workloadapi.WithAddr(addr))` dials without blocking, so creating the client contacts nothing; `Close()` releases it.
+- `(*Client).FetchJWTSVID(ctx, jwtsvid.Params{Audience, Subject})` sends `JWTSVIDRequest{SpiffeId, Audience}` with the `workload.spiffe.io: true` metadata header and parses the first SVID with `jwtsvid.ParseInsecure`: the signature is **not** verified; it requires a SPIFFE-ID `sub`, an `exp` not passed on the **real** clock, the audience in `aud`, an RS/ES/PS 256–512 algorithm and `typ` absent, `JWT` or `JOSE`. `SVID.Marshal()` returns the token.
+- Agent errors are gRPC statuses: `Unavailable` when unreachable, `PermissionDenied` when no registration entry matches the caller.
+- Addresses: `unix:///abs/path` or `tcp://ip:port` on Linux; only `tcp://` or `npipe:` on Windows (the tests' fake agent listens on loopback TCP). `workload.SpiffeWorkloadAPIServer` (`proto/spiffe/workload`) is public, so a test can serve the API.
+
+### SPIRE facts used
+
+- Server: `jwt_issuer` sets `iss` (absent by default), `default_jwt_svid_ttl` defaults to 5m, `jwt_key_type` defaults to the CA key type (`ec-p256`, so ES256). `entry create -jwtSVIDTTL <seconds>` sets one entry's TTL.
+- The agent caches a JWT-SVID per identity and audience and hands the cached one out until it is at about half its lifetime (±10 % jitter); if its server is unreachable it may return an older **unexpired** SVID. A returned SVID can have much less than its TTL left.
+- `bundle show -format spiffe` prints a JWKS whose keys carry `use` `x509-svid` or `jwt-svid`; the JWT authorities have a `kid`.
+- `entry show -spiffeID <id>` prints `Found 0 entries` when none matches (the e2e script creates entries idempotently with it).
+- The SPIFFE CSI driver places the agent's socket in an inline `csi` volume (`csi.spiffe.io`, `Ephemeral` lifecycle), which the `restricted` Pod Security Standard allows.
+
 ## Phase 18 — OTLP/HTTP JSON and the OpenTelemetry GenAI conventions (2026-09-25)
 
 Checked against the OTLP specification (opentelemetry.io/docs/specs/otlp, **1.11.0**) and the GenAI semantic-conventions repository (`open-telemetry/semantic-conventions-genai`, commit `8ffdf568e1b4391a99adb081db16e8102e36918e`, 2026-09-22, status **Development**). `internal/finops/otlp_test.go` and `internal/api/finops_test.go` pin what EACP relies on.
