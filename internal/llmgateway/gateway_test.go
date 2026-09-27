@@ -657,3 +657,21 @@ func TestUnboundedInputsAreRefused(t *testing.T) {
 		x.ledger.settlement(t)
 	}
 }
+
+// A key that cannot be checked (PostgreSQL down) is not a bad key: 503, so
+// the agent's SDK retries, instead of 401, which it treats as final
+// (ADR-031 §5: PostgreSQL down is 503).
+func TestAnAuthenticationOutageIsRetryable(t *testing.T) {
+	x := newHarness(t, anthropicOK, func(o *llmgateway.Options) {
+		o.Auth = func(context.Context, string) (identity.Caller, error) {
+			return identity.Caller{}, errors.New("identity: read credential: connection refused")
+		}
+	})
+	code, h, body := x.post("/v1/messages", messagesBody, anthropicKey())
+	if code != 503 || h.Get("Retry-After") == "" || !strings.Contains(string(body), "eacp: unavailable") {
+		t.Fatalf("%d %v %s", code, h, body)
+	}
+	if n := len(x.ledger.admitted()); n != 0 || len(x.prov.requests()) != 0 {
+		t.Fatalf("admitted %d, provider requests %d", n, len(x.prov.requests()))
+	}
+}

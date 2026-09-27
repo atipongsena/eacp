@@ -10,6 +10,7 @@ package llmgateway
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -163,7 +164,10 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, a api) {
 		if errors.As(err, &ae) {
 			reason = ae.Reason
 		} else if err != nil {
-			reason = "internal"
+			// The key could not be checked (PostgreSQL): retryable, not a bad key.
+			g.o.Log.ErrorContext(ctx, "llm authentication unavailable", "err", err, "route", a.route())
+			g.unavailable(w, a, "unavailable")
+			return
 		}
 		g.o.Log.WarnContext(ctx, "llm authentication failed", "reason", reason, "route", a.route())
 		g.fail(w, a, http.StatusUnauthorized, "unauthenticated", "")
@@ -338,6 +342,9 @@ func (g *Gateway) forward(w http.ResponseWriter, r *http.Request, c *call, epoch
 		g.fail(w, c.api, http.StatusBadGateway, "provider_unreachable", "")
 		return
 	}
+	// A request that cannot be rewound is never resent by the transport
+	// (as the HTTP connector): at most one provider request per call.
+	up.GetBody = nil
 	up.Header.Set("Content-Type", "application/json")
 	for _, h := range append([]string{"Accept", "traceparent", "tracestate"}, c.api.forwarded()...) {
 		if v := r.Header.Get(h); v != "" {
@@ -445,11 +452,27 @@ func (g *Gateway) lost(w http.ResponseWriter, r *http.Request, c *call, upCtx co
 	case errors.Is(upCtx.Err(), context.DeadlineExceeded):
 		g.settle(ctx, c, llm.OutcomeUsageUnknown, status, llm.Usage{})
 		g.fail(w, c.api, http.StatusGatewayTimeout, "provider_timeout", "")
+	case status == 0 && neverSent(err):
+		// The connection never opened: the provider received nothing.
+		c.log.WarnContext(ctx, "llm provider unreachable", "err", err)
+		g.settle(ctx, c, llm.OutcomeProviderError, 0, llm.Usage{})
+		g.fail(w, c.api, http.StatusBadGateway, "provider_unreachable", "")
 	default:
 		c.log.WarnContext(ctx, "llm provider unreachable", "err", err)
 		g.settle(ctx, c, llm.OutcomeUsageUnknown, status, llm.Usage{})
 		g.fail(w, c.api, http.StatusBadGateway, "provider_unreachable", "")
 	}
+}
+
+// neverSent reports an error from before the request could be written: the
+// name did not resolve, the dial failed, or the TLS handshake did.
+func neverSent(err error) bool {
+	var dns *net.DNSError
+	var op *net.OpError
+	var verify *tls.CertificateVerificationError
+	var record tls.RecordHeaderError
+	return errors.As(err, &dns) || errors.As(err, &op) && op.Op == "dial" ||
+		errors.As(err, &verify) || errors.As(err, &record)
 }
 
 // relayError relays a provider's non-2xx answer: nothing was generated, so
@@ -464,6 +487,12 @@ func (g *Gateway) relayError(w http.ResponseWriter, r *http.Request, c *call, up
 	g.settle(r.Context(), c, llm.OutcomeProviderError, resp.StatusCode, llm.Usage{})
 	if tooLarge {
 		g.fail(w, c.api, http.StatusBadGateway, "response_too_large", "")
+		return
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// About the gateway's credential, not the agent's: the body may echo
+		// part of the key, and the agent's key is fine.
+		g.fail(w, c.api, http.StatusBadGateway, "provider_auth_failed", "")
 		return
 	}
 	relayHeaders(w, resp)

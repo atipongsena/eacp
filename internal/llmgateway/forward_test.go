@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -439,7 +440,27 @@ func TestNoRedirectNoProxy(t *testing.T) {
 	if code != 502 || proxyHits.Load() != before {
 		t.Fatalf("%d %s; proxy hits %d -> %d", code, body, before, proxyHits.Load())
 	}
-	wantSettled(t, y.ledger.settlement(t), llm.OutcomeUsageUnknown, 0, llm.Usage{})
+	// The name did not resolve: nothing was sent, so nothing is charged.
+	wantSettled(t, y.ledger.settlement(t), llm.OutcomeProviderError, 0, llm.Usage{})
+}
+
+// A provider that refuses the connection received nothing: the call is a
+// provider error and its reservation is released (ADR-031 §5, as the HTTP
+// connector's connection_refused_before_send).
+func TestAConnectionThatNeverOpenedIsReleased(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	x := newHarness(t, anthropicOK, func(o *llmgateway.Options) { o.Secrets = secretsFor(t, addr) })
+	x.ledger.set(func(l *fakeLedger) { l.model.BaseURL = "http://" + addr })
+	code, _, body := x.post("/v1/messages", messagesBody, anthropicKey())
+	if code != 502 || !strings.Contains(string(body), "eacp: provider_unreachable") {
+		t.Fatalf("%d %s", code, body)
+	}
+	wantSettled(t, x.ledger.settlement(t), llm.OutcomeProviderError, 0, llm.Usage{})
 }
 
 func TestSigningCredentialIsRefused(t *testing.T) {
@@ -530,5 +551,49 @@ func TestNothingSecretIsLogged(t *testing.T) {
 		if _, ok := line[k]; !ok {
 			t.Fatalf("settlement log lacks %s: %v", k, line)
 		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The upstream request cannot be rewound: without GetBody the transport
+// never resends it (an HTTP/2 stream reset after the provider read it), so
+// an admitted call reaches the provider at most once (ADR-031 §5).
+func TestTheUpstreamRequestIsNeverResent(t *testing.T) {
+	var rewindable atomic.Bool
+	x := newHarness(t, anthropicOK, func(o *llmgateway.Options) {
+		o.HTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			rewindable.Store(r.GetBody != nil)
+			return http.DefaultTransport.RoundTrip(r)
+		})}
+	})
+	if code, _, body := x.post("/v1/messages", messagesBody, anthropicKey()); code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	x.ledger.settlement(t)
+	if rewindable.Load() {
+		t.Fatal("the upstream request carries GetBody: the transport may send it twice")
+	}
+}
+
+// A provider that refuses the gateway's credential answers about the
+// gateway's key, not the agent's: its body (which may echo part of the key)
+// is never relayed, and the agent's SDK is not told its own key is bad.
+func TestAProviderAuthFailureIsNotRelayed(t *testing.T) {
+	for _, status := range []int{401, 403} {
+		reply := `{"error":{"message":"Incorrect API key provided: sk-proj-****` + providerKey[len(providerKey)-4:] + `","type":"invalid_request_error"}}`
+		x := newHarness(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, reply)
+		})
+		code, _, body := x.post("/v1/chat/completions", `{"model":"gpt","messages":[]}`, openaiKey())
+		if code != 502 || !strings.Contains(string(body), "eacp: provider_auth_failed") ||
+			strings.Contains(string(body), providerKey[len(providerKey)-4:]) {
+			t.Fatalf("%d: %d %s", status, code, body)
+		}
+		wantSettled(t, x.ledger.settlement(t), llm.OutcomeProviderError, status, llm.Usage{})
 	}
 }

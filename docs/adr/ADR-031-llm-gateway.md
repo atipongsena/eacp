@@ -82,7 +82,7 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
 
 ### 5. The request flow
 
-1. **Authenticate** with `identity.Authenticate`; the key must be an agent key, or the gateway answers 401.
+1. **Authenticate** with `identity.Authenticate`; the key must be an agent key, or the gateway answers 401. A key that cannot be checked (PostgreSQL unavailable) is 503 `unavailable` with `Retry-After`, never 401.
 2. **Parse and validate.** The body must be exactly one JSON object: no duplicate keys, depth ≤ 128, valid UTF-8, and a `model` of 1–256 characters.
    - Anthropic: an integer `max_tokens` ≥ 1.
    - OpenAI: `n` absent or 1; at most one of `max_completion_tokens`/`max_tokens`, an integer ≥ 1; `stream_options`, if present, an object.
@@ -106,7 +106,7 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
    - Credentials: Anthropic `x-api-key`, OpenAI Bearer.
    - For OpenAI, the gateway sets `max_completion_tokens` to the model's cap when the request states none, and forces `stream_options.include_usage = true` on a stream, keeping the agent's other keys.
    - Only `Content-Type`, `Accept`, `anthropic-version`, `anthropic-beta` and W3C trace context are forwarded.
-   - No proxy, no redirects (a 3xx is relayed without `Location` as `provider_error`), the model's timeout, and **at most one provider request per admitted call**. The SDK may retry a 5xx; that is a new call.
+   - No proxy, no redirects (a 3xx is relayed without `Location` as `provider_error`), the model's timeout, and **at most one provider request per admitted call**: the request cannot be rewound (no `GetBody`), so the transport never resends it. The SDK may retry a 5xx; that is a new call.
 7. **Relay** the status, `Content-Type`, request id and body.
    - A JSON body is at most 16 MiB.
    - An SSE stream is relayed and flushed event by event, at most 1 MiB per event.
@@ -115,7 +115,7 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
    - A failed poll is logged and the call continues.
 8. **Settle** in one transaction as `llm_gateway` (`eacp.llm_settle`), even after the client left.
    - `succeeded`: a 2xx with usage. PostgreSQL prices it from the pinned price and commits `min(cost, reservation)`.
-   - `provider_error`: a non-2xx. Released, cost 0.
+   - `provider_error`: a non-2xx, or a connection that never opened (the name did not resolve, the dial or the TLS handshake failed). Released, cost 0. A provider 401 or 403 concerns the gateway's credential: its body, which may echo part of the key, is not relayed; the agent gets 502 `provider_auth_failed`.
    - `usage_unknown`: a 2xx without readable usage, a cut stream, a transport error after sending, or a timeout. The full reservation is committed and the cost is NULL.
    - `killed`: as `usage_unknown`.
    - Known usage also writes `eacp.usage_records` (source `gateway`, `llm_call_id`), so FinOps dashboards, chargeback, soft limits, spend anomalies and release metrics see gateway spend (ADR-025 amendment).
