@@ -322,8 +322,19 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 			return Secret{}, time.Time{}, time.Time{}, 0, class
 		}
 	}
-	if p.assertionFile != "" || signer != nil {
-		assertion, exp, class := p.clientAssertion(p.now(), signer)
+	if p.assertionFile != "" || signer != nil || p.spiffe != nil {
+		var assertion Secret
+		var exp time.Time
+		var class string
+		if p.spiffe != nil {
+			// A JWT-SVID from the Workload API (§3d); it must outlive the request.
+			assertion, exp, class = p.spiffe.svid(ctx, p.spiffeAudience, tokenRequestTimeout)
+			if class == "" && exp.Before(p.now().Add(tokenRequestTimeout)) {
+				class = "assertion_expired"
+			}
+		} else {
+			assertion, exp, class = p.clientAssertion(p.now(), signer)
+		}
 		if class != "" {
 			return Secret{}, time.Time{}, time.Time{}, 0, class
 		}
@@ -414,10 +425,18 @@ func (p *oauthProvider) dropVault() {
 // rejected drops the held token when it is s.
 func (p *oauthProvider) rejected(s Secret) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if s.v != "" && p.token.v == s.v {
-		p.retire()
-		p.token, p.expiry, p.realExpiry = Secret{}, time.Time{}, time.Time{}
+	if s.v == "" || p.token.v != s.v {
+		p.mu.Unlock()
+		return
+	}
+	p.retire()
+	p.token, p.expiry, p.realExpiry = Secret{}, time.Time{}, time.Time{}
+	assertion := p.assertion
+	p.mu.Unlock()
+	if p.spiffe != nil {
+		// The next mint fetches a new assertion. Not under p.mu: the audience
+		// lock may wait on a fetch.
+		p.spiffe.drop(p.spiffeAudience, assertion)
 	}
 }
 
