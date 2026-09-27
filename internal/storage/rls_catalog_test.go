@@ -109,6 +109,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"finops_alerts owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"kill_states owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"kill_tenant_epochs owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"llm_calls owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"mcp_servers owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"outbox_events owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"scheduler_team_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -128,7 +129,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 
 	// SECURITY DEFINER functions run as the owner and so cross tenants. Each
 	// is reviewed: the journal chain append, and claim, count, outbox and
-	// finops-, release- and incident-evaluator hints that return only ids and counts; the caller re-checks everything
+	// finops-, release- and incident-evaluator and LLM-sweeper hints that return only ids and counts; the caller re-checks everything
 	// under RLS (the relay locks and publishes each row in its tenant).
 	reviewedDefiners := []string{
 		"eacp.audit_chain_append()",
@@ -136,6 +137,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.finops_tenants()",
 		"eacp.global_queued_count()",
 		"eacp.incident_tenants()",
+		"eacp.llm_sweep_tenants()",
 		"eacp.mcp_scans_due(jsonb,integer)",
 		"eacp.outbox_pending(text[],integer)",
 		"eacp.outbox_prunable(integer)",
