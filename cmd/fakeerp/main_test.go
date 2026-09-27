@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -155,5 +156,76 @@ func TestKeyClientSettingsComeTogether(t *testing.T) {
 		if _, err := loadKeyClient(env(some)); err == nil {
 			t.Errorf("without %s: accepted", k)
 		}
+	}
+}
+
+// spiffeBundleFile writes a SPIFFE bundle holding one JWT authority.
+func spiffeBundleFile(t *testing.T) string {
+	t.Helper()
+	var jwks struct{ Keys []map[string]any }
+	if err := json.Unmarshal(jwttest.New(t).JWKS(), &jwks); err != nil {
+		t.Fatal(err)
+	}
+	jwks.Keys[0]["use"] = "jwt-svid"
+	raw, _ := json.Marshal(map[string]any{"keys": jwks.Keys})
+	p := filepath.Join(t.TempDir(), "spiffe-bundle.json")
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestSPIFFESettingsComeTogether(t *testing.T) {
+	bundle := spiffeBundleFile(t)
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	without := func(all map[string]string, k string) map[string]string {
+		some := map[string]string{}
+		for k2, v := range all {
+			if k2 != k {
+				some[k2] = v
+			}
+		}
+		return some
+	}
+	client := map[string]string{
+		"EACP_FAKEERP_OAUTH_SPIFFE_CLIENT_ID":   "eacp-worker-spiffe",
+		"EACP_FAKEERP_OAUTH_SPIFFE_ISSUER":      "https://spire.eacp.test",
+		"EACP_FAKEERP_OAUTH_SPIFFE_AUDIENCE":    "fakeerp-token",
+		"EACP_FAKEERP_OAUTH_SPIFFE_SUBJECT":     "spiffe://eacp.test/ns/eacp/sa/eacp-worker",
+		"EACP_FAKEERP_OAUTH_SPIFFE_BUNDLE_FILE": bundle,
+	}
+	if c, err := loadSPIFFEClient(env(map[string]string{})); c != nil || err != nil {
+		t.Fatalf("no client settings = %+v, %v", c, err)
+	}
+	c, err := loadSPIFFEClient(env(client))
+	if err != nil || c.ClientID != "eacp-worker-spiffe" || c.Issuer != "https://spire.eacp.test" ||
+		c.Audience != "fakeerp-token" || c.Subject != "spiffe://eacp.test/ns/eacp/sa/eacp-worker" || len(c.Keys) != 1 {
+		t.Fatalf("client settings = %+v, %v", c, err)
+	}
+	for k := range client {
+		if _, err := loadSPIFFEClient(env(without(client, k))); err == nil {
+			t.Errorf("client without %s: accepted", k)
+		}
+	}
+	bearer := map[string]string{
+		"EACP_FAKEERP_SPIFFE_AUDIENCE":    "fakeerp-api",
+		"EACP_FAKEERP_SPIFFE_SUBJECT":     "spiffe://eacp.test/ns/eacp/sa/eacp-worker",
+		"EACP_FAKEERP_SPIFFE_BUNDLE_FILE": bundle,
+	}
+	if b, err := loadSPIFFEBearer(env(map[string]string{})); b != nil || err != nil {
+		t.Fatalf("no bearer settings = %+v, %v", b, err)
+	}
+	b, err := loadSPIFFEBearer(env(bearer))
+	if err != nil || b.Audience != "fakeerp-api" || b.Subject != "spiffe://eacp.test/ns/eacp/sa/eacp-worker" || len(b.Keys) != 1 {
+		t.Fatalf("bearer settings = %+v, %v", b, err)
+	}
+	for k := range bearer {
+		if _, err := loadSPIFFEBearer(env(without(bearer, k))); err == nil {
+			t.Errorf("bearer without %s: accepted", k)
+		}
+	}
+	bearer["EACP_FAKEERP_SPIFFE_BUNDLE_FILE"] = filepath.Join(t.TempDir(), "missing")
+	if _, err := loadSPIFFEBearer(env(bearer)); err == nil {
+		t.Error("an unreadable bundle was accepted")
 	}
 }

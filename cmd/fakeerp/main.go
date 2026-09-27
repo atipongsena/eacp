@@ -116,6 +116,63 @@ func loadKeyClient(getenv func(string) string) (*fakeerp.KeyClient, error) {
 	return &fakeerp.KeyClient{ClientID: id, Audience: aud, Keys: keys}, nil
 }
 
+// settings reads the variables prefix+names: all of them, or none (nil).
+func settings(getenv func(string) string, prefix string, names ...string) (map[string]string, error) {
+	v := map[string]string{}
+	for _, n := range names {
+		if s := getenv(prefix + n); s != "" {
+			v[n] = s
+		}
+	}
+	if len(v) == 0 {
+		return nil, nil
+	}
+	if len(v) != len(names) {
+		return nil, errors.New("fakeerp: the " + prefix + "* settings go together")
+	}
+	return v, nil
+}
+
+// spiffeKeys reads the JWT authorities of a SPIFFE bundle file.
+func spiffeKeys(path string) ([]fakeerp.PublicKey, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, errors.New("fakeerp: cannot read the SPIFFE bundle file")
+	}
+	return fakeerp.ParseSPIFFEBundle(raw)
+}
+
+// loadSPIFFEClient reads the optional OAuth client that authenticates with
+// JWT-SVID assertions (ADR-019 Rev 1.4): its id, the issuer, audience and
+// subject its SVIDs must name, and SPIRE's bundle. All five come together.
+func loadSPIFFEClient(getenv func(string) string) (*fakeerp.SPIFFEClient, error) {
+	v, err := settings(getenv, "EACP_FAKEERP_OAUTH_SPIFFE_", "CLIENT_ID", "ISSUER", "AUDIENCE", "SUBJECT", "BUNDLE_FILE")
+	if v == nil || err != nil {
+		return nil, err
+	}
+	keys, err := spiffeKeys(v["BUNDLE_FILE"])
+	if err != nil {
+		return nil, err
+	}
+	return &fakeerp.SPIFFEClient{ClientID: v["CLIENT_ID"], Issuer: v["ISSUER"], Audience: v["AUDIENCE"],
+		Subject: v["SUBJECT"], Keys: keys}, nil
+}
+
+// loadSPIFFEBearer reads the optional JWT-SVID bearer of the ERP API: the
+// audience and subject the SVIDs must name, and SPIRE's bundle. All three
+// come together.
+func loadSPIFFEBearer(getenv func(string) string) (*fakeerp.SPIFFEBearer, error) {
+	v, err := settings(getenv, "EACP_FAKEERP_SPIFFE_", "AUDIENCE", "SUBJECT", "BUNDLE_FILE")
+	if v == nil || err != nil {
+		return nil, err
+	}
+	keys, err := spiffeKeys(v["BUNDLE_FILE"])
+	if err != nil {
+		return nil, err
+	}
+	return &fakeerp.SPIFFEBearer{Audience: v["AUDIENCE"], Subject: v["SUBJECT"], Keys: keys}, nil
+}
+
 func main() {
 	service.Main("fakeerp", config.Options{RequireDatabase: false, DefaultHTTPAddr: ":8090"},
 		func(d *service.Deps, mux *http.ServeMux) error {
@@ -127,6 +184,12 @@ func main() {
 				return err
 			}
 			if o.KeyClient, err = loadKeyClient(os.Getenv); err != nil {
+				return err
+			}
+			if o.SPIFFEClient, err = loadSPIFFEClient(os.Getenv); err != nil {
+				return err
+			}
+			if o.SPIFFEBearer, err = loadSPIFFEBearer(os.Getenv); err != nil {
 				return err
 			}
 			h, token, err := loadHandler(os.Getenv("EACP_FAKEERP_TOKEN_FILE"), os.Getenv("EACP_FAKEERP_DATA_FILE"), o)

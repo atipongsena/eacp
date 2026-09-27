@@ -47,6 +47,8 @@ type audit struct {
 	AssertionSHA256 string `json:"assertion_sha256,omitempty"`
 	// A private_key_jwt issuance records the assertion's jti: it is single-use.
 	AssertionJTI string `json:"assertion_jti,omitempty"`
+	// A call authorised by a JWT-SVID records its SHA-256, never the SVID.
+	SVIDSHA256 string `json:"svid_sha256,omitempty"`
 }
 
 type event struct {
@@ -81,6 +83,8 @@ type Options struct {
 	TokenTTL          time.Duration // default 300 s; 1 s to 1 h
 	Federated         *Federated    // optional: a client authenticated by platform-issued assertions
 	KeyClient         *KeyClient    // optional: a client authenticated by assertions it signs itself
+	SPIFFEClient      *SPIFFEClient // optional: a client authenticated by JWT-SVID assertions
+	SPIFFEBearer      *SPIFFEBearer // optional: JWT-SVIDs authorise the ERP API
 }
 
 const defaultTokenTTL = 300 * time.Second
@@ -111,6 +115,20 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	}
 	if o.Federated != nil {
 		if err := o.Federated.valid(); err != nil {
+			return nil, err
+		}
+	}
+	if o.SPIFFEClient != nil {
+		if err := o.SPIFFEClient.valid(); err != nil {
+			return nil, err
+		}
+		if (o.Federated != nil && o.Federated.ClientID == o.SPIFFEClient.ClientID) ||
+			(o.KeyClient != nil && o.KeyClient.ClientID == o.SPIFFEClient.ClientID) {
+			return nil, errors.New("fakeerp: the SPIFFE client needs its own id")
+		}
+	}
+	if o.SPIFFEBearer != nil {
+		if err := o.SPIFFEBearer.valid(); err != nil {
 			return nil, err
 		}
 	}
@@ -149,7 +167,7 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/execute", e.execute)
 	mux.HandleFunc("GET /v1/operations/{key}", e.lookup)
 	mux.HandleFunc("GET /v1/audit", e.listAudit)
-	if o.OAuthClientID != "" || o.Federated != nil || o.KeyClient != nil {
+	if o.OAuthClientID != "" || o.Federated != nil || o.KeyClient != nil || o.SPIFFEClient != nil {
 		mux.HandleFunc("POST /oauth/token", e.issue)
 	}
 	return mux, nil
@@ -207,13 +225,16 @@ func (e *ERP) principal(r *http.Request) string {
 	if t, ok := e.tokens[hex.EncodeToString(sum[:])]; ok && time.Now().Before(t.expires) {
 		return t.principal
 	}
+	if b := e.oauth.SPIFFEBearer; b != nil && b.verify(got, time.Now()) {
+		return "spiffe:" + b.Subject
+	}
 	return "unauthenticated"
 }
 
 // privileged reports whether principal may execute, look up and read the
 // audit: the static credential or an unexpired minted token.
 func privileged(principal string) bool {
-	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:")
+	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:") || strings.HasPrefix(principal, "spiffe:")
 }
 
 // issue is an OAuth 2.0 client-credentials token endpoint (RFC 6749 §4.4).
@@ -248,6 +269,9 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 			if jti, ok := k.verifyAssertion(r.PostForm, now); ok && !e.jtis[jti] {
 				id, authenticated, ev.Audit.AssertionJTI = k.ClientID, true, jti
 			}
+		}
+		if c := e.oauth.SPIFFEClient; c != nil && !authenticated && c.verifyAssertion(r.PostForm, now) {
+			id, authenticated = c.ClientID, true
 		}
 		if authenticated {
 			sum := sha256.Sum256([]byte(r.PostForm.Get("client_assertion")))
@@ -309,8 +333,13 @@ func (e *ERP) begin(r *http.Request, key string) audit {
 	if !validKey(key, tenant) {
 		key = ""
 	}
-	return audit{At: time.Now().UTC(), Principal: e.principal(r), TenantID: tenant,
+	a := audit{At: time.Now().UTC(), Principal: e.principal(r), TenantID: tenant,
 		Method: r.Method, Path: path, OperationKey: key}
+	if strings.HasPrefix(a.Principal, "spiffe:") {
+		sum := sha256.Sum256([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
+		a.SVIDSHA256 = hex.EncodeToString(sum[:])
+	}
+	return a
 }
 
 func (e *ERP) log(ev event) bool {
