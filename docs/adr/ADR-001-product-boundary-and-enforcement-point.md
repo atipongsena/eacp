@@ -42,6 +42,8 @@ The core is split into **ingress adapters** and a **shared core**:
 
 Shared-core types must stay generic (`operation`, `target`, `payload`, `side_effect_class`), with no "tool call" or "chat completion" specific shapes. A future LLM gateway is a new ingress that reuses the core without changing it.
 
+Note (Phase 25a, ADR-030): *outbound* A2A is not an ingress. A governed agent delegating to a remote A2A agent submits an ordinary action on a connector with protocol `a2a`, and the execution worker, which alone holds the credential, sends the message. An A2A ingress (a remote agent calling EACP) remains later work.
+
 ### 3. Enforcement point: credential custody, capability and network (Slice A)
 
 This is the governing principle, and it's an invariant (§103, #11):

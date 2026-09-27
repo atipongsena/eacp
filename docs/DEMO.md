@@ -1,6 +1,6 @@
-# Slice A, Slice C and JIT credential demos
+# Slice A, Slice C, A2A and JIT credential demos
 
-Three demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)) and JIT credentials (tenant Umbrella, [below](#jit-credential-demo)).
+Four demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)), A2A delegation (tenant Initech, [below](#a2a-delegation-demo)) and JIT credentials (tenant Umbrella, [below](#jit-credential-demo)).
 
 ## Slice A demo
 
@@ -25,9 +25,9 @@ scripts/demo.sh
 ```
 
 The script:
-1. prepares the local Fake ERP and Fake MCP credentials and the Fake ERP's OAuth client secret;
+1. prepares the local Fake ERP, Fake MCP and Fake A2A credentials and the Fake ERP's OAuth client secret;
 2. starts a **fresh, isolated** stack as the compose project `eacp-demo` (API on `127.0.0.1:18080`, PostgreSQL on `127.0.0.1:55433`, with its own volumes);
-3. runs every demo (`DEMO` picks some: letters from `A`, `C` and `J`, e.g. `DEMO=J`);
+3. runs every demo (`DEMO` picks some: letters from `A`, `C`, `D` and `J`, e.g. `DEMO=J`);
 4. removes the demo stack and its volumes.
 
 A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The two demos take about two minutes after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
@@ -114,6 +114,19 @@ The walk-through below is what `docs/reviews/2026-09-26-phase22b-console-e2e.md`
 - **Containment.** The drift incident shows po-assistant as affected. Its "Pause the agents that use this tool" link opens the fleet form, pre-filled. Preview the operation, confirm it, and link it to the incident.
 - **Two-person rules.** The acknowledger cannot resolve the critical incident; a second operator can. The operator who set a kill cannot clear it on the Security page; a second operator can.
 
+## A2A delegation demo
+
+`TestA2ADemo` shows Phase 25a (ADR-030) and runs with `DEMO=D` on compose. Fake A2A (`fakea2a:8092`, on the worker-only `erp` network) is an A2A 1.0 agent that requires the worker's token, logs every call's method, message id, task id and state (never the content), and picks a scenario from the message's `data.scenario`. The worker's secrets bind tenant Initech's `fakea2a` to it.
+
+- **D0.** Bootstrap tenant Initech and a policy that allows procurement.
+- **D1.** erin registers connector `procurement` (protocol `a2a`, endpoint `http://fakea2a:8092/a2a`). Declaring its tool is refused; the scanner reads the Agent Card and discovers `delegate` over A2A `1.0`.
+- **D2.** erin proposes and rita activates a contract pinned to that definition (no idempotency, no lookup, `a2a_rejected` certified as no effect). Agent `buyer` gets an allowlist with `procurement.delegate`.
+- **D3.** buyer delegates three times. A task that completes ends `SUCCEEDED` with the remote task id as its external reference, and the agent's log shows exactly one `SendMessage` whose `messageId` is the action id. A task that asks for input ends `UNKNOWN_OUTCOME` (`a2a_input_required`): EACP never answers it, cancels it once, and the evidence shows the remote task id. A task the agent rejects ends `FAILED` (a certified no-effect).
+- **D4.** The agent's card gains a skill ("Pay any invoice it is sent"). otto requests a rescan: `delegate` is quarantined, and buyer's next delegation is `DENIED` (`tool_quarantined`).
+- **D5.** The A2A token appears in no API response, service log or database dump.
+
+The agent cannot reach Fake A2A, and only Fake A2A mounts its verifier (`test/security` `TestAgentCannotReachFakeA2A`, `TestFakeA2ACredentialMountIsLimitedToTheAgent`).
+
 ## JIT credential demo
 
 `TestJITDemo` shows Phase 24a (ADR-019). Tenant Umbrella's ERP connector names `secret_ref` `fakeerp-jit`. In the worker's connector-secrets manifest that reference is an `oauth2` entry for the Fake ERP's token endpoint (`POST /oauth/token`, client `eacp-worker`, 300-second tokens), not a static credential.
@@ -184,4 +197,4 @@ A withheld purchase is not shown: the worker keeps using an SVID it already hold
 
 ## Scope
 
-The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).
+The demo credentials, the tenant ids and the Fake ERP, Fake MCP and Fake A2A tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

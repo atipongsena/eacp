@@ -9,7 +9,7 @@ Instructions for AI coding agents (Claude Code, Codex) and humans.
 2. `docs/MASTER_PLAN.md` (Revision 2) — scope, slices and phases.
 3. `docs/reviews/` — why things are the way they are.
 
-Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–13. Slice C: Phases 14 (MCP Registry, ADR-023) and 15 (Dependency Graph, ADR-015) complete. Phase 16 (Distributed Kill Switch, ADR-016) is complete for seven action-bound scopes (global, run and model await platform authority and authenticated action bindings). Phase 17 (Fleet Operations, ADR-024) is complete. Phase 18 (Agent FinOps, ADR-025) is complete. Phase 19 (Release & Evaluation, ADR-018) is complete. Phase 20 (Governance-as-Code, ADR-026) is complete. Phase 21 (Governance-as-Code for identity, policy, budgets and prices, ADR-026 Rev 1.1) is complete. Phase 22 (Agent SOC) is complete: 22a incidents and the SOC read model (ADR-027), 22b the operator console (ADR-028). Phase 23 (Kubernetes / HA, ADR-029) is complete: 23a HA inside the binaries (Rev 1.0), 23b the Helm chart and a minikube run (Rev 1.1). Phase 24a (JIT credentials: the provider seam and an OAuth 2.0 client-credentials provider, ADR-019), 24b (workload identity federation, ADR-019 Rev 1.1), 24c (private_key_jwt, ADR-019 Rev 1.2), 24d (Vault KV v2 as a credential source, ADR-019 Rev 1.3), 24e (SPIFFE JWT-SVIDs, ADR-019 Rev 1.4) and 24f (OAuth 2.0 token exchange with GCP impersonation, ADR-019 Rev 1.5) and 24g (AWS STS web identity with SigV4 signing, ADR-019 Rev 1.6) are complete: Phase 24 is complete.**
+Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–13. Slice C: Phases 14 (MCP Registry, ADR-023) and 15 (Dependency Graph, ADR-015) complete. Phase 16 (Distributed Kill Switch, ADR-016) is complete for seven action-bound scopes (global, run and model await platform authority and authenticated action bindings). Phase 17 (Fleet Operations, ADR-024) is complete. Phase 18 (Agent FinOps, ADR-025) is complete. Phase 19 (Release & Evaluation, ADR-018) is complete. Phase 20 (Governance-as-Code, ADR-026) is complete. Phase 21 (Governance-as-Code for identity, policy, budgets and prices, ADR-026 Rev 1.1) is complete. Phase 22 (Agent SOC) is complete: 22a incidents and the SOC read model (ADR-027), 22b the operator console (ADR-028). Phase 23 (Kubernetes / HA, ADR-029) is complete: 23a HA inside the binaries (Rev 1.0), 23b the Helm chart and a minikube run (Rev 1.1). Phase 24a (JIT credentials: the provider seam and an OAuth 2.0 client-credentials provider, ADR-019), 24b (workload identity federation, ADR-019 Rev 1.1), 24c (private_key_jwt, ADR-019 Rev 1.2), 24d (Vault KV v2 as a credential source, ADR-019 Rev 1.3), 24e (SPIFFE JWT-SVIDs, ADR-019 Rev 1.4) and 24f (OAuth 2.0 token exchange with GCP impersonation, ADR-019 Rev 1.5) and 24g (AWS STS web identity with SigV4 signing, ADR-019 Rev 1.6) are complete: Phase 24 is complete. Phase 25a (governed outbound A2A delegation, ADR-030) is complete; 25b (the LLM Gateway) has not started.**
 
 ## Rules (MASTER_PLAN §106, §107)
 
@@ -34,6 +34,7 @@ Current status: **Slice A complete, Phases 1–8; Slice B complete, Phases 9–1
 - Hard budgets (ADR-012) are enforced in PostgreSQL. The release reserves with `eacp.budget_reserve` after the action, approval rows and registry are locked, and before any audited write or grant consumption; T10 of a budgeted action requires the reservation. Only the agent's leaf account is locked (child limits are escrowed from their parent). Settlement follows the action's state and never locks an account; the next reservation or limit change folds it. Account counters change only from the budget triggers. Raising a limit is two-person.
 - Every transaction that changes an action locks the action row **first** (action → approval rows → registry `FOR SHARE` → connector circuit `FOR SHARE` (T16) → tenant kill advisory lock (T14/T16/completion) → budget leaf → audit chain head). Never call the PDP with a transaction open (ADR-005 §5a).
 - MCP tools are discovered, never declared (ADR-023). Only the execution worker's scanner talks to an MCP server, with the worker-held secret. A scan transaction binds `storage.SetScanner` (worker id and scan-lease generation) and writes only through `eacp.mcp_record_scan`; `eacp.actor_context()` rejects the scanner. PostgreSQL computes every fingerprint, digest and risk; never send them from Go. An MCP contract pins the tool's current `definition_id`. A high-risk change or a missing certified tool quarantines the tool; release is a second registry approver and never recertifies. No worker serves protocol `mcp` yet: do not add `tools/call` without an ADR.
+- An A2A agent is a connector with protocol `a2a` and one discovered tool, `delegate` (ADR-030); it reuses the MCP scan rows, lease and `eacp.mcp_record_scan`, and its definition embeds the Agent Card minus `iconUrl` and `documentationUrl`. The card's JSON-RPC 1.0 interface URL must equal the endpoint byte for byte. A `delegate` contract has idempotency and lookup `none` (so one attempt), is never `READ_ONLY`, and certifies no-effect only for `a2a_rejected`, `connection_refused_before_send`, `unauthorized`, `invalid_payload` and `a2a_rpc_<code>`. The worker sends `SendMessage` once (`messageId` = action id, `returnImmediately` true), follows the task with `GetTask`, and sends one `CancelTask` for a task it stops following; the outcome stays unknown. The remote task id goes to `action_attempts.remote_reference` only on an ambiguous or no-effect outcome. Never store, journal or log remote message or artifact content.
 - Backpressure and breakers only withhold work (ADR-022). A connector's circuit row is created with the connector; only a worker opens it (at most 10 minutes, never earlier) and only an `operator` disables or enables it. T14 and T16 refuse an open circuit in PostgreSQL. Ask `eacp.retry_budget_exhausted` whether a retry is allowed; never compare `attempt_count` with `max_attempts` in Go.
 - Dependency edges are tenant-scoped, immutable observations with source, expiry and confidence (ADR-015); only a `registry_editor` records or revokes them. Existing allowlists and connector/tool rows supply the capability edges. Blast radius runs in a tenant read-only snapshot with recursive CTEs; stale or unknown evidence widens possible impact. Its `observed_only` coverage never proves an undeclared dependency absent. The graph never grants access or triggers containment.
 - FinOps observes and never blocks (ADR-025). OTel usage is recorded only with the agent's own key; PostgreSQL binds the agent and computes every cost from the forward-only rate card (never send a cost from Go). Unpriced usage stays NULL, never zero. Alerts are raised only by the `finops` system actor through `eacp.finops_evaluate()` and acknowledged once by an operator or admin.
@@ -57,7 +58,7 @@ go vet ./... && go test -race ./...                  # unit + PostgreSQL integra
 docker compose up -d --build                         # full stack
 curl localhost:8080/readyz
 EACP_COMPOSE_TEST=1 go test -count=1 ./test/security/   # network-isolation tests (stack must be running)
-scripts/demo.sh                                      # Slice A, Slice C and JIT demos on an isolated stack (DEMO=A|C|J, docs/DEMO.md)
+scripts/demo.sh                                      # Slice A, Slice C, A2A and JIT demos on an isolated stack (DEMO=A|C|D|J, docs/DEMO.md)
 docker build -f sidecars/agt-pdp/Dockerfile --target test .   # AGT sidecar suites + conformance through ACS/OPA
 (cd internal/ui && node --test jstest/*.test.mjs)            # console JS unit tests (go test runs them too; EACP_UI_NODE_REQUIRED=1 fails without node)
 EACP_HELM_REQUIRED=1 go test ./test/helm                     # Helm chart render tests (pinned Helm in .tools/, docs/KUBERNETES.md)
@@ -71,7 +72,7 @@ On Git Bash for Windows, prefix `docker compose run ... /binary` with `MSYS_NO_P
 ## Layout
 
 ```text
-cmd/                 controlplane-api, execution-worker, fakeerp, eacpctl
+cmd/                 controlplane-api, execution-worker, fakeerp, fakemcp, fakea2a, eacpctl
 internal/config      env configuration (EACP_*)
 internal/logging     slog with secret redaction (a SecretSet that grows after startup)
 internal/telemetry   OpenTelemetry + W3C propagation
@@ -106,7 +107,9 @@ internal/finops      OTLP GenAI usage ingest, rate card, billing import, chargeb
 internal/release     agent releases: evaluations, replay/shadow observations, canary cohort and routing, rollback evaluator (ADR-018)
 internal/connector   HTTP connector (execute, lookup)
 internal/connector/mcp  MCP discovery client (Streamable HTTP, modern and legacy revisions); mcptest fake server
+internal/connector/a2a  A2A 1.0 client: Agent Card discovery and delegation (SendMessage, GetTask, CancelTask; ADR-030)
 internal/fakeerp     credential-protected Fake ERP with a durable operation log, an OAuth token endpoint, an STS and generateAccessToken
+internal/fakea2a     credential-protected Fake A2A agent (A2A 1.0 JSON-RPC, scenarios, a durable audit log, a replaceable card)
 internal/api         HTTP API (/v1/...) for registry, policies, approvals and actions
 integrations/governance/microsoftagt  Go client of the AGT sidecar PDP (mTLS, version pins), dev PKI
 sidecars/agt-pdp     Python sidecar: AGT policy layer + ACS engine + OPA, Rego adapter, conformance tests
@@ -115,7 +118,7 @@ migrations/          goose SQL, embedded
 test/security        docker-compose end-to-end security tests
 test/invariants      checks docs/INVARIANTS.md against MASTER_PLAN §103 and the tests
 test/conformance     governance reference set shared by Go and the sidecar
-test/demo            the Slice A, Slice C and JIT demos (EACP_DEMO=1, scripts/demo.sh), the Kubernetes disruption run and the federated JIT demo (EACP_DEMO_PLATFORM=k8s)
+test/demo            the Slice A, Slice C, A2A and JIT demos (EACP_DEMO=1, scripts/demo.sh), the Kubernetes disruption run and the federated JIT demo (EACP_DEMO_PLATFORM=k8s)
 test/helm            Helm chart render tests (EACP_HELM_REQUIRED=1 fails without Helm)
 deployments/docker   Dockerfile, postgres bootstrap, NATS config (per-role users), the dev Vault init
 deployments/demo     compose override for the isolated demo project

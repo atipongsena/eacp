@@ -280,6 +280,16 @@ AWS issues no Bearer tokens, so an `aws` binding (ADR-019 Rev 1.6) assumes an IA
 
 The STS endpoint defaults to the regional one; keys are requested for at most an hour and used for at most an hour. The HTTP connector signs execute and lookup with the pinned `aws-sdk-go-v2` signer after every other header is set. The secret key never leaves the worker and the session token rides only on signed calls to the bound host; both are redacted from every log and never stored, while the access key id is logged so it can be matched in CloudTrail. MCP servers are not signed. `scripts/k8s-e2e.sh` runs `TestAWSDemo` against Fake ERP's AWS STS. This completes Phase 24.
 
+## Phase 25a: governed A2A delegation
+
+An agent can hand work to a remote agent that speaks [A2A 1.0](https://a2a-protocol.org) without holding its credential or reaching it ([ADR-030](docs/adr/ADR-030-a2a-delegation.md)). Register the remote agent as a connector whose endpoint is its JSON-RPC interface URL:
+
+```bash
+eacpctl connector register --name procurement --protocol a2a --endpoint https://agents.example.com/a2a --secret-ref procurement-agent
+```
+
+The worker's scanner reads the Agent Card (`/.well-known/agent-card.json`) with the worker-held credential and discovers one tool, `delegate`, certified over the whole card: a new skill or any other change except the icon and documentation URLs quarantines it. A `delegate` contract has no idempotency and no lookup, so each delegation is sent once. The worker sends `SendMessage` (the action id is the `messageId`), follows the task with `GetTask`, and cancels a task it stops following (the call ran out of time, was killed, or the remote agent asked for input). Such an outcome is unknown and goes to a human, with the remote task id in the action's evidence. Only ids, states and digests are kept, never the remote agent's output. `DEMO=D scripts/demo.sh` runs the A2A demo.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start
@@ -292,7 +302,7 @@ curl localhost:8080/readyz
 
 The stack's governance decisions come from the AGT sidecar (`agt-pdp`). To use the in-process local provider instead, set `EACP_GOVERNANCE_PROVIDER=local` on `controlplane-api`.
 
-The preparation command copies the existing local-development ERP and MCP tokens into Git-ignored files for the Fake ERP and Fake MCP secret mounts. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
+The preparation command copies the existing local-development ERP, MCP and A2A tokens into Git-ignored files for the Fake ERP, Fake MCP and Fake A2A secret mounts. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
 
 Bootstrap a tenant (each admin generates their own key; only the hash is registered):
 

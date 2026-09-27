@@ -3,6 +3,28 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 25a — A2A 1.0 and the a2a-go reference implementation (2026-09-27)
+
+Checked against the module source (`go mod download`) of `github.com/a2aproject/a2a-go/v2` **v2.6.0** (`a2a/core.go`, `a2a/agent.go`, `a2a/errors.go`, `a2a/svcparams.go`, `a2asrv/jsonrpc.go`, `a2asrv/handler.go`, `a2asrv/agentcard.go`, `internal/taskexec`) and by running its server in `internal/connector/a2a/interop_test.go`. ADR-030 relies on these.
+
+### Pinned module
+
+- `github.com/a2aproject/a2a-go/v2` **v2.6.0**. Test code imports it (interop only); no EACP binary links it.
+
+### Protocol facts used
+
+- **Card.** Served at `/.well-known/agent-card.json` (`a2asrv.WellKnownAgentCardPath`). `supportedInterfaces` lists `{url, protocolBinding, protocolVersion}`; the JSON-RPC binding is `JSONRPC` and the version `1.0`. Skills are `{id, name, description, tags, examples, …}`.
+- **JSON-RPC.** JSON-RPC 2.0 over HTTP POST, one method per request: `SendMessage`, `GetTask`, `CancelTask` (also `SendStreamingMessage`, `SubscribeToTask`, `ListTasks`, push-notification methods and `GetExtendedAgentCard`, unused). The client sends `A2A-Version: 1.0`.
+- **Results.** `SendMessage` returns `{"task": …}` or `{"message": …}`; `GetTask` and `CancelTask` return the Task itself. An error is HTTP 200 with `error {code, message}`: `-32001` TaskNotFound, `-32002` TaskNotCancelable, `-32601` MethodNotFound, `-32009` VersionNotSupported.
+- **Tasks.** `{id, contextId, status {state, message, timestamp}, artifacts, history, metadata}`. States are `TASK_STATE_SUBMITTED`, `_WORKING`, `_COMPLETED`, `_FAILED`, `_CANCELED`, `_REJECTED`, `_INPUT_REQUIRED`, `_AUTH_REQUIRED`. Messages have `messageId`, `role` (`ROLE_USER`, `ROLE_AGENT`) and flattened parts (`{"text": …}` or `{"data": …, "mediaType": …}`).
+- **Blocking.** Without `configuration.returnImmediately`, the server holds a non-streaming `SendMessage` reply until execution ends, interrupting early only on `AUTH_REQUIRED`. With it true, the reply carries the first task event. EACP sets it (interop finding).
+- **No deduplication.** The server does not deduplicate by `messageId` (a TODO in `internal/taskexec/local_manager.go`: "handle idempotency once spec establishes the key"), and `ListTasks` filters only by context, state and status time: a task whose reply was lost cannot be found by message id.
+
+### Server API used (interop tests)
+
+- `a2asrv.NewHandler(executor)`, `a2asrv.NewJSONRPCHandler(handler)`, `a2asrv.NewStaticAgentCardHandler(card)`.
+- Events: `a2a.NewSubmittedTask`, `a2a.NewStatusUpdateEvent`, `a2a.NewArtifactEvent`; interfaces with `a2a.NewAgentInterface(url, a2a.TransportProtocolJSONRPC)`.
+
 ## Phase 24g — AWS STS web identity and SigV4 (2026-09-27)
 
 Checked against the module source (`go mod download`) of `github.com/aws/aws-sdk-go-v2/service/sts` **v1.51.1** (`serializers.go`, `deserializers.go`, `endpoints.go`) and `github.com/aws/aws-sdk-go-v2` **v1.47.1** (`aws/signer/v4`, `aws/credentials.go`). ADR-019 Rev 1.6 relies on these.

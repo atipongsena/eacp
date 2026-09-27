@@ -3780,6 +3780,8 @@ authority stays governed
 
 execution remains observable
 
+**Delivered (Phase 25a, 2026-09-27, ADR-030):** outbound A2A 1.0 delegation as a connector. A remote agent is a connector with protocol `a2a` whose one tool, `delegate`, is discovered from its Agent Card and certified over the whole card; a delegation is an ordinary action sent at most once by the execution worker, followed with `GetTask`, cancelled when EACP stops following it, and settled by a human when its outcome is unknown. Inbound A2A and the LLM Gateway (25b) remain.
+
 LLM Gateway (optional): ingress ใหม่ที่ใช้ shared core เดิม (§3.1)
 
 ```text

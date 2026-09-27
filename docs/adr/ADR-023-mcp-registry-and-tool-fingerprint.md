@@ -1,7 +1,7 @@
 # ADR-023: MCP registry, tool fingerprint and certification
 
 Status: Accepted (Rev 1.0, 2026-09-24). Scope: Slice C Phase 14 (MASTER_PLAN §31, §33, §34, §67, §88).
-Related: ADR-001 (only workers reach connectors and hold their secrets), ADR-003 §4 (connectors, tools, contracts, fingerprint), ADR-004 (T10/T16 re-check the capability), ADR-022 (connector circuits).
+Related: ADR-001 (only workers reach connectors and hold their secrets), ADR-003 §4 (connectors, tools, contracts, fingerprint), ADR-004 (T10/T16 re-check the capability), ADR-022 (connector circuits), ADR-030 (A2A agents reuse this machinery).
 
 ## Context
 
@@ -17,6 +17,8 @@ Before Phase 14, every connector spoke EACP's HTTP connector protocol, tools wer
 - Each MCP connector gets exactly one `eacp.mcp_servers` row, created with it, which holds its scan schedule, the operator's rescan request and the scan lease.
 - **Tools of an MCP connector are discovered, never declared.** A `registry_editor` cannot insert a tool on an MCP connector, and the scanner cannot insert a tool on any other connector.
 - An MCP tool keeps the server's exact name in `remote_name`. Its EACP name (used in `connector.tool` references) equals `remote_name` when that is already a valid tool slug. Otherwise it is derived: lowercase, runs of other characters replaced by `_`, cut to 54 characters, followed by `-` and the first 8 hex digits of the SHA-256 of `remote_name`. The database derives it, so every scanner derives the same name.
+
+**Discovered protocols (Phase 25a, ADR-030).** `a2a` connectors are discovered the same way: they get an `eacp.mcp_servers` row, the same scan lease and `eacp.mcp_record_scan`, and one discovered tool, `delegate`, whose definition embeds the remote agent's Agent Card. The scanner picks a discoverer by protocol; §3–§7 (fingerprint, risk, certification, quarantine) apply unchanged. The table names still say `mcp`.
 
 **Out of scope for Phase 14: calling MCP tools (`tools/call`).** No worker serves protocol `mcp` yet, so the claim hint never offers an action on an MCP tool, and such an action expires unclaimed (fail safe). Execution needs the MCP connector contract (ADR-013) and a pre-dispatch definition check; it is a later phase. The stdio transport, `subscriptions/listen` and OAuth authorization flows are out of scope as well: EACP scans remote servers with a worker-held bearer token.
 
