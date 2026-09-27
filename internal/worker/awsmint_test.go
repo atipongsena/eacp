@@ -195,10 +195,12 @@ func TestEveryInvalidSTSReplyIsRefused(t *testing.T) {
 
 func TestAWSKeysAreUsedForAtMostAnHour(t *testing.T) {
 	f := newFakeSTS(t)
-	f.set(func(int) (int, string) {
-		return 200, stsReply(awsKeyID, "long-"+awsCanary, awsSession, time.Now().Add(12*time.Hour).UTC().Format(time.RFC3339))
-	})
 	c := &vclock{t: time.Now()}
+	// The longest role session, measured from the worker's clock: wall time
+	// could cross a second boundary and land past the 12-hour bound.
+	f.set(func(int) (int, string) {
+		return 200, stsReply(awsKeyID, "long-"+awsCanary, awsSession, c.now().Add(12*time.Hour).UTC().Format(time.RFC3339))
+	})
 	s := awsStore(t, f, c, "", fileSubjectOf(awsSubject(t)))
 	if _, err := s.Credential(context.Background(), awsTenant, "erp", awsEndpoint, time.Minute); err != nil {
 		t.Fatal(err)
