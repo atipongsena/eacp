@@ -229,3 +229,65 @@ func TestSPIFFESettingsComeTogether(t *testing.T) {
 		t.Error("an unreadable bundle was accepted")
 	}
 }
+
+func TestExchangeSettingsComeTogether(t *testing.T) {
+	jwks := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(jwks, jwttest.New(t).JWKS(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := spiffeBundleFile(t)
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	k8s := map[string]string{
+		"EACP_FAKEERP_STS_K8S_ISSUER":    "https://kubernetes.default.svc.cluster.local",
+		"EACP_FAKEERP_STS_K8S_AUDIENCE":  "fakeerp",
+		"EACP_FAKEERP_STS_K8S_SUBJECT":   "system:serviceaccount:eacp:eacp-worker",
+		"EACP_FAKEERP_STS_K8S_JWKS_FILE": jwks,
+	}
+	spiffe := map[string]string{
+		"EACP_FAKEERP_STS_SPIFFE_ISSUER":      "https://spire.eacp.test",
+		"EACP_FAKEERP_STS_SPIFFE_AUDIENCE":    "fakeerp-sts",
+		"EACP_FAKEERP_STS_SPIFFE_SUBJECT":     "spiffe://eacp.test/ns/eacp/sa/eacp-worker",
+		"EACP_FAKEERP_STS_SPIFFE_BUNDLE_FILE": bundle,
+	}
+	all := map[string]string{"EACP_FAKEERP_STS_AUDIENCE": "fakeerp-sts",
+		"EACP_FAKEERP_IMPERSONATE_ACCOUNTS": "eacp-erp@eacp-demo.iam.gserviceaccount.com,other@p.iam.gserviceaccount.com"}
+	for _, m := range []map[string]string{k8s, spiffe} {
+		for k, v := range m {
+			all[k] = v
+		}
+	}
+	if x, i, err := loadExchange(env(map[string]string{})); x != nil || i != nil || err != nil {
+		t.Fatalf("no settings = %+v %+v, %v", x, i, err)
+	}
+	x, i, err := loadExchange(env(all))
+	if err != nil || x.Audience != "fakeerp-sts" || len(x.Subjects) != 2 || len(i.Accounts) != 2 {
+		t.Fatalf("settings = %+v %+v, %v", x, i, err)
+	}
+	if x.Subjects[0].Subject != "system:serviceaccount:eacp:eacp-worker" || x.Subjects[0].Audience != "fakeerp" ||
+		x.Subjects[1].Subject != "spiffe://eacp.test/ns/eacp/sa/eacp-worker" || len(x.Subjects[1].Keys) != 1 {
+		t.Fatalf("subjects = %+v", x.Subjects)
+	}
+	for k := range all {
+		some := map[string]string{}
+		for k2, v := range all {
+			if k2 != k {
+				some[k2] = v
+			}
+		}
+		_, _, err := loadExchange(env(some))
+		if k == "EACP_FAKEERP_IMPERSONATE_ACCOUNTS" {
+			if err != nil {
+				t.Errorf("an exchange without impersonation: %v", err)
+			}
+		} else if err == nil && k != "" {
+			// Dropping one subject group entirely is fine; dropping one of its settings is not.
+			t.Errorf("without %s: accepted", k)
+		}
+	}
+	if _, _, err := loadExchange(env(map[string]string{"EACP_FAKEERP_IMPERSONATE_ACCOUNTS": "a@b.c"})); err == nil {
+		t.Error("impersonation without an exchange was accepted")
+	}
+	if _, _, err := loadExchange(env(map[string]string{"EACP_FAKEERP_STS_AUDIENCE": "a"})); err == nil {
+		t.Error("an exchange without a subject was accepted")
+	}
+}

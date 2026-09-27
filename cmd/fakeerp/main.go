@@ -173,6 +173,56 @@ func loadSPIFFEBearer(getenv func(string) string) (*fakeerp.SPIFFEBearer, error)
 	return &fakeerp.SPIFFEBearer{Audience: v["AUDIENCE"], Subject: v["SUBJECT"], Keys: keys}, nil
 }
 
+// loadExchange reads the optional STS (ADR-019 Rev 1.5): the audience a
+// token exchange must name and its trusted subjects, a Kubernetes
+// service-account token (EACP_FAKEERP_STS_K8S_*: issuer, audience, subject,
+// JWKS file) and a JWT-SVID (EACP_FAKEERP_STS_SPIFFE_*: issuer, audience,
+// subject, SPIRE's bundle), each group all or none; and the service
+// accounts exchanged tokens may impersonate (a comma-separated list).
+func loadExchange(getenv func(string) string) (*fakeerp.TokenExchange, *fakeerp.Impersonation, error) {
+	var imp *fakeerp.Impersonation
+	if v := getenv("EACP_FAKEERP_IMPERSONATE_ACCOUNTS"); v != "" {
+		imp = &fakeerp.Impersonation{Accounts: strings.Split(v, ",")}
+	}
+	var subjects []fakeerp.ExchangeSubject
+	k8s, err := settings(getenv, "EACP_FAKEERP_STS_K8S_", "ISSUER", "AUDIENCE", "SUBJECT", "JWKS_FILE")
+	if err != nil {
+		return nil, nil, err
+	}
+	if k8s != nil {
+		raw, err := os.ReadFile(k8s["JWKS_FILE"])
+		if err != nil {
+			return nil, nil, errors.New("fakeerp: cannot read the STS subject's JWKS file")
+		}
+		keys, err := fakeerp.ParseKeySet(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		subjects = append(subjects, fakeerp.ExchangeSubject{Issuer: k8s["ISSUER"], Audience: k8s["AUDIENCE"],
+			Subject: k8s["SUBJECT"], Keys: keys})
+	}
+	svid, err := settings(getenv, "EACP_FAKEERP_STS_SPIFFE_", "ISSUER", "AUDIENCE", "SUBJECT", "BUNDLE_FILE")
+	if err != nil {
+		return nil, nil, err
+	}
+	if svid != nil {
+		keys, err := spiffeKeys(svid["BUNDLE_FILE"])
+		if err != nil {
+			return nil, nil, err
+		}
+		subjects = append(subjects, fakeerp.ExchangeSubject{Issuer: svid["ISSUER"], Audience: svid["AUDIENCE"],
+			Subject: svid["SUBJECT"], Keys: keys})
+	}
+	audience := getenv("EACP_FAKEERP_STS_AUDIENCE")
+	switch {
+	case audience == "" && len(subjects) == 0 && imp == nil:
+		return nil, nil, nil
+	case audience == "" || len(subjects) == 0:
+		return nil, nil, errors.New("fakeerp: EACP_FAKEERP_STS_AUDIENCE needs a subject group, and a subject group or impersonation needs it")
+	}
+	return &fakeerp.TokenExchange{Audience: audience, Subjects: subjects}, imp, nil
+}
+
 func main() {
 	service.Main("fakeerp", config.Options{RequireDatabase: false, DefaultHTTPAddr: ":8090"},
 		func(d *service.Deps, mux *http.ServeMux) error {
@@ -190,6 +240,9 @@ func main() {
 				return err
 			}
 			if o.SPIFFEBearer, err = loadSPIFFEBearer(os.Getenv); err != nil {
+				return err
+			}
+			if o.Exchange, o.Impersonation, err = loadExchange(os.Getenv); err != nil {
 				return err
 			}
 			h, token, err := loadHandler(os.Getenv("EACP_FAKEERP_TOKEN_FILE"), os.Getenv("EACP_FAKEERP_DATA_FILE"), o)

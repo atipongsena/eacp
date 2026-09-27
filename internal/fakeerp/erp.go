@@ -49,6 +49,8 @@ type audit struct {
 	AssertionJTI string `json:"assertion_jti,omitempty"`
 	// A call authorised by a JWT-SVID records its SHA-256, never the SVID.
 	SVIDSHA256 string `json:"svid_sha256,omitempty"`
+	// A token exchange records the subject token's SHA-256, never the token.
+	SubjectSHA256 string `json:"subject_sha256,omitempty"`
 }
 
 type event struct {
@@ -80,11 +82,13 @@ type issued struct {
 type Options struct {
 	OAuthClientID     string
 	OAuthClientSecret string
-	TokenTTL          time.Duration // default 300 s; 1 s to 1 h
-	Federated         *Federated    // optional: a client authenticated by platform-issued assertions
-	KeyClient         *KeyClient    // optional: a client authenticated by assertions it signs itself
-	SPIFFEClient      *SPIFFEClient // optional: a client authenticated by JWT-SVID assertions
-	SPIFFEBearer      *SPIFFEBearer // optional: JWT-SVIDs authorise the ERP API
+	TokenTTL          time.Duration  // default 300 s; 1 s to 1 h
+	Federated         *Federated     // optional: a client authenticated by platform-issued assertions
+	KeyClient         *KeyClient     // optional: a client authenticated by assertions it signs itself
+	SPIFFEClient      *SPIFFEClient  // optional: a client authenticated by JWT-SVID assertions
+	SPIFFEBearer      *SPIFFEBearer  // optional: JWT-SVIDs authorise the ERP API
+	Exchange          *TokenExchange // optional: RFC 8693 token exchange at the token endpoint
+	Impersonation     *Impersonation // optional: generateAccessToken for exchanged tokens
 }
 
 const defaultTokenTTL = 300 * time.Second
@@ -132,6 +136,19 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 			return nil, err
 		}
 	}
+	if o.Exchange != nil {
+		if err := o.Exchange.valid(); err != nil {
+			return nil, err
+		}
+	}
+	if o.Impersonation != nil {
+		if o.Exchange == nil {
+			return nil, errors.New("fakeerp: impersonation needs the token exchange")
+		}
+		if err := o.Impersonation.valid(); err != nil {
+			return nil, err
+		}
+	}
 	if o.TokenTTL == 0 {
 		o.TokenTTL = defaultTokenTTL
 	}
@@ -167,8 +184,11 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/execute", e.execute)
 	mux.HandleFunc("GET /v1/operations/{key}", e.lookup)
 	mux.HandleFunc("GET /v1/audit", e.listAudit)
-	if o.OAuthClientID != "" || o.Federated != nil || o.KeyClient != nil || o.SPIFFEClient != nil {
+	if o.OAuthClientID != "" || o.Federated != nil || o.KeyClient != nil || o.SPIFFEClient != nil || o.Exchange != nil {
 		mux.HandleFunc("POST /oauth/token", e.issue)
+	}
+	if o.Impersonation != nil {
+		mux.HandleFunc("POST /v1/projects/-/serviceAccounts/{account}", e.generateAccessToken)
 	}
 	return mux, nil
 }
@@ -234,7 +254,8 @@ func (e *ERP) principal(r *http.Request) string {
 // privileged reports whether principal may execute, look up and read the
 // audit: the static credential or an unexpired minted token.
 func privileged(principal string) bool {
-	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:") || strings.HasPrefix(principal, "spiffe:")
+	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:") || strings.HasPrefix(principal, "spiffe:") ||
+		strings.HasPrefix(principal, "sts:") || strings.HasPrefix(principal, "sa:")
 }
 
 // issue is an OAuth 2.0 client-credentials token endpoint (RFC 6749 §4.4).
@@ -247,6 +268,10 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 	formErr := r.ParseForm()
 	hasBasic := r.Header.Get("Authorization") != ""
 	hasAssertion := r.PostForm.Has("client_assertion") || r.PostForm.Has("client_assertion_type")
+	exchange := e.oauth.Exchange != nil && r.PostForm.Get("grant_type") == grantTokenExchange
+	// RFC 8693 leaves client authentication optional: an exchange without a
+	// credential is a public request, one with a credential must authenticate.
+	public := exchange && !hasBasic && !hasAssertion
 	e.mu.Lock()
 	if e.failed {
 		e.mu.Unlock()
@@ -260,6 +285,7 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case formErr != nil || (hasBasic && hasAssertion):
 		ev.Audit.Outcome, status, reply = "invalid_request", 400, map[string]any{"error": "invalid_request"}
+	case public:
 	case hasAssertion:
 		// The assertion client is chosen by client_id.
 		if f := e.oauth.Federated; f != nil && f.verifyAssertion(r.PostForm, now) {
@@ -291,23 +317,34 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case status != 0:
-	case !authenticated:
+	case !authenticated && !public:
 		ev.Audit.Outcome, status, reply = "invalid_client", 401, map[string]any{"error": "invalid_client"}
-	case r.PostForm.Get("grant_type") != "client_credentials":
-		ev.Audit.Principal = "oauth:" + id
-		ev.Audit.Outcome, status, reply = "unsupported_grant_type", 400, map[string]any{"error": "unsupported_grant_type"}
-	default:
-		raw := make([]byte, 32)
-		if _, err := rand.Read(raw); err != nil {
+	case exchange:
+		sub, code := e.oauth.Exchange.subject(r.PostForm, now)
+		ev.Audit.SubjectSHA256 = subjectDigest(r.PostForm.Get("subject_token"))
+		if code != "" {
+			ev.Audit.Outcome, status, reply = code, 400, map[string]any{"error": code}
+			break
+		}
+		token, ok := e.newToken(&ev, "sts:"+sub, now, e.oauth.TokenTTL)
+		if !ok {
 			e.mu.Unlock()
 			errorJSON(w, 503, "token_unavailable")
 			return
 		}
-		token := base64.RawURLEncoding.EncodeToString(raw)
-		sum := sha256.Sum256([]byte(token))
-		expires := now.Add(e.oauth.TokenTTL)
+		status, reply = 200, map[string]any{"access_token": token, "issued_token_type": tokenTypeAccess,
+			"token_type": "Bearer", "expires_in": int(e.oauth.TokenTTL / time.Second)}
+		w.Header().Set("Cache-Control", "no-store")
+	case r.PostForm.Get("grant_type") != "client_credentials":
 		ev.Audit.Principal = "oauth:" + id
-		ev.Audit.Outcome, ev.Audit.TokenSHA256, ev.Audit.ExpiresAt = "token_issued", hex.EncodeToString(sum[:]), &expires
+		ev.Audit.Outcome, status, reply = "unsupported_grant_type", 400, map[string]any{"error": "unsupported_grant_type"}
+	default:
+		token, ok := e.newToken(&ev, "oauth:"+id, now, e.oauth.TokenTTL)
+		if !ok {
+			e.mu.Unlock()
+			errorJSON(w, 503, "token_unavailable")
+			return
+		}
 		status, reply = 200, map[string]any{"access_token": token, "token_type": "Bearer",
 			"expires_in": int(e.oauth.TokenTTL / time.Second)}
 		w.Header().Set("Cache-Control", "no-store")
@@ -319,6 +356,21 @@ func (e *ERP) issue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status, reply)
+}
+
+// newToken mints a random bearer token for principal living ttl and records
+// its SHA-256 and expiry in ev, never the token.
+func (e *ERP) newToken(ev *event, principal string, now time.Time, ttl time.Duration) (string, bool) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", false
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	expires := now.Add(ttl)
+	ev.Audit.Principal = principal
+	ev.Audit.Outcome, ev.Audit.TokenSHA256, ev.Audit.ExpiresAt = "token_issued", hex.EncodeToString(sum[:]), &expires
+	return token, true
 }
 
 func (e *ERP) begin(r *http.Request, key string) audit {
