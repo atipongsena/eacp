@@ -455,6 +455,14 @@ func (f *Fixture) MCPConnector(t testing.TB, name string) uuid.UUID {
 		VALUES (eacp.current_tenant_id(), $1, 'mcp', 'http://mcp.test:9000/mcp', $1) RETURNING id`, name)
 }
 
+// A2AConnector registers an A2A connector (by erin) and returns its id
+// (ADR-030). Its endpoint is the agent's JSON-RPC interface URL.
+func (f *Fixture) A2AConnector(t testing.TB, name string) uuid.UUID {
+	t.Helper()
+	return f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
+		VALUES (eacp.current_tenant_id(), $1, 'a2a', 'http://a2a.test:9000/a2a', $1) RETURNING id`, name)
+}
+
 // ScanClaimSQL takes the scan lease of MCP connector $1 for scanner $2
 // for one minute. Bind the scanner at the next lease generation.
 const ScanClaimSQL = `UPDATE eacp.mcp_servers SET lease_worker = $2, lease_until = now() + interval '1 minute',
