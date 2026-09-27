@@ -252,6 +252,22 @@ Where SPIRE attests the worker, a binding can hold no secret at all (ADR-019 Rev
 
 On Kubernetes, `worker.spiffe.enabled` mounts the Workload API socket into the worker pod only, through the SPIFFE CSI driver. The worker starts with the agent down and never contacts it at load; it refuses an SVID for any identity but `spiffe_id`, never sends one that could expire during the call, and withholds only that binding's work with the usual back-off while the agent is unreachable or has no entry for it. Give the worker's registration entry a JWT-SVID TTL of at least 2.5 × (the longest call budget + 30 s), since the agent hands out a cached SVID until about half its life. Deleting the entry revokes nothing already issued: the worker may keep using its SVID for up to the full TTL, so contain with a kill. SVIDs are redacted from every log and never stored. `scripts/k8s-e2e.sh` installs a development SPIRE and runs `TestSPIFFEDemo`.
 
+## Phase 24f: token exchange
+
+A binding can trade the worker's own identity for an access token (ADR-019 Rev 1.5): an RFC 8693 token exchange of its projected service-account token or its JWT-SVID at an STS, optionally followed by GCP service-account impersonation. This is GCP Workload Identity Federation, and Keycloak or Okta token exchange:
+
+```json
+{"tenant_id": "…", "secret_ref": "gcs", "host": "storage.googleapis.com:443",
+ "oauth2": {"grant": "token_exchange", "token_url": "https://sts.googleapis.com/v1/token",
+            "audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/eacp/providers/k8s",
+            "scope": "https://www.googleapis.com/auth/cloud-platform",
+            "subject_token": {"file": "/run/secrets/eacp-identity/token"},
+            "impersonate": {"url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/eacp@p.iam.gserviceaccount.com:generateAccessToken",
+                            "scope": ["https://www.googleapis.com/auth/devstorage.read_only"]}}}
+```
+
+The subject token is read again (or fetched from the SPIRE agent) at every mint and goes only to the STS; client authentication there is optional. The exchange must return an access token (`issued_token_type`). With `impersonate`, the federated token goes only to the impersonation endpoint and is never cached; the service account's token is the one the connector receives. The final token follows every Phase 24a rule, and any failed step withholds only that binding with the usual back-off. Subject and federated tokens are redacted from every log and never stored. `scripts/k8s-e2e.sh` runs `TestTokenExchangeDemo` against Fake ERP's STS.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start

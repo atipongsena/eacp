@@ -166,6 +166,14 @@ The agent cannot reach the token endpoint any more than the ERP (`test/security`
 
 A withheld purchase is not shown: the worker keeps using an SVID it already holds for up to its TTL (an hour here), so deleting the registration entry would not stop the next purchase in a demo's time. `internal/worker` covers every failure path against a fake Workload API.
 
+### Token-exchange demo (Kubernetes only)
+
+`TestTokenExchangeDemo` shows Phase 24f (ADR-019 Rev 1.5) and runs only through `scripts/k8s-e2e.sh`, because its subject tokens are the cluster's projected token and the development SPIRE's JWT-SVID. Fake ERP runs an STS (audience `fakeerp-sts`) that trusts both issuers, and serves `generateAccessToken` for `eacp-erp@eacp-demo.iam.gserviceaccount.com`. The worker's secrets bind tenant Tyrell's `fakeerp-sts` (the projected token exchanged with no client authentication) and `fakeerp-sts-sa` (the JWT-SVID exchanged, then the federated token impersonating the service account). There is no secret for either binding.
+
+- **X0.** Bootstrap tenant Tyrell and a policy that allows routine ERP work.
+- **X1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `sts:system:serviceaccount:eacp:eacp-worker` and `sa:eacp-erp@eacp-demo.iam.gserviceaccount.com`. The ERP audit shows both subjects exchanged, each with the subject token's SHA-256 (never the token), and the impersonation.
+- **X2.** No issued token (exchanged, federated or impersonated) and no subject token or JWT naming either subject appears in API responses, service logs or a database dump.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

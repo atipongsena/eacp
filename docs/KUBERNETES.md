@@ -180,7 +180,7 @@ enforced:
 5. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml --wait`;
 6. opens `minikube service eacp-api --url` (through the Service, so it survives pod restarts) and runs
    `TestSliceADemo`, `TestKubernetesDisruption` and the credential demos (`TestJITDemo`,
-   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`) from `test/demo` with
+   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`, `TestTokenExchangeDemo`) from `test/demo` with
    `EACP_DEMO_PLATFORM=k8s`;
 7. deletes the profile.
 

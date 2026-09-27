@@ -3,6 +3,15 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 24f — RFC 8693 token exchange and GCP impersonation (2026-09-27)
+
+Checked against RFC 8693 (rfc-editor.org) and Google's own client, `golang.org/x/oauth2` **v0.36.0** (module source: `google/internal/stsexchange`, `google/internal/impersonate`, `google/externalaccount/basecredentials.go`). No new dependency: the worker speaks both protocols with the standard library. ADR-019 Rev 1.5 builds on these facts.
+
+- **RFC 8693 §2.1** request: `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`; `subject_token` and `subject_token_type` REQUIRED; `resource`, `audience`, `scope`, `requested_token_type`, `actor_token`/`actor_token_type` OPTIONAL. Client authentication is optional (the normal OAuth 2.0 mechanisms). **§2.2.1** response: `access_token`, `issued_token_type` and `token_type` REQUIRED, `expires_in` RECOMMENDED. **§3** token types `urn:ietf:params:oauth:token-type:{access_token,refresh_token,id_token,saml1,saml2,jwt}`.
+- **GCP STS** (`stsexchange.ExchangeToken`): `POST https://sts.googleapis.com/v1/token`, `application/x-www-form-urlencoded`, form `audience`, `grant_type`, `requested_token_type=urn:ietf:params:oauth:token-type:access_token`, `subject_token_type`, `subject_token`, `scope` (space-joined) and optional `options` (JSON). The response is JSON `access_token`, `issued_token_type`, `token_type`, `expires_in` (an integer). Google spells one subject type `urn:ietf:params:oauth:token-type:id-token` (a hyphen, unlike RFC 8693's `id_token`); others it lists are `…:jwt`, `…:saml2` and `urn:ietf:params:aws:token-type:aws4_request`.
+- **Scopes when impersonating** (`externalaccount`): the STS request asks for `https://www.googleapis.com/auth/cloud-platform`; the caller's scopes go to the impersonation request.
+- **Impersonation** (`impersonate.ImpersonateTokenSource`): `POST https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/<email>:generateAccessToken`, `Authorization: Bearer <federated token>`, `Content-Type: application/json`, body `{"delegates"?: [...], "lifetime": "<n>s", "scope": [...]}` (lifetime default `3600s`). The response is `{"accessToken", "expireTime"}`, `expireTime` in RFC 3339.
+
 ## Phase 24e — go-spiffe and SPIRE (2026-09-27)
 
 Checked against the module source (`go mod download github.com/spiffe/go-spiffe/v2@v2.8.2`), the SPIRE v1.15.3 source (`doc/spire_server.md`, `pkg/agent/manager/manager.go`, `pkg/common/rotationutil`), the spiffe-csi v0.2.13 example (`example/config`) and a run on minikube (`scripts/k8s-e2e.sh`). ADR-019 Rev 1.4 relies on these.

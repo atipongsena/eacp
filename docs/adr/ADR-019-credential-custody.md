@@ -1,7 +1,7 @@
 # ADR-019: Credential custody — providers and just-in-time credentials
 
-Status: Accepted (Rev 1.4, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2), 24d (Rev 1.3) and
-24e (Rev 1.4).
+Status: Accepted (Rev 1.5, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2), 24d (Rev 1.3),
+24e (Rev 1.4) and 24f (Rev 1.5).
 Scope: MASTER_PLAN §96.
 Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
 bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
@@ -44,6 +44,13 @@ Rev 1.1's projected token has one issuer (the cluster) and one fixed audience pe
 agent issues a JWT-SVID for whatever audience the worker names, when it asks. A binding may now present the
 worker's JWT-SVID straight to a SPIFFE-aware target as its Bearer credential, or as the client assertion of
 an OAuth mint, and hold no secret at all (§3d).
+
+Rev 1.5 (Phase 24f) lets a binding trade those identities for a token instead of authenticating a client with
+them. Clouds and enterprise IdPs issue access tokens in exchange for a workload's own identity token: GCP
+Workload Identity Federation (an STS, then optionally a service account's token from IAM Credentials),
+Keycloak and Okta token exchange. An `oauth2` binding may now mint through an RFC 8693 token exchange of the
+worker's projected token or JWT-SVID, optionally impersonating a GCP service account, with no long-lived
+secret (§3e).
 
 ## Decision
 
@@ -313,6 +320,70 @@ A top-level `spiffe` object configures one Workload API client per worker (go-sp
 X509-SVIDs and mTLS to connectors, SPIFFE federation between trust domains, verifying SVIDs in the worker and
 watching the Workload API (the worker fetches on demand) are out of scope.
 
+### 3e. Token exchange (Rev 1.5)
+
+The `oauth2` provider gains a grant; everything §3 says about the token it returns still applies:
+
+```json
+{"tenant_id": "…", "secret_ref": "gcs", "host": "storage.googleapis.com:443",
+ "oauth2": {"grant": "token_exchange",
+            "token_url": "https://sts.googleapis.com/v1/token",
+            "audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/eacp/providers/k8s",
+            "scope": "https://www.googleapis.com/auth/cloud-platform",
+            "subject_token": {"file": "/run/secrets/eacp-identity/token"},
+            "impersonate": {"url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/eacp@p.iam.gserviceaccount.com:generateAccessToken",
+                            "scope": ["https://www.googleapis.com/auth/devstorage.read_only"],
+                            "lifetime_seconds": 3600}}}
+```
+
+- **At load** (any failure rejects the whole file; the worker contacts nothing): `grant` is absent or
+  `client_credentials` (unchanged) or `token_exchange`; any other value is an error, and `subject_token`,
+  `subject_token_type`, `audience` and `impersonate` are refused without `token_exchange`. `subject_token` is
+  exactly one of `file` (a path whose content is checked for shape only, as `client_assertion_file`) or
+  `spiffe` (`{"audience": …}`, §3d's audience rules, needs the `spiffe` block). `subject_token_type` defaults
+  to `urn:ietf:params:oauth:token-type:jwt`; `…:id_token` and Google's `…:id-token` are also accepted.
+  `audience` is 1–1024 printable ASCII characters without spaces; `scope` and `resource` keep §3's rules.
+  Client authentication at the STS is optional (RFC 8693 and GCP's STS need none): no `client_id` and no
+  form, a public client (`client_id` alone, sent in the form body), or `client_id` with exactly one of §3's
+  forms. `impersonate.url` is absolute, `https` (`http` only in development and test), with a lowercase host
+  and no user info, query or fragment, and its path is exactly
+  `/v1/projects/-/serviceAccounts/<email>:generateAccessToken` (`<email>` 3–254 characters), so a mistyped URL
+  fails at load rather than receiving a federated token. `impersonate.scope` lists 1–32 scope tokens;
+  `lifetime_seconds` is 300–3600, default 3600.
+- **A mint** (one at a time per binding, as §3):
+  1. *The subject token.* A `file` is read again at every mint with §3a's rules (`assertion_unreadable`,
+     `assertion_invalid`, `assertion_expired` with less than 10 s left). A `spiffe` subject is §3d's SVID for
+     its audience, living at least the request timeout (`spiffe_*`; less than 10 s left is
+     `assertion_expired`); a cached SVID that outlives the exchange is reused. It is redacted until its `exp`
+     plus 24 h and kept in `Values()` until its `exp`.
+  2. *The exchange.* `POST token_url` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`,
+     `subject_token`, `subject_token_type`, `requested_token_type=urn:ietf:params:oauth:token-type:access_token`
+     and `audience`, `scope` and `resource` when set, plus the configured client authentication (a Vault-held
+     secret or key is read inside the mint, §3c). The response passes §3's checks, and `issued_token_type` must
+     be `urn:ietf:params:oauth:token-type:access_token` (else `wrong_token_type`): a JWT or refresh token is
+     never sent as a Bearer. `expires_in` stays required although RFC 8693 only recommends it.
+  3. *Impersonation* (when set). `POST impersonate.url` with `Authorization: Bearer <federated token>`, JSON
+     `{"scope": [...], "lifetime": "<n>s"}`, its own 10 s timeout, no redirects and a response of at most
+     64 KiB. HTTP 200 is required (else `impersonation_http_<code>`); the JSON needs a printable `accessToken`
+     of at most 8192 bytes and an RFC 3339 `expireTime` after the request started and at most 86 400 s later
+     (else `impersonation_invalid`); a transport error is `transport`. The federated token goes nowhere else,
+     is never cached for a later mint, and is redacted until its expiry plus 24 h and kept in `Values()` until
+     its expiry.
+  4. *The final token* (the exchange's, or the impersonated one) is §3's token: used for at most an hour,
+     never for a call it could expire during, dropped when the target rejects it, redacted until its real
+     expiry plus 24 h.
+
+  Each token goes to one place only: the subject token to the STS, the federated token to the impersonation
+  endpoint, the final token to the connector. A failed step fails the mint with its class: §3's back-off,
+  withheld from claims, no dispatch and no retry within the mint. The mint's log names the binding, the token
+  endpoint's host, the grant, whether it impersonated and the lifetime, never a token.
+- **Kubernetes.** Nothing new in the chart: a file subject is the worker's projected token (§3a's
+  `worker.workloadIdentity`), a SPIFFE subject comes through §3d's socket. The impersonation endpoint is one
+  more egress destination of the worker.
+
+AWS STS and SigV4, `actor_token` (delegation), `delegates`, refresh tokens, caching the federated token
+across mints, GCP workforce pools and STS `options` are out of scope.
+
 ### 4. Redaction
 
 `logging.SecretSet` holds the values a logger redacts and may grow after the logger is built
@@ -320,7 +391,8 @@ watching the Workload API (the worker fetches on demand) are out of scope.
 The worker adds each client secret permanently, each client assertion until its `exp` plus 24 h and each minted
 token until its real expiry plus 24 h, keeping at most 10 000 temporary values (the oldest go first). Rev 1.3
 adds every Vault-held value permanently and each Vault token until its lease end plus 24 h. Rev 1.4 adds each
-JWT-SVID received until its `exp` plus 24 h.
+JWT-SVID received until its `exp` plus 24 h. Rev 1.5 adds each subject token until its `exp` plus 24 h and
+each federated token until its expiry plus 24 h.
 
 ### 5. Failure handling
 
@@ -392,6 +464,26 @@ attestation; an agent per node; the SPIFFE CSI driver) issues the worker
 3600 s). The e2e script snapshots the bundle into Fake ERP's `fakeerp-federation` ConfigMap and binds tenant
 `…00a8` `fakeerp-spiffe` (audience `fakeerp-api`) and `fakeerp-spiffe-oauth` (client `eacp-worker-spiffe`,
 audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Compose has no SPIRE.
+
+Rev 1.5: with `EACP_FAKEERP_STS_AUDIENCE` and at least one subject group, `EACP_FAKEERP_STS_K8S_{ISSUER,
+AUDIENCE,SUBJECT,JWKS_FILE}` or `EACP_FAKEERP_STS_SPIFFE_{ISSUER,AUDIENCE,SUBJECT,BUNDLE_FILE}` (each all or
+none), the token endpoint also serves the token-exchange grant. Client authentication is optional; a request
+that presents Basic or an assertion must authenticate with it. `subject_token_type` must be one of the three
+JWT types, `requested_token_type` absent or an access token, and `audience` exactly the configured one
+(`invalid_request`, `invalid_target`). The subject token must verify against a configured subject (RS256 or
+ES256 by `kid`, the issuer, the exact `sub`, the audience in `aud`, `exp` and `nbf` with 30 s skew), else
+`invalid_grant`. The token issued has principal `sts:<sub>`, the reply carries `issued_token_type`, and the
+audit records the subject token's SHA-256 (`subject_sha256`), never the token. With
+`EACP_FAKEERP_IMPERSONATE_ACCOUNTS` (a comma-separated list; needs the exchange) Fake ERP serves
+`POST /v1/projects/-/serviceAccounts/{email}:generateAccessToken`: a caller that is not an `sts:` token gets
+401, an unknown account 403, a body other than 1–32 non-empty scopes and a lifetime of 1–3600 s 400; it issues
+a token of that lifetime with principal `sa:<email>` and answers `{"accessToken", "expireTime"}`. `sts:` and
+`sa:` tokens authorise the ERP API like the others. On Kubernetes the e2e script configures both subjects
+from the cluster's issuer and JWKS and the SPIRE bundle it already captures, and binds tenant `…00a9`
+`fakeerp-sts` (the projected token, audience `fakeerp`, exchanged at audience `fakeerp-sts` with no client
+authentication) and `fakeerp-sts-sa` (the JWT-SVID for `fakeerp-sts`, then impersonating
+`eacp-erp@eacp-demo.iam.gserviceaccount.com`) (`deployments/k8s/connector-secrets.exchange.json`). Compose
+has no platform issuer and is unchanged.
 
 ### 7. Proof
 
@@ -484,6 +576,26 @@ audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Com
   and the `csiDriver` refusal; `test/demo` `TestSPIFFEDemo` on minikube against a real SPIRE: purchases as
   `spiffe:spiffe://eacp.test/ns/eacp/sa/eacp-worker` (with an SVID digest) and `oauth:eacp-worker-spiffe`, and
   no SVID, JWT naming the worker's SPIFFE ID or issued token in responses, logs or a database dump.
+- Rev 1.5, `internal/worker` (`exchange_test.go`): `TestATokenExchangeEntryLoads` and
+  `TestInvalidTokenExchangeEntriesRejectTheWholeFile` (every field, grant exclusivity, client authentication,
+  the impersonation URL, dev-only `http`); `exchangemint_test.go`: `TestAnExchangeSendsTheSubjectToken`,
+  `TestExchangeClientAuthentication` (public client, client secret, client assertion),
+  `TestAnSVIDSubjectIsFetchedPerMint`, `TestTheSubjectTokenMustOutliveTheExchange`,
+  `TestEveryInvalidExchangeResponseIsRefused` (including `wrong_token_type`),
+  `TestExchangeTokensAreRedactedAndScrubbed`; `impersonate_test.go`: `TestImpersonationTradesTheFederatedToken`,
+  `TestEachTokenGoesOnlyToItsHop`, `TestEveryInvalidImpersonationResponseIsRefused`,
+  `TestAnImpersonatedTokenIsUsedForAtMostAnHour`, `TestTheImpersonationEndpointMayNotRedirect`,
+  `TestTheFederatedTokenIsRedactedAndScrubbed`, `TestAMintLogNamesTheGrant`; PostgreSQL
+  (`exchange_integration_test.go`): `TestTheWorkerExecutesWithAnExchangedToken` and
+  `TestTheWorkerExecutesWithAnImpersonatedToken` (the real HTTP connector and Fake ERP, principals `sts:…` and
+  `sa:…`, no subject, federated or final token in the database or logs).
+- Rev 1.5, `internal/fakeerp` (`exchange_test.go`): `TestAnExchangeIssuesATokenForTheSubject` (both subject
+  kinds), `TestTheExchangeRefusesBadRequests`, `TestImpersonationIssuesAServiceAccountToken`,
+  `TestImpersonationRefusesBadRequests`, `TestExchangeOptionsFailClosed`; `cmd/fakeerp`
+  `TestExchangeSettingsComeTogether`; `test/demo` `TestTokenExchangeDemo` on minikube: purchases as
+  `sts:system:serviceaccount:eacp:eacp-worker` and `sa:eacp-erp@eacp-demo.iam.gserviceaccount.com`, both
+  subjects exchanged with their digests audited, and no subject token or issued token in responses, logs or a
+  database dump.
 
 ## Consequences
 
@@ -503,8 +615,11 @@ audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Com
   identity is its registration entry. Deleting the entry stops new SVIDs, but the SVIDs already issued stay
   valid and the worker keeps sending its cached one while it outlives the call: revocation takes up to the
   full JWT-SVID TTL. Use a kill (ADR-016) or disable the connector's circuit for immediate containment.
-- Token exchange (RFC 8693), AWS and GCP STS, Vault dynamic secrets and HSM/KMS-held keys
-  (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
+- With token exchange (Rev 1.5) the worker holds no secret for the binding either: the STS trusts the
+  platform's or SPIRE's issuer, and an impersonated service account's permissions stay in the cloud's IAM.
+  Revoking the trust (or the impersonation grant) stops new tokens; a token already issued lives for at most
+  its lifetime and is used for at most an hour.
+- AWS STS, Vault dynamic secrets and HSM/KMS-held keys (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
   availability and drops a rejected value.
 
 ## Unresolved assumptions (conservative choices)
@@ -554,3 +669,9 @@ audience `fakeerp-token`) (`deployments/k8s/connector-secrets.spiffe.json`). Com
 | Who validates a JWT-SVID | The relying party only; the worker checks its shape, `sub`, audience and `exp` (Rev 1.4). |
 | SVID bearer replay at Fake ERP | Accepted until `exp` (a JWT-SVID is a bearer token); the audience limits where (Rev 1.4). |
 | SPIRE in the demo | Kubernetes only, one server with SQLite on an emptyDir pinned to the control-plane node; the bundle is a snapshot taken at install (Rev 1.4). |
+| `issued_token_type` | Required and must be an access token, although some IdPs treat it loosely: a JWT or refresh token is never sent as a Bearer (Rev 1.5). |
+| `expires_in` of an exchange | Required (RFC 8693 only recommends it): a token without a lifetime is never cached or sent (Rev 1.5). |
+| Client authentication at an STS | Optional; when configured, exactly one of §3's forms (Rev 1.5). |
+| Impersonation lifetime | Requested 300–3600 s (Google's default maximum); the final token is used for at most an hour anyway (Rev 1.5). |
+| The federated token | Two hops per mint, never cached for a later mint; sent only to the impersonation endpoint (Rev 1.5). |
+| The impersonation URL | Must have Google's path shape, so a mistyped URL fails at load rather than receiving a federated token (Rev 1.5). |

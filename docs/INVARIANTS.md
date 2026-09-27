@@ -168,6 +168,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestTheWorkerExecutesWithPrivateKeyJWT — with assertions the worker signs with its own key and no client secret, neither the key nor a token appears in any row, journal, outbox or log (ADR-019 Rev 1.2)
 - `internal/worker` TestTheWorkerExecutesWithAVaultCredential — with the credential read from Vault KV v2 through an AppRole login, and read again after the target rejects a rotated-out value, neither the Vault token nor a Vault-held value appears in any row, journal, outbox or log (ADR-019 Rev 1.3)
 - `internal/worker` TestTheWorkerExecutesWithAnSVID — with the worker's JWT-SVID from the SPIFFE Workload API as the Bearer and no secret, the SVID appears in no row, journal, outbox or log (ADR-019 Rev 1.4)
+- `internal/worker` TestTheWorkerExecutesWithAnExchangedToken — with the worker's platform token exchanged at an STS (RFC 8693) and no client credential, neither the subject token nor the exchanged token appears in any row, journal, outbox or log (ADR-019 Rev 1.5)
+- `internal/worker` TestTheWorkerExecutesWithAnImpersonatedToken — with the worker's JWT-SVID exchanged and the federated token impersonating a service account, no SVID, federated or final token appears in any row, journal, outbox or log (ADR-019 Rev 1.5)
 - `internal/worker` TestTheWorkerMintsWithAnSVIDAssertion — with the worker's JWT-SVID as the OAuth client assertion and no client secret, neither the SVID nor a token appears in any row, journal, outbox or log (ADR-019 Rev 1.4)
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
