@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"regexp"
@@ -51,6 +52,7 @@ type impersonateEntry struct {
 type exchangeConfig struct {
 	subjectFile   string // re-read at every mint
 	subjectSPIFFE string // or the JWT-SVID for this audience
+	spiffe        *spiffeClient
 	subjectType   string
 	audience      string
 	impersonate   *impersonation
@@ -93,7 +95,7 @@ func validateExchange(e oauthEntry, c loadConfig) (*exchangeConfig, error) {
 		if err := s.SPIFFE.validate(); err != nil {
 			return nil, err
 		}
-		x.subjectSPIFFE = s.SPIFFE.Audience
+		x.subjectSPIFFE, x.spiffe = s.SPIFFE.Audience, c.spiffe
 	}
 	if e.SubjectTokenType != "" {
 		if !subjectTokenTypes[e.SubjectTokenType] {
@@ -143,4 +145,30 @@ func validateImpersonation(e impersonateEntry, c loadConfig) (*impersonation, er
 		lifetime = time.Duration(e.LifetimeSeconds) * time.Second
 	}
 	return &impersonation{url: u.String(), scope: append([]string(nil), e.Scope...), lifetime: lifetime}, nil
+}
+
+// subjectToken returns this mint's subject token: the file read again
+// (the platform rotates it) or the JWT-SVID for the subject audience. It
+// must outlive the request; it is redacted until its exp and kept for
+// scrubbing until then.
+func (p *oauthProvider) subjectToken(ctx context.Context) (Secret, string) {
+	var s Secret
+	var exp time.Time
+	var class string
+	if x := p.exchange; x.spiffe != nil {
+		s, exp, class = x.spiffe.svid(ctx, x.subjectSPIFFE, tokenRequestTimeout)
+		if class == "" && exp.Before(p.now().Add(tokenRequestTimeout)) {
+			class = "assertion_expired"
+		}
+	} else {
+		s, exp, class = readAssertion(x.subjectFile, p.now())
+	}
+	if class != "" {
+		return Secret{}, class
+	}
+	p.redactUntil(s, exp)
+	p.mu.Lock()
+	p.subject, p.subjectExp = s, exp
+	p.mu.Unlock()
+	return s, ""
 }

@@ -103,6 +103,8 @@ type oauthProvider struct {
 	retired      []heldToken   // replaced or dropped tokens that still authorise, newest last
 	assertion    Secret        // the client assertion last read, kept for scrubbing until assertionExp
 	assertionExp time.Time
+	subject      Secret // the subject token last exchanged (§3e), kept for scrubbing until subjectExp
+	subjectExp   time.Time
 	backoff      time.Duration
 	backoffUntil time.Time
 }
@@ -312,10 +314,19 @@ func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
 // usable lifetime, or a failure class, never a response body or secret. Both
 // expiries are measured from before the request.
 func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Time, time.Duration, string) {
-	if p.exchange != nil {
-		return Secret{}, time.Time{}, time.Time{}, 0, "exchange_unimplemented" // fail closed until the exchange lands
-	}
 	form := url.Values{"grant_type": {"client_credentials"}}
+	if p.exchange != nil {
+		// RFC 8693: the worker's own identity token is the subject (§3e).
+		subject, class := p.subjectToken(ctx)
+		if class != "" {
+			return Secret{}, time.Time{}, time.Time{}, 0, class
+		}
+		form = url.Values{"grant_type": {grantTokenExchange}, "subject_token": {subject.v},
+			"subject_token_type": {p.exchange.subjectType}, "requested_token_type": {tokenTypeAccess}}
+		if p.exchange.audience != "" {
+			form.Set("audience", p.exchange.audience)
+		}
+	}
 	if p.scope != "" {
 		form.Set("scope", p.scope)
 	}
@@ -368,6 +379,9 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 		form.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
 		form.Set("client_assertion", assertion.v)
 	}
+	if p.publicClient {
+		form.Set("client_id", p.clientID) // RFC 6749 §3.2.1: a public client identifies itself in the form
+	}
 	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
@@ -376,7 +390,11 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	if !form.Has("client_assertion") {
+	switch {
+	case form.Has("client_assertion"):
+	case p.exchange != nil && p.clientID == "": // an exchange without client authentication
+	case p.publicClient: // client_id is in the form
+	default:
 		// RFC 6749 §2.3.1: the id and secret are form-urlencoded before Basic auth.
 		req.SetBasicAuth(url.QueryEscape(p.clientID), url.QueryEscape(secret.v))
 	}
@@ -394,9 +412,10 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 		return Secret{}, time.Time{}, time.Time{}, 0, fmt.Sprintf("http_%d", resp.StatusCode)
 	}
 	var tr struct {
-		AccessToken string          `json:"access_token"`
-		TokenType   string          `json:"token_type"`
-		ExpiresIn   json.RawMessage `json:"expires_in"` // a bare JSON integer
+		AccessToken     string          `json:"access_token"`
+		TokenType       string          `json:"token_type"`
+		ExpiresIn       json.RawMessage `json:"expires_in"` // a bare JSON integer
+		IssuedTokenType string          `json:"issued_token_type"`
 	}
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return Secret{}, time.Time{}, time.Time{}, 0, "invalid_json"
@@ -410,6 +429,10 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	n, err := strconv.ParseInt(string(tr.ExpiresIn), 10, 64)
 	if err != nil || n < 1 || n > maxTokenLifetime {
 		return Secret{}, time.Time{}, time.Time{}, 0, "invalid_expires_in"
+	}
+	if p.exchange != nil && tr.IssuedTokenType != tokenTypeAccess {
+		// RFC 8693 §2.2.1 requires it; a JWT or refresh token is never sent as a Bearer.
+		return Secret{}, time.Time{}, time.Time{}, 0, "wrong_token_type"
 	}
 	lifetime := min(time.Duration(n)*time.Second, maxTokenUse)
 	return Secret{tr.AccessToken}, start.Add(lifetime), start.Add(time.Duration(n) * time.Second), lifetime, ""
@@ -486,6 +509,9 @@ func (p *oauthProvider) live() []string {
 	}
 	if p.assertion.v != "" && now.Before(p.assertionExp) {
 		out = append(out, p.assertion.v)
+	}
+	if p.subject.v != "" && now.Before(p.subjectExp) {
+		out = append(out, p.subject.v)
 	}
 	if p.token.v != "" && now.Before(p.realExpiry) {
 		out = append(out, p.token.v)
