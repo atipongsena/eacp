@@ -52,6 +52,17 @@ spec:
             - {name: EACP_FAKEERP_OAUTH_KEY_CLIENT_ID, value: eacp-worker-pkjwt}
             - {name: EACP_FAKEERP_OAUTH_KEY_AUDIENCE, value: "http://fakeerp:8090/oauth/token"}
             - {name: EACP_FAKEERP_OAUTH_KEY_JWKS_FILE, value: /run/config/fakeerp-federation/client-jwks.json}
+            # ADR-019 Rev 1.4: the worker's JWT-SVIDs from the development SPIRE
+            # (spire.yaml), verified against its bundle: as an OAuth client
+            # assertion and as the Bearer of the ERP API
+            - {name: EACP_FAKEERP_OAUTH_SPIFFE_CLIENT_ID, value: eacp-worker-spiffe}
+            - {name: EACP_FAKEERP_OAUTH_SPIFFE_ISSUER, value: "https://spire.eacp.test"}
+            - {name: EACP_FAKEERP_OAUTH_SPIFFE_AUDIENCE, value: fakeerp-token}
+            - {name: EACP_FAKEERP_OAUTH_SPIFFE_SUBJECT, value: "spiffe://eacp.test/ns/eacp/sa/eacp-worker"}
+            - {name: EACP_FAKEERP_OAUTH_SPIFFE_BUNDLE_FILE, value: /run/config/fakeerp-federation/spiffe-bundle.json}
+            - {name: EACP_FAKEERP_SPIFFE_AUDIENCE, value: fakeerp-api}
+            - {name: EACP_FAKEERP_SPIFFE_SUBJECT, value: "spiffe://eacp.test/ns/eacp/sa/eacp-worker"}
+            - {name: EACP_FAKEERP_SPIFFE_BUNDLE_FILE, value: /run/config/fakeerp-federation/spiffe-bundle.json}
           ports: [{containerPort: 8090}]
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
@@ -68,7 +79,7 @@ spec:
         - name: oauth-client
           secret: {secretName: fakeerp-oauth-client}
         - name: federation
-          configMap: {name: fakeerp-federation, items: [{key: jwks.json, path: jwks.json}, {key: client-jwks.json, path: client-jwks.json}]}
+          configMap: {name: fakeerp-federation, items: [{key: jwks.json, path: jwks.json}, {key: client-jwks.json, path: client-jwks.json}, {key: spiffe-bundle.json, path: spiffe-bundle.json}]}
         - {name: data, emptyDir: {}}
 ---
 apiVersion: v1

@@ -1,0 +1,332 @@
+# A development SPIRE for the minikube e2e (scripts/k8s-e2e.sh, ADR-019 Rev 1.4).
+# DEVELOPMENT ONLY: SQLite and keys on the server's container filesystem, one
+# replica, the kubelet's certificate not verified. Adapted from the spiffe-csi
+# v0.2.13 example (example/config) for SPIRE 1.15.3.
+#
+# The server issues the worker's JWT-SVIDs (trust domain eacp.test, issuer
+# https://spire.eacp.test); an agent on every node attests pods (k8s_psat
+# for the node, the k8s workload attestor for the pod) and serves the Workload
+# API socket, which the SPIFFE CSI driver mounts into pods that ask for it
+# (the chart's worker.spiffe). The registration entries come from the script.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-server
+  namespace: spire
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-server
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+  - apiGroups: ["authentication.k8s.io"] # k8s_psat: review the agents' tokens
+    resources: ["tokenreviews"]
+    verbs: ["get", "create"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-server
+subjects:
+  - {kind: ServiceAccount, name: spire-server, namespace: spire}
+roleRef: {kind: ClusterRole, name: spire-server, apiGroup: rbac.authorization.k8s.io}
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-server
+  namespace: spire
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: [""] # the k8sbundle notifier keeps the agents' bootstrap bundle current
+    resources: ["configmaps"]
+    resourceNames: ["spire-bundle"]
+    verbs: ["get", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-server
+  namespace: spire
+subjects:
+  - {kind: ServiceAccount, name: spire-server, namespace: spire}
+roleRef: {kind: Role, name: spire-server, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-bundle
+  namespace: spire
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-server
+  namespace: spire
+data:
+  server.conf: |
+    server {
+      bind_address = "0.0.0.0"
+      bind_port = "8081"
+      trust_domain = "eacp.test"
+      data_dir = "/run/spire/data"
+      log_level = "INFO"
+      ca_ttl = "24h"
+      jwt_issuer = "https://spire.eacp.test"
+      default_jwt_svid_ttl = "5m"
+    }
+
+    plugins {
+      DataStore "sql" {
+        plugin_data {
+          database_type = "sqlite3"
+          connection_string = "/run/spire/data/datastore.sqlite3"
+        }
+      }
+
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          clusters = {
+            "eacp-e2e" = {
+              service_account_allow_list = ["spire:spire-agent"]
+            }
+          }
+        }
+      }
+
+      KeyManager "disk" {
+        plugin_data {
+          keys_path = "/run/spire/data/keys.json"
+        }
+      }
+
+      Notifier "k8sbundle" {
+        plugin_data {}
+      }
+    }
+
+    health_checks {
+      listener_enabled = true
+      bind_address = "0.0.0.0"
+      bind_port = "8080"
+      live_path = "/live"
+      ready_path = "/ready"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-server
+  namespace: spire
+  labels: {app: spire-server}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: spire-server}
+  template:
+    metadata:
+      labels: {app: spire-server}
+    spec:
+      serviceAccountName: spire-server
+      # The node the disruption test never drains: a restart would lose the
+      # entries and keys, and with them the bundle Fake ERP trusts.
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""}
+      containers:
+        - name: spire-server
+          image: ghcr.io/spiffe/spire-server:1.15.3
+          imagePullPolicy: Never
+          args: ["-config", "/run/spire/config/server.conf"]
+          ports:
+            - {containerPort: 8081, name: grpc}
+          readinessProbe: {httpGet: {path: /ready, port: 8080}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /live, port: 8080}, periodSeconds: 10, failureThreshold: 6}
+          volumeMounts:
+            - {name: config, mountPath: /run/spire/config, readOnly: true}
+            - {name: data, mountPath: /run/spire/data}
+      volumes:
+        - name: config
+          configMap: {name: spire-server}
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-server
+  namespace: spire
+spec:
+  selector: {app: spire-server}
+  ports:
+    - {name: grpc, port: 8081, targetPort: 8081, protocol: TCP}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-agent
+  namespace: spire
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-agent
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "nodes/proxy"]
+    verbs: ["get"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-agent
+subjects:
+  - {kind: ServiceAccount, name: spire-agent, namespace: spire}
+roleRef: {kind: ClusterRole, name: spire-agent, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent
+  namespace: spire
+data:
+  agent.conf: |
+    agent {
+      data_dir = "/run/spire"
+      log_level = "INFO"
+      server_address = "spire-server"
+      server_port = "8081"
+      socket_path = "/run/spire/sockets/spire-agent.sock"
+      trust_bundle_path = "/run/spire/bundle/bundle.crt"
+      trust_domain = "eacp.test"
+    }
+
+    plugins {
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          cluster = "eacp-e2e"
+        }
+      }
+
+      KeyManager "memory" {
+        plugin_data {}
+      }
+
+      # The kubelet over 127.0.0.1 (host networking); its certificate is not
+      # verified in development.
+      WorkloadAttestor "k8s" {
+        plugin_data {
+          skip_kubelet_verification = true
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+  namespace: spire
+  labels: {app: spire-agent}
+spec:
+  selector:
+    matchLabels: {app: spire-agent}
+  updateStrategy: {type: RollingUpdate}
+  template:
+    metadata:
+      labels: {app: spire-agent}
+    spec:
+      hostPID: true # the workload attestor reads a caller's cgroup
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: spire-agent
+      containers:
+        - name: spire-agent
+          image: ghcr.io/spiffe/spire-agent:1.15.3
+          imagePullPolicy: Never
+          args: ["-config", "/run/spire/config/agent.conf"]
+          volumeMounts:
+            - {name: config, mountPath: /run/spire/config, readOnly: true}
+            - {name: bundle, mountPath: /run/spire/bundle, readOnly: true}
+            - {name: token, mountPath: /var/run/secrets/tokens}
+            - {name: socket-dir, mountPath: /run/spire/sockets}
+      volumes:
+        - name: config
+          configMap: {name: spire-agent}
+        - name: bundle
+          configMap: {name: spire-bundle}
+        - name: token
+          projected:
+            sources:
+              - serviceAccountToken: {path: spire-agent, expirationSeconds: 7200, audience: spire-server}
+        # Shared with the CSI driver through the host, so a restarted agent
+        # does not break the socket mounted into running pods.
+        - name: socket-dir
+          hostPath: {path: /run/spire/agent-sockets, type: DirectoryOrCreate}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spiffe-csi-driver
+  namespace: spire
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spiffe-csi-driver
+  namespace: spire
+  labels: {app: spiffe-csi-driver}
+spec:
+  selector:
+    matchLabels: {app: spiffe-csi-driver}
+  template:
+    metadata:
+      labels: {app: spiffe-csi-driver}
+    spec:
+      serviceAccountName: spiffe-csi-driver
+      containers:
+        - name: spiffe-csi-driver
+          image: ghcr.io/spiffe/spiffe-csi-driver:0.2.13
+          imagePullPolicy: Never
+          args: ["-workload-api-socket-dir", "/spire-agent-socket", "-csi-socket-path", "/spiffe-csi/csi.sock"]
+          env:
+            - name: MY_NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          volumeMounts:
+            - {name: socket-dir, mountPath: /spire-agent-socket, readOnly: true}
+            - {name: csi-socket-dir, mountPath: /spiffe-csi}
+            - {name: mountpoint-dir, mountPath: /var/lib/kubelet/pods, mountPropagation: Bidirectional}
+          securityContext:
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [all]}
+            privileged: true
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0
+          imagePullPolicy: Never
+          args: ["-csi-address", "/spiffe-csi/csi.sock",
+                 "-kubelet-registration-path", "/var/lib/kubelet/plugins/csi.spiffe.io/csi.sock"]
+          volumeMounts:
+            - {name: csi-socket-dir, mountPath: /spiffe-csi}
+            - {name: registration-dir, mountPath: /registration}
+      volumes:
+        - name: socket-dir
+          hostPath: {path: /run/spire/agent-sockets, type: DirectoryOrCreate}
+        - name: csi-socket-dir
+          hostPath: {path: /var/lib/kubelet/plugins/csi.spiffe.io, type: DirectoryOrCreate}
+        - name: mountpoint-dir
+          hostPath: {path: /var/lib/kubelet/pods, type: Directory}
+        - name: registration-dir
+          hostPath: {path: /var/lib/kubelet/plugins_registry, type: Directory}
+---
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: csi.spiffe.io
+spec:
+  attachRequired: false # ephemeral inline volumes only
+  podInfoOnMount: true
+  fsGroupPolicy: None   # the socket is world-accessible; ownership is not changed
+  volumeLifecycleModes: [Ephemeral]

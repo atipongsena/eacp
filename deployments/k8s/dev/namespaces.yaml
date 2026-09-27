@@ -17,3 +17,12 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: agents
+---
+# The development SPIRE (spire.yaml): its agent uses the host's PID namespace
+# and network, and the CSI driver is privileged.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spire
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

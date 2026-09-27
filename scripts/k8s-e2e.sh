@@ -35,13 +35,28 @@ echo "==> Building images and loading them into $PROFILE"
 "$python" deployments/docker/secrets/prepare_fakeerp_token.py
 docker build -q -t eacp:dev -f deployments/docker/Dockerfile . >/dev/null
 docker build -q -t eacp-agt-pdp:dev -f sidecars/agt-pdp/Dockerfile --target runtime . >/dev/null
-for img in eacp:dev eacp-agt-pdp:dev postgres:18-alpine nats:2.15.0-alpine busybox:1.37 hashicorp/vault:2.1.1; do
+for img in eacp:dev eacp-agt-pdp:dev postgres:18-alpine nats:2.15.0-alpine busybox:1.37 hashicorp/vault:2.1.1 \
+	ghcr.io/spiffe/spire-server:1.15.3 ghcr.io/spiffe/spire-agent:1.15.3 ghcr.io/spiffe/spiffe-csi-driver:0.2.13 \
+	registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.0; do
 	docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
 	minikube -p "$PROFILE" image load --overwrite=true "$img"
 done
 
 echo "==> Namespaces, dev secrets and dependencies"
 k apply -f deployments/k8s/dev/namespaces.yaml
+# ADR-019 Rev 1.4: the development SPIRE comes first, so Fake ERP starts with
+# its bundle. The worker's entry: namespace eacp, ServiceAccount eacp-worker,
+# JWT-SVIDs living an hour (twice the longest call budget and more).
+k apply -f deployments/k8s/dev/spire.yaml
+k -n spire rollout status deploy/spire-server --timeout=300s
+spire() { k -n spire exec deploy/spire-server -- /opt/spire/bin/spire-server "$@"; }
+entry() { # spiffe_id, then the entry create arguments
+	case $(spire entry show -spiffeID "$1") in "Found 0 entries"*) ;; *) return 0 ;; esac
+	spire entry create -spiffeID "$1" "${@:2}"
+}
+entry spiffe://eacp.test/k8s-nodes -node -selector k8s_psat:cluster:eacp-e2e
+entry spiffe://eacp.test/ns/eacp/sa/eacp-worker -parentID spiffe://eacp.test/k8s-nodes \
+	-selector k8s:ns:eacp -selector k8s:sa:eacp-worker -jwtSVIDTTL 3600
 work=$(mktemp -d)
 pki=$(winpath "$work/pki") # kubectl and go on Windows need a native path
 tunnel=
@@ -50,6 +65,7 @@ cleanup() {
 	rm -rf "$work"
 }
 trap cleanup EXIT
+spire bundle show -format spiffe >"$work/spiffe-bundle.json"
 EACP_ENV=development go run ./cmd/eacpctl pdp-dev-certs --dir "$pki" \
 	--name eacp-pdp --name eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local
 secret() { k -n "$1" create secret generic "$2" "${@:3}" --dry-run=client -o yaml | k apply -f -; }
@@ -66,15 +82,20 @@ EACP_ENV=development go run ./cmd/eacpctl dev-client-key --dir "$(winpath "$work
 # The worker's secrets on Kubernetes: the dev manifest plus the federated
 # binding, whose client assertion is the worker's projected token (ADR-019
 # Rev 1.1). Compose never sees that entry: it has no such token. The compose
-# key files under /run/secrets/eacp-client-key/ become inline PEM, and the
-# vault block logs in with Kubernetes auth instead of AppRole (Rev 1.3).
+# key files under /run/secrets/eacp-client-key/ become inline PEM, the
+# vault block logs in with Kubernetes auth instead of AppRole (Rev 1.3), and
+# the spiffe block and its bindings reach the development SPIRE (Rev 1.4).
 "$python" - deployments/docker/secrets/connector-secrets.dev.json deployments/k8s/connector-secrets.federated.json \
-	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" deployments/k8s/connector-secrets.vault.json <<'PY'
+	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" deployments/k8s/connector-secrets.vault.json \
+	deployments/k8s/connector-secrets.spiffe.json <<'PY'
 import json, os, sys
 merged = {"secrets": []}
 for path in sys.argv[1:3]:
     merged["secrets"] += json.load(open(path, encoding="utf-8"))["secrets"]
 merged["vault"] = json.load(open(sys.argv[5], encoding="utf-8"))["vault"]
+spiffe = json.load(open(sys.argv[6], encoding="utf-8"))
+merged["spiffe"] = spiffe["spiffe"]
+merged["secrets"] += spiffe["secrets"]
 prefix = "/run/secrets/eacp-client-key/"
 for entry in merged["secrets"]:
     pk = entry.get("oauth2", {}).get("private_key_jwt")
@@ -100,7 +121,8 @@ k get --raw /openid/v1/jwks >"$work/jwks.json"
 issuer=$("$python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["issuer"])' "$(winpath "$work/oidc.json")")
 k -n eacp-deps create configmap fakeerp-federation --from-literal=issuer="$issuer" \
 	--from-file=jwks.json="$(winpath "$work/jwks.json")" \
-	--from-file=client-jwks.json="$(winpath "$work/client-jwks.json")" --dry-run=client -o yaml | k apply -f -
+	--from-file=client-jwks.json="$(winpath "$work/client-jwks.json")" \
+	--from-file=spiffe-bundle.json="$(winpath "$work/spiffe-bundle.json")" --dry-run=client -o yaml | k apply -f -
 k -n eacp-deps create configmap nats-config --from-file=nats.conf=deployments/docker/nats/nats.conf \
 	--dry-run=client -o yaml | k apply -f -
 k apply -f deployments/k8s/dev/
@@ -108,6 +130,7 @@ k -n eacp-deps rollout status statefulset/postgres --timeout=300s
 for d in nats fakeerp fakemcp vault; do k -n eacp-deps rollout status "deploy/$d" --timeout=300s; done
 k -n eacp-deps wait --for=condition=complete job/vault-init --timeout=300s
 k -n agents rollout status deploy/agent --timeout=300s
+for d in spire-agent spiffe-csi-driver; do k -n spire rollout status "daemonset/$d" --timeout=300s; done
 
 echo "==> helm upgrade --install eacp"
 "$HELM" upgrade --install eacp deployments/helm/eacp -n eacp -f deployments/k8s/e2e-values.yaml \
