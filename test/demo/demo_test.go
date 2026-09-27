@@ -666,6 +666,8 @@ type erpEntry struct {
 	AssertionJTI string `json:"assertion_jti"`
 	// A JWT-SVID bearer call: the SVID's SHA-256, never the SVID.
 	SVIDSHA256 string `json:"svid_sha256"`
+	// A token exchange: the subject token's SHA-256, never the subject token.
+	SubjectSHA256 string `json:"subject_sha256"`
 }
 
 // erpAudit reads the Fake ERP audit with the ERP credential, as an auditor
