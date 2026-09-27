@@ -206,7 +206,7 @@ func TestEveryBadCardFailsTheScan(t *testing.T) {
 		{"not an object", raw(`[]`), "card_invalid"},
 		{"duplicate member", func(a *agent, w http.ResponseWriter, r *http.Request) {
 			b, _ := json.Marshal(card(a.endpoint))
-			raw(`{"name":"Evil",` + string(b[1:]))(a, w, r)
+			raw(`{"name":"Evil",`+string(b[1:]))(a, w, r)
 		}, "card_invalid"},
 		{"U+0000", with(func(c map[string]any, _ string) { c["description"] = "a\u0000b" }), "card_invalid"},
 		{"no name", with(func(c map[string]any, _ string) { delete(c, "name") }), "card_invalid"},
