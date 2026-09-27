@@ -49,11 +49,14 @@ func safeKeyHeader(name string) bool {
 	if !headerName.MatchString(name) {
 		return false
 	}
-	switch http.CanonicalHeaderKey(name) {
-	case "Authorization", "Proxy-Authorization", "Cookie", "Host", "Content-Type", "X-Eacp-Tenant-Id":
+	name = http.CanonicalHeaderKey(name)
+	switch name {
+	case "Authorization", "Proxy-Authorization", "Cookie", "Host", "Content-Type", "X-Eacp-Tenant-Id",
+		// SigV4 (ADR-019 §3f) leaves these unsigned, and the transport may set or drop them.
+		"User-Agent", "X-Amzn-Trace-Id", "Expect", "Transfer-Encoding":
 		return false
 	}
-	return true
+	return !strings.HasPrefix(name, "X-Amz-") // the signer sets X-Amz-Date and X-Amz-Security-Token
 }
 
 func validOperationKey(key string, tenant uuid.UUID) bool {

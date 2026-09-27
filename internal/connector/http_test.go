@@ -350,3 +350,27 @@ func TestALookupReferenceWithTheSessionTokenIsRefused(t *testing.T) {
 		t.Fatalf("a reference echoing the session token: %+v", got)
 	}
 }
+
+// TestAKeyHeaderTheSignerOwnsIsRefused: SigV4 overwrites X-Amz-Date and
+// X-Amz-Security-Token and leaves some headers unsigned, so a native key in
+// one of them would be lost or unprotected; the execute is refused before
+// anything is sent.
+func TestAKeyHeaderTheSignerOwnsIsRefused(t *testing.T) {
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"external_reference":"PO-7"}`))
+	}))
+	defer srv.Close()
+	for _, name := range []string{"X-Amz-Date", "x-amz-security-token", "X-Amz-Content-Sha256", "User-Agent",
+		"X-Amzn-Trace-Id", "Expect", "Transfer-Encoding"} {
+		c := awsCall(t, srv.URL)
+		c.Contract.IdempotencyKeyField = name
+		if res := connector.NewHTTP().Execute(context.Background(), c); res.Outcome != worker.Ambiguous || res.ErrorClass != "invalid_contract" {
+			t.Errorf("%s: result = %+v", name, res)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("the target was called %d times", calls.Load())
+	}
+}
