@@ -16,6 +16,10 @@ services:
     ports: !override
       - "127.0.0.1:18080:8080"
 
+  llm-gateway:
+    ports: !override
+      - "127.0.0.1:18083:8083"
+
   execution-worker:
     environment:
       EACP_WORKER_LEASE: 10s

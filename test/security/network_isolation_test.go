@@ -136,7 +136,8 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 	if !strings.Contains(env, "EACP_CONNECTOR_SECRETS_FILE=") || !strings.Contains(mounts, "/run/secrets/connector_secrets") {
 		t.Fatalf("worker has no connector secrets (env=%s mounts=%s); the negative checks would be meaningless", env, mounts)
 	}
-	for _, service := range []string{"controlplane-api", "fakeerp", "fakemcp", "fakea2a", "agent", "postgres"} {
+	for _, service := range []string{"controlplane-api", "llm-gateway", "fakeerp", "fakemcp", "fakea2a", "fakellm", "agent",
+		"postgres"} {
 		env, mounts := inspect(t, service)
 		if strings.Contains(env, "CONNECTOR_SECRETS") || strings.Contains(mounts, "connector_secrets") {
 			t.Errorf("%s holds connector secrets (env=%s mounts=%s)", service, env, mounts)
@@ -362,6 +363,16 @@ func TestTheVaultAppRoleIsMountedOnlyIntoTheWorker(t *testing.T) {
 // vault network.
 func TestOnlyTheWorkerSharesTheVaultNetwork(t *testing.T) {
 	requireCompose(t)
+	on := networkMembers(t, "vault")
+	if want := []string{"execution-worker", "vault", "vault-init"}; !slices.Equal(on, want) {
+		t.Fatalf("services on the vault network: %v, want %v", on, want)
+	}
+}
+
+// networkMembers lists, sorted, the compose services on network, which must
+// be internal.
+func networkMembers(t *testing.T, network string) []string {
+	t.Helper()
 	out, err := exec.Command("docker", "compose", "config", "--format", "json").Output()
 	if err != nil {
 		t.Fatalf("docker compose config: %v", err)
@@ -377,17 +388,15 @@ func TestOnlyTheWorkerSharesTheVaultNetwork(t *testing.T) {
 	if err := json.Unmarshal(out, &config); err != nil {
 		t.Fatal(err)
 	}
-	if !config.Networks["vault"].Internal {
-		t.Error("the vault network is not internal")
+	if !config.Networks[network].Internal {
+		t.Errorf("the %s network is not internal", network)
 	}
 	var on []string
 	for name, s := range config.Services {
-		if _, ok := s.Networks["vault"]; ok {
+		if _, ok := s.Networks[network]; ok {
 			on = append(on, name)
 		}
 	}
 	slices.Sort(on)
-	if want := []string{"execution-worker", "vault", "vault-init"}; !slices.Equal(on, want) {
-		t.Fatalf("services on the vault network: %v, want %v", on, want)
-	}
+	return on
 }

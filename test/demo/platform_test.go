@@ -25,7 +25,7 @@ var vaultCLI = []string{"env", "VAULT_ADDR=http://127.0.0.1:8200", "VAULT_TOKEN=
 // platform is where the demo stack runs: docker compose (scripts/demo.sh)
 // or a Kubernetes cluster installed by the Helm chart (scripts/k8s-e2e.sh).
 // Compose service names are the vocabulary: controlplane-api,
-// execution-worker, agt-pdp, postgres, nats, fakeerp, fakemcp and vault.
+// execution-worker, agt-pdp, postgres, nats, fakeerp, fakemcp, vault, llm-gateway and fakellm.
 type platform interface {
 	name() string
 	eacpctl(args ...string) (string, error) // eacpctl with the owner DSN
@@ -102,7 +102,7 @@ func (c *composePlatform) vault(args ...string) (string, error) {
 func (c *composePlatform) logs() string {
 	c.t.Helper()
 	return c.must("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "fakemcp", "fakea2a", "migrate",
-		"postgres", "agt-pdp", "nats")
+		"postgres", "agt-pdp", "nats", "llm-gateway", "fakellm")
 }
 func (c *composePlatform) erpAudit(token string) ([]byte, error) {
 	cmd := exec.Command("docker", "run", "--rm", "--network", c.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",

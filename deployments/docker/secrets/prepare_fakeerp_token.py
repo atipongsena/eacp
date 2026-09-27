@@ -1,5 +1,6 @@
-"""Create the local Fake ERP, Fake MCP and Fake A2A verifier secrets, and the Fake ERP's
-OAuth client secret, from the existing dev manifest."""
+"""Create the local Fake ERP, Fake MCP and Fake A2A verifier secrets and the Fake ERP's
+OAuth client secret from the connector dev manifest, and the Fake LLM's key from the
+gateway's provider manifest."""
 
 import json
 import os
@@ -9,6 +10,7 @@ import tempfile
 
 directory = Path(__file__).resolve().parent
 manifest = json.loads((directory / "connector-secrets.dev.json").read_text())
+llm_manifest = json.loads((directory / "llm-secrets.dev.json").read_text())
 
 
 def write_file(prefix, filename, value):
@@ -25,10 +27,10 @@ def write_file(prefix, filename, value):
             os.unlink(temporary)
 
 
-def write_verifier(secret_ref, host, filename):
+def write_verifier(secret_ref, host, filename, source=None):
     matches = [
         item
-        for item in manifest["secrets"]
+        for item in (source or manifest)["secrets"]
         if item.get("secret_ref") == secret_ref and item.get("host") == host
     ]
     # One credential per target, however many demo tenants it is bound to.
@@ -61,4 +63,5 @@ def write_oauth_client(secret_ref, client_id, filename):
 write_verifier("fakeerp", "fakeerp:8090", "fakeerp-token.dev")
 write_verifier("fakemcp", "fakemcp:8091", "fakemcp-token.dev")
 write_verifier("fakea2a", "fakea2a:8092", "fakea2a-token.dev")
+write_verifier("fakellm", "fakellm:8093", "fakellm-key.dev", llm_manifest)
 write_oauth_client("fakeerp-jit", "eacp-worker", "fakeerp-oauth-client.dev")
