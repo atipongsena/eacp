@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -51,7 +51,9 @@ k apply -f deployments/k8s/dev/spire.yaml
 k -n spire rollout status deploy/spire-server --timeout=300s
 spire() { k -n spire exec deploy/spire-server -- /opt/spire/bin/spire-server "$@"; }
 entry() { # spiffe_id, then the entry create arguments
-	case $(spire entry show -spiffeID "$1") in "Found 0 entries"*) ;; *) return 0 ;; esac
+	local found
+	found=$(spire entry show -spiffeID "$1") # a failure stops the script (set -e)
+	case $found in "Found 0 entries"*) ;; *) return 0 ;; esac
 	spire entry create -spiffeID "$1" "${@:2}"
 }
 entry spiffe://eacp.test/k8s-nodes -node -selector k8s_psat:cluster:eacp-e2e
@@ -151,7 +153,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then
