@@ -76,6 +76,17 @@ func newJITWith(t *testing.T, erp fakeerp.Options, client string, timeoutMS int)
 func newJITFor(t *testing.T, erpFor func(tokenURL string) fakeerp.Options, clientFor func(tokenURL string) string,
 	timeoutMS int) *jitEnv {
 	t.Helper()
+	return newJITFile(t, erpFor, func(tokenURL, host string) string {
+		return fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,
+			"oauth2":{"token_url":%q,%s}}]}`, pgtest.TenantA, host, tokenURL, clientFor(tokenURL))
+	}, timeoutMS)
+}
+
+// newJITFile is newJITFor with the whole secrets file chosen by the test; its
+// binding must be tenant A's "erp-jit" for host.
+func newJITFile(t *testing.T, erpFor func(tokenURL string) fakeerp.Options, fileFor func(tokenURL, host string) string,
+	timeoutMS int) *jitEnv {
+	t.Helper()
 	v := &jitEnv{t: t, clock: &clock{t: time.Now()}, logs: &bytes.Buffer{}, logMu: &sync.Mutex{}}
 	var handler atomic.Value // the Fake ERP, built once the server's URL is known
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.Load().(http.Handler).ServeHTTP(w, r) })
@@ -141,8 +152,7 @@ func newJITFor(t *testing.T, erpFor func(tokenURL string) fakeerp.Options, clien
 	set := logging.NewSecretSet()
 	logger := logging.NewWithSet(syncWriter{v.logs, v.logMu}, slog.LevelDebug, "json", set)
 	v.logger = logger
-	v.secrets, err = worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,
-		"oauth2":{"token_url":%q,%s}}]}`, pgtest.TenantA, u.Host, tokenURL, clientFor(tokenURL))),
+	v.secrets, err = worker.LoadSecrets(secretsFile(t, fileFor(tokenURL, u.Host)),
 		worker.AllowPlainTokenURL(), worker.WithRedaction(set), worker.WithClock(v.clock.now), worker.WithLogger(logger))
 	if err != nil {
 		t.Fatal(err)

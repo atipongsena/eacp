@@ -64,6 +64,10 @@ worker:
     enabled: false
     audience: ""                # the audience the IdP expects, e.g. api://AzureADTokenExchange
     expirationSeconds: 3600     # 600-86400; the kubelet rotates it at 80 %
+  vaultIdentity:                # ADR-019 Rev 1.3: a projected token for the worker's Vault login (Kubernetes auth)
+    enabled: false
+    audience: vault             # the audience the Vault role binds
+    expirationSeconds: 3600     # 600-86400
   env: {}
   resources:
     requests: {cpu: 100m, memory: 128Mi}

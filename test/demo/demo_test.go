@@ -44,9 +44,10 @@ type demo struct {
 	mu        sync.Mutex
 	responses []string // every API response body, for the secret scan
 	keys      map[string]string
-	reader    string // who reads actions: the submitting agent by default
-	subject   string // the purchases' subject (post)
-	secretRef string // the ERP connector's secret_ref (register)
+	reader    string      // who reads actions: the submitting agent by default
+	subject   string      // the purchases' subject (post)
+	secretRef string      // the ERP connector's secret_ref (register)
+	extra     [][2]string // more ERP connectors (name, secret_ref), each with create_po (register)
 	client    *http.Client
 	retries   atomic.Int64 // requests call had to send again
 	ids       map[string]string
@@ -387,6 +388,17 @@ func (d *demo) register() {
 		d.contracts[name] = contracts[name]
 		d.ids["tool "+name] = tool["id"].(string)
 	}
+	allowed := []string{"erp.create_po", "erp.create_po_eventual"}
+	for _, x := range d.extra {
+		other := d.must(201, "erin", "POST", "/v1/connectors", map[string]any{"name": x[0], "protocol": "http",
+			"endpoint": "http://fakeerp:8090", "secret_ref": x[1]})
+		tool := d.must(201, "erin", "POST", "/v1/connectors/"+other["id"].(string)+"/tools", map[string]any{"name": "create_po"})
+		c := d.must(201, "erin", "POST", "/v1/tools/"+tool["id"].(string)+"/contracts", contracts["create_po"])
+		d.must(204, "rita", "POST", "/v1/tools/"+tool["id"].(string)+"/contract", map[string]any{"contract_id": c["id"]})
+		d.ids["tool "+x[0]+".create_po"] = tool["id"].(string)
+		allowed = append(allowed, x[0]+".create_po")
+		d.logf("connector %s (http://fakeerp:8090, secret_ref %s), tool create_po; contract approved by rita", x[0], x[1])
+	}
 	d.logf("connector erp (http://fakeerp:8090; its credential lives only in the worker), tools create_po " +
 		"(AUTHORITATIVE lookup), create_po_eventual (BEST_EFFORT) and cancel_po; contracts approved by rita")
 
@@ -398,7 +410,7 @@ func (d *demo) register() {
 	vid := version["id"].(string)
 	d.ids["agent procurement-bot"] = agent["id"].(string)
 	al := d.must(201, "erin", "POST", "/v1/agent-versions/"+vid+"/allowlists",
-		map[string]any{"tools": []string{"erp.create_po", "erp.create_po_eventual"}})
+		map[string]any{"tools": allowed})
 	d.must(204, "rita", "POST", "/v1/agent-versions/"+vid+"/allowlist", map[string]any{"allowlist_id": al["id"]})
 	d.must(204, "ravi", "POST", "/v1/agent-versions/"+vid+"/transitions", map[string]any{"to": "ACTIVE", "reason": "go live"})
 	cred, hash := d.newKey("agent", identity.KindAgent)
@@ -406,8 +418,8 @@ func (d *demo) register() {
 		"agent_version_id": vid, "hash": hash, "expires_in_days": 1})
 	d.must(204, "rita", "POST", "/v1/credentials/"+cred.String()+"/approve", nil)
 	self := d.must(200, "agent", "GET", "/v1/agent/self", nil)
-	d.logf("agent procurement-bot (owner carol) version %s is %s with allowlist [erp.create_po, erp.create_po_eventual]",
-		vid, self["state"])
+	d.logf("agent procurement-bot (owner carol) version %s is %s with allowlist [%s]",
+		vid, self["state"], strings.Join(allowed, ", "))
 }
 
 // bypass shows that the agent runtime has no route to the ERP and no

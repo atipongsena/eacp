@@ -47,3 +47,11 @@ func TestTemporarySecretsExpireAndAreBounded(t *testing.T) {
 		t.Fatal("an empty value was added")
 	}
 }
+
+func TestAddingAPermanentValueAgainKeepsOneEntry(t *testing.T) {
+	s := NewSecretSet("a")
+	s.AddPermanent("a", "b", "b")
+	if got := s.Values(); len(got) != 2 {
+		t.Fatalf("Values() = %v, want a and b once each", got)
+	}
+}

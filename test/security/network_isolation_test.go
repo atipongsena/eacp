@@ -4,8 +4,10 @@
 package security
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -122,7 +124,7 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":6`) {
+	if err != nil || !strings.Contains(string(logs), `"bindings":8`) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
 	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") ||
@@ -269,5 +271,76 @@ func TestTheClientKeyIsMountedOnlyIntoTheWorker(t *testing.T) {
 				t.Errorf("%s mounts %s", service, name)
 			}
 		}
+	}
+}
+
+// ADR-019 Rev 1.3: the agent has no route to Vault.
+func TestAgentCannotReachVault(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_vault", "busybox:1.37",
+		"wget", "-q", "-T", "3", "-O", "-", "http://vault:8200/v1/sys/health").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), `"initialized":true`) {
+		t.Fatalf("the vault network could not reach Vault (err=%v out=%q); the probe is broken", err, out)
+	}
+	if out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", "http://vault:8200/v1/sys/health"); err == nil {
+		t.Fatalf("agent reached Vault: %q", out)
+	}
+}
+
+// ADR-019 Rev 1.3: the worker's AppRole login files are mounted read-only
+// into the worker and no other running service.
+func TestTheVaultAppRoleIsMountedOnlyIntoTheWorker(t *testing.T) {
+	requireCompose(t)
+	if got := volumeMounts(t, "execution-worker")["vault_approle"]; got != "/run/secrets/eacp-vault-approle" {
+		t.Fatalf("the worker mounts vault_approle at %q", got)
+	}
+	id, err := exec.Command("docker", "compose", "ps", "-q", "execution-worker").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rw, err := exec.Command("docker", "inspect", "--format",
+		`{{range .Mounts}}{{if eq .Destination "/run/secrets/eacp-vault-approle"}}{{.RW}}{{end}}{{end}}`,
+		strings.TrimSpace(string(id))).Output()
+	if err != nil || strings.TrimSpace(string(rw)) != "false" {
+		t.Fatalf("the worker's AppRole mount is not read-only (err=%v rw=%q)", err, rw)
+	}
+	for _, service := range []string{"controlplane-api", "fakeerp", "fakemcp", "agent", "postgres", "vault"} {
+		if _, ok := volumeMounts(t, service)["vault_approle"]; ok {
+			t.Errorf("%s mounts vault_approle", service)
+		}
+	}
+}
+
+// ADR-019 Rev 1.3: only Vault, its one-shot init and the worker join the
+// vault network.
+func TestOnlyTheWorkerSharesTheVaultNetwork(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "compose", "config", "--format", "json").Output()
+	if err != nil {
+		t.Fatalf("docker compose config: %v", err)
+	}
+	var config struct {
+		Services map[string]struct {
+			Networks map[string]any `json:"networks"`
+		} `json:"services"`
+		Networks map[string]struct {
+			Internal bool `json:"internal"`
+		} `json:"networks"`
+	}
+	if err := json.Unmarshal(out, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.Networks["vault"].Internal {
+		t.Error("the vault network is not internal")
+	}
+	var on []string
+	for name, s := range config.Services {
+		if _, ok := s.Networks["vault"]; ok {
+			on = append(on, name)
+		}
+	}
+	slices.Sort(on)
+	if want := []string{"execution-worker", "vault", "vault-init"}; !slices.Equal(on, want) {
+		t.Fatalf("services on the vault network: %v, want %v", on, want)
 	}
 }

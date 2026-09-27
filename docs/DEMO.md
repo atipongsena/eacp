@@ -145,6 +145,17 @@ The agent cannot reach the token endpoint any more than the ERP (`test/security`
 
 `test/security` `TestTheClientKeyIsMountedOnlyIntoTheWorker` checks the compose mounts.
 
+### Vault demo
+
+`TestVaultDemo` shows Phase 24d (ADR-019 Rev 1.3) and runs with `DEMO=J` on compose and in `scripts/k8s-e2e.sh`. A DEVELOPMENT-ONLY Vault in dev mode (in memory, a fixed dev root token) holds tenant Wayne's two credentials in KV v2: the ERP's static token at `secret/eacp/fakeerp` and the OAuth client secret at `secret/eacp/fakeerp-oauth`. Its one-shot init writes them from the dev secret files, with a policy that can only read `secret/data/eacp/*`. On compose the worker logs in with AppRole (the init writes `role_id` and `secret_id` into a volume only the worker mounts, read-only); on Kubernetes with Kubernetes auth, presenting its own projected token with audience `vault`. The worker's secrets bind `fakeerp-vault` (`value_vault`) and `fakeerp-vault-oauth` (`client_secret_vault`) and refresh every 30 s.
+
+- **V0.** Bootstrap tenant Wayne and a policy that allows routine ERP work.
+- **V1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `execution-worker` (the static token read from Vault) and `oauth:eacp-worker` (a token minted with the client secret read from Vault).
+- **V2.** `vault kv delete secret/eacp/fakeerp`: after one refresh interval the next purchase waits in `QUEUED` with no attempt and no purchase order, because the worker never serves a stale value. `vault kv undelete` restores it and the purchase succeeds with one purchase order.
+- **V3.** No Vault token (`hvs.…`), neither Vault-held value and no issued token appears in API responses, service logs or a database dump.
+
+`test/security` `TestAgentCannotReachVault`, `TestTheVaultAppRoleIsMountedOnlyIntoTheWorker` and `TestOnlyTheWorkerSharesTheVaultNetwork` check the compose boundary. Vault's data lives in memory: after restarting the `vault` service, run `docker compose up -d --force-recreate vault vault-init`.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -35,7 +35,7 @@ echo "==> Building images and loading them into $PROFILE"
 "$python" deployments/docker/secrets/prepare_fakeerp_token.py
 docker build -q -t eacp:dev -f deployments/docker/Dockerfile . >/dev/null
 docker build -q -t eacp-agt-pdp:dev -f sidecars/agt-pdp/Dockerfile --target runtime . >/dev/null
-for img in eacp:dev eacp-agt-pdp:dev postgres:18-alpine nats:2.15.0-alpine busybox:1.37; do
+for img in eacp:dev eacp-agt-pdp:dev postgres:18-alpine nats:2.15.0-alpine busybox:1.37 hashicorp/vault:2.1.1; do
 	docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
 	minikube -p "$PROFILE" image load --overwrite=true "$img"
 done
@@ -66,13 +66,15 @@ EACP_ENV=development go run ./cmd/eacpctl dev-client-key --dir "$(winpath "$work
 # The worker's secrets on Kubernetes: the dev manifest plus the federated
 # binding, whose client assertion is the worker's projected token (ADR-019
 # Rev 1.1). Compose never sees that entry: it has no such token. The compose
-# key files under /run/secrets/eacp-client-key/ become inline PEM.
+# key files under /run/secrets/eacp-client-key/ become inline PEM, and the
+# vault block logs in with Kubernetes auth instead of AppRole (Rev 1.3).
 "$python" - deployments/docker/secrets/connector-secrets.dev.json deployments/k8s/connector-secrets.federated.json \
-	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" <<'PY'
+	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" deployments/k8s/connector-secrets.vault.json <<'PY'
 import json, os, sys
 merged = {"secrets": []}
 for path in sys.argv[1:3]:
     merged["secrets"] += json.load(open(path, encoding="utf-8"))["secrets"]
+merged["vault"] = json.load(open(sys.argv[5], encoding="utf-8"))["vault"]
 prefix = "/run/secrets/eacp-client-key/"
 for entry in merged["secrets"]:
     pk = entry.get("oauth2", {}).get("private_key_jwt")
@@ -103,7 +105,8 @@ k -n eacp-deps create configmap nats-config --from-file=nats.conf=deployments/do
 	--dry-run=client -o yaml | k apply -f -
 k apply -f deployments/k8s/dev/
 k -n eacp-deps rollout status statefulset/postgres --timeout=300s
-for d in nats fakeerp fakemcp; do k -n eacp-deps rollout status "deploy/$d" --timeout=300s; done
+for d in nats fakeerp fakemcp vault; do k -n eacp-deps rollout status "deploy/$d" --timeout=300s; done
+k -n eacp-deps wait --for=condition=complete job/vault-init --timeout=300s
 k -n agents rollout status deploy/agent --timeout=300s
 
 echo "==> helm upgrade --install eacp"
@@ -125,7 +128,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then

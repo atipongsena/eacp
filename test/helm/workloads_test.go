@@ -196,6 +196,11 @@ func TestDangerousValuesAreRefused(t *testing.T) {
 		"worker.workloadIdentity.expirationSeconds=599":   "workloadIdentity.expirationSeconds",
 		"worker.workloadIdentity.expirationSeconds=86401": "workloadIdentity.expirationSeconds",
 		"worker.workloadIdentity.expirationSeconds=1.5":   "workloadIdentity.expirationSeconds",
+		"worker.vaultIdentity.audience=":                  "vaultIdentity.audience",
+		"worker.vaultIdentity.audience=a b":               "vaultIdentity.audience",
+		"worker.vaultIdentity.expirationSeconds=599":      "vaultIdentity.expirationSeconds",
+		"worker.vaultIdentity.expirationSeconds=86401":    "vaultIdentity.expirationSeconds",
+		"worker.vaultIdentity.expirationSeconds=1.5":      "vaultIdentity.expirationSeconds",
 	} {
 		out, err := renderErr(t, "--set", set)
 		if err == nil || !strings.Contains(out, msg) {

@@ -18,10 +18,14 @@ import (
 	"time"
 )
 
+// vaultCLI runs the vault CLI inside the dev Vault against itself with its
+// dev-only root token (docker-compose.yml, deployments/k8s/dev/vault.yaml).
+var vaultCLI = []string{"env", "VAULT_ADDR=http://127.0.0.1:8200", "VAULT_TOKEN=dev-only-vault-root-token", "vault"}
+
 // platform is where the demo stack runs: docker compose (scripts/demo.sh)
 // or a Kubernetes cluster installed by the Helm chart (scripts/k8s-e2e.sh).
 // Compose service names are the vocabulary: controlplane-api,
-// execution-worker, agt-pdp, postgres, nats, fakeerp and fakemcp.
+// execution-worker, agt-pdp, postgres, nats, fakeerp, fakemcp and vault.
 type platform interface {
 	name() string
 	eacpctl(args ...string) (string, error) // eacpctl with the owner DSN
@@ -31,6 +35,7 @@ type platform interface {
 	start(service string)                    // after kill or stop; waits until ready
 	agent(args ...string) (string, error)    // run in the stand-in agent
 	postgres(args ...string) (string, error) // run in the PostgreSQL container
+	vault(args ...string) (string, error)    // the vault CLI in the dev Vault, as its root
 	logs() string                            // every EACP and dependency log
 	erpAudit(token string) ([]byte, error)   // GET fakeerp /v1/audit with the ERP credential
 	copyToFakeMCP(local, remote string) error
@@ -85,6 +90,9 @@ func (c *composePlatform) agent(args ...string) (string, error) {
 }
 func (c *composePlatform) postgres(args ...string) (string, error) {
 	return c.run(append([]string{"exec", "-T", "postgres"}, args...)...)
+}
+func (c *composePlatform) vault(args ...string) (string, error) {
+	return c.run(append(append([]string{"exec", "-T", "vault"}, vaultCLI...), args...)...)
 }
 func (c *composePlatform) logs() string {
 	c.t.Helper()
@@ -375,6 +383,10 @@ func (k *k8sPlatform) agent(args ...string) (string, error) {
 
 func (k *k8sPlatform) postgres(args ...string) (string, error) {
 	return k.kubectl(append([]string{"-n", "eacp-deps", "exec", "postgres-0", "-c", "postgres", "--"}, args...)...)
+}
+
+func (k *k8sPlatform) vault(args ...string) (string, error) {
+	return k.kubectl(append(append([]string{"-n", "eacp-deps", "exec", "deploy/vault", "--"}, vaultCLI...), args...)...)
 }
 
 // logs returns the current pods' logs: unlike compose, Kubernetes drops a

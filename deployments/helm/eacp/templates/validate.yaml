@@ -42,5 +42,12 @@
 {{- $exp := $wi.expirationSeconds -}}
 {{- if not (or (kindIs "int" $exp) (kindIs "int64" $exp) (kindIs "float64" $exp)) -}}{{- fail "worker.workloadIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
 {{- if or (lt (float64 $exp) 600.0) (gt (float64 $exp) 86400.0) (ne (float64 $exp) (float64 (int $exp))) -}}{{- fail "worker.workloadIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
+{{- $vi := $v.worker.vaultIdentity -}}
+{{- if $vi.enabled -}}
+{{- if or (not $vi.audience) (regexMatch "[[:space:]]" (toString $vi.audience)) (gt (len (toString $vi.audience)) 256) -}}{{- fail "worker.vaultIdentity.audience must be 1-256 characters without whitespace when the Vault identity is enabled" -}}{{- end -}}
+{{- end -}}
+{{- $vexp := $vi.expirationSeconds -}}
+{{- if not (or (kindIs "int" $vexp) (kindIs "int64" $vexp) (kindIs "float64" $vexp)) -}}{{- fail "worker.vaultIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
+{{- if or (lt (float64 $vexp) 600.0) (gt (float64 $vexp) 86400.0) (ne (float64 $vexp) (float64 (int $vexp))) -}}{{- fail "worker.vaultIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
 {{- if not $v.database.peers -}}{{- fail "database.peers must select PostgreSQL for NetworkPolicy egress" -}}{{- end -}}
 {{- if and $v.nats.enabled (not $v.nats.peers) -}}{{- fail "nats.peers must select NATS for NetworkPolicy egress (or set nats.enabled=false)" -}}{{- end -}}
