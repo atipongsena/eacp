@@ -37,7 +37,7 @@ func readAssertion(path string, now time.Time) (Secret, time.Time, string) {
 	if !now.IsZero() && exp.Before(now.Add(tokenRequestTimeout)) {
 		return Secret{}, time.Time{}, "assertion_expired"
 	}
-	return Secret{v}, exp, ""
+	return Secret{v: v}, exp, ""
 }
 
 // assertionExpiry parses a compact JWS far enough to read its exp: three

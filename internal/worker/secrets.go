@@ -66,7 +66,25 @@ const redacted = "[REDACTED]"
 
 // Secret is a connector credential (ADR-001 §3). Its value never prints,
 // logs or marshals; only Reveal returns it, for the connector call itself.
-type Secret struct{ v string }
+type Secret struct {
+	v   string
+	aws *awsKeys // temporary AWS keys (ADR-019 §3f): v is the secret access key
+}
+
+// SignsRequests reports an AWS credential, which signs a request (SigV4)
+// rather than riding on it as a Bearer.
+func (s Secret) SignsRequests() bool { return s.aws != nil }
+
+// values returns every secret part of s: what must be redacted and scrubbed.
+func (s Secret) values() []string {
+	switch {
+	case s.aws != nil:
+		return []string{s.v, s.aws.sessionToken}
+	case s.v != "":
+		return []string{s.v}
+	}
+	return nil
+}
 
 // Reveal returns the secret value. Call it only to authenticate a request.
 func (s Secret) Reveal() string { return s.v }
@@ -260,7 +278,7 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 		if value == "" || len(value) > maxSecret {
 			return nil, fmt.Errorf("worker: secret %d: value must be 1-%d bytes", i, maxSecret)
 		}
-		store.m[k] = secretEntry{host: e.Host, secret: Secret{value}}
+		store.m[k] = secretEntry{host: e.Host, secret: Secret{v: value}}
 	}
 	return store, nil
 }

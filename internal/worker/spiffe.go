@@ -154,7 +154,7 @@ func (s *spiffeClient) fetch(ctx context.Context, audience string) (Secret, time
 	if svid.ID != s.id || len(token) > maxAssertion || !tokenPattern.MatchString(token) || !svid.Expiry.After(started) {
 		return Secret{}, time.Time{}, "spiffe_invalid"
 	}
-	return Secret{token}, svid.Expiry, ""
+	return Secret{v: token}, svid.Expiry, ""
 }
 
 // client returns the Workload API client, creating it at the first use; a

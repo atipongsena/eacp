@@ -211,7 +211,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 		}
 	}
 	p := &oauthProvider{
-		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
+		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{v: secret},
 		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp, signer: signer,
 		vault: c.vault, secretRef: secretRef, pk: pk, spiffe: sc,
 		scope: e.Scope, resource: e.Resource, exchange: x, publicClient: x != nil && kinds == 0 && e.ClientID != "", now: c.now, redact: c.redact, log: c.log,
@@ -305,7 +305,11 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 		p.log.WarnContext(ctx, "credential mint failed", append(p.mintAttrs(), "class", class, "retry_after", p.backoff)...)
 		return Secret{}, ErrCredentialUnavailable
 	}
-	p.log.InfoContext(ctx, "credential minted", append(p.mintAttrs(), "expires_in", expiry.Sub(now).Round(time.Second))...)
+	attrs := append(p.mintAttrs(), "expires_in", expiry.Sub(now).Round(time.Second))
+	if tok.aws != nil {
+		attrs = append(attrs, "access_key_id", tok.aws.accessKeyID) // an identifier, not a secret
+	}
+	p.log.InfoContext(ctx, "credential minted", attrs...)
 	return tok, nil
 }
 
@@ -337,8 +341,10 @@ func (p *oauthProvider) impersonates() bool {
 }
 
 func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
-	if p.redact != nil && tok.v != "" {
-		p.redact.Add(tok.v, expiry.Add(redactAfterExpiry))
+	if p.redact != nil {
+		for _, v := range tok.values() {
+			p.redact.Add(v, expiry.Add(redactAfterExpiry))
+		}
 	}
 }
 
@@ -347,6 +353,9 @@ func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
 // usable lifetime, or a failure class, never a response body or secret. Both
 // expiries are measured from before the request.
 func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Time, time.Duration, string) {
+	if p.aws != nil {
+		return p.assumeRole(ctx)
+	}
 	form := url.Values{"grant_type": {"client_credentials"}}
 	if p.exchange != nil {
 		// RFC 8693: the worker's own identity token is the subject (§3e); it
@@ -474,10 +483,10 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 		return Secret{}, time.Time{}, time.Time{}, 0, "wrong_token_type"
 	}
 	if p.exchange != nil && p.exchange.impersonate != nil {
-		return p.impersonate(ctx, Secret{tr.AccessToken}, start.Add(time.Duration(n)*time.Second))
+		return p.impersonate(ctx, Secret{v: tr.AccessToken}, start.Add(time.Duration(n)*time.Second))
 	}
 	lifetime := min(time.Duration(n)*time.Second, maxTokenUse)
-	return Secret{tr.AccessToken}, start.Add(lifetime), start.Add(time.Duration(n) * time.Second), lifetime, ""
+	return Secret{v: tr.AccessToken}, start.Add(lifetime), start.Add(time.Duration(n) * time.Second), lifetime, ""
 }
 
 // clientAssertion returns the client assertion of this mint and its expiry,
@@ -559,13 +568,13 @@ func (p *oauthProvider) live() []string {
 		out = append(out, p.federated.v)
 	}
 	if p.token.v != "" && now.Before(p.realExpiry) {
-		out = append(out, p.token.v)
+		out = append(out, p.token.values()...)
 	}
 	kept := p.retired[:0]
 	for _, h := range p.retired {
 		if now.Before(h.expiry) {
 			kept = append(kept, h)
-			out = append(out, h.token.v)
+			out = append(out, h.token.values()...)
 		}
 	}
 	p.retired = kept

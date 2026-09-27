@@ -356,5 +356,5 @@ func (s *assertionSigner) sign(clientID, audience string, now time.Time) (Secret
 	if err != nil {
 		return Secret{}, time.Time{}, err
 	}
-	return Secret{input + "." + base64.RawURLEncoding.EncodeToString(sig)}, time.Unix(exp.Unix(), 0), nil
+	return Secret{v: input + "." + base64.RawURLEncoding.EncodeToString(sig)}, time.Unix(exp.Unix(), 0), nil
 }

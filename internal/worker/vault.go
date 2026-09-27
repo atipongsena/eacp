@@ -259,7 +259,7 @@ func (v *vaultClient) value(ctx context.Context, r vaultRef) (Secret, string) {
 	if v.redact != nil {
 		v.redact.AddPermanent(s)
 	}
-	return Secret{s}, ""
+	return Secret{v: s}, ""
 }
 
 // drop forgets r's cached path: the next value reads Vault.

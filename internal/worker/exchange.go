@@ -235,5 +235,5 @@ func (p *oauthProvider) impersonate(ctx context.Context, federated Secret, feder
 		return Secret{}, time.Time{}, time.Time{}, 0, "impersonation_invalid"
 	}
 	lifetime := min(exp.Sub(start), maxTokenUse)
-	return Secret{r.AccessToken}, start.Add(lifetime), exp, lifetime, ""
+	return Secret{v: r.AccessToken}, start.Add(lifetime), exp, lifetime, ""
 }

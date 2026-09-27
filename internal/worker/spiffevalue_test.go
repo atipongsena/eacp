@@ -245,7 +245,7 @@ func TestRejectedDropsOnlyTheCurrentSVID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Rejected(spiffeTenant, "erp-spiffe", Secret{"an-old-svid"})
+	s.Rejected(spiffeTenant, "erp-spiffe", Secret{v: "an-old-svid"})
 	if again, _ := s.Credential(ctx, spiffeTenant, "erp-spiffe", spiffeEndpoint, 33*time.Second); again.Reveal() != first.Reveal() ||
 		a.Fetches("erp-api") != 1 {
 		t.Fatal("rejecting an old SVID dropped the current one")

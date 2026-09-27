@@ -1,9 +1,14 @@
 package worker
 
 import (
+	"context"
+	"encoding/xml"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -89,4 +94,79 @@ func newAWSProvider(i int, e awsEntry, b Binding, c loadConfig) (*oauthProvider,
 	}
 	return &oauthProvider{binding: b, tokenURL: u.String(), exchange: x, aws: a,
 		now: c.now, redact: c.redact, log: c.log, client: newTokenClient()}, nil
+}
+
+// awsKeys are the rest of a temporary AWS credential; its secret access key
+// is the Secret's value.
+type awsKeys struct {
+	accessKeyID, sessionToken, region, service string
+}
+
+const (
+	maxAWSSecretKey    = 1024
+	maxAWSSessionToken = 8192
+	maxAWSKeyLifetime  = 12 * time.Hour // AWS's longest role session
+)
+
+var accessKeyIDPattern = regexp.MustCompile(`^[A-Z0-9]{16,128}$`)
+
+// assumeRole trades the subject token for temporary keys
+// (AssumeRoleWithWebIdentity, unsigned) and returns them as a signing Secret
+// with the provider's use-until, real expiry and lifetime, or a failure
+// class, never a response body or secret.
+func (p *oauthProvider) assumeRole(ctx context.Context) (Secret, time.Time, time.Time, time.Duration, string) {
+	subject, class := p.subjectToken(ctx)
+	if class != "" {
+		return Secret{}, time.Time{}, time.Time{}, 0, class
+	}
+	a := p.aws
+	form := url.Values{"Action": {"AssumeRoleWithWebIdentity"}, "Version": {"2011-06-15"}, "RoleArn": {a.roleARN},
+		"RoleSessionName": {a.sessionName}, "WebIdentityToken": {subject.v},
+		"DurationSeconds": {strconv.Itoa(int(a.duration / time.Second))}}
+	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "request"
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/xml")
+	start := p.now()
+	resp, err := p.client.Do(req) // never follows a redirect
+	if err != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "transport"
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponse+1))
+	if err != nil || len(body) > maxTokenResponse {
+		return Secret{}, time.Time{}, time.Time{}, 0, "response_unreadable"
+	}
+	if resp.StatusCode != http.StatusOK {
+		return Secret{}, time.Time{}, time.Time{}, 0, fmt.Sprintf("http_%d", resp.StatusCode)
+	}
+	var r struct {
+		XMLName     xml.Name `xml:"AssumeRoleWithWebIdentityResponse"`
+		Credentials struct {
+			AccessKeyID     string `xml:"AccessKeyId"`
+			SecretAccessKey string `xml:"SecretAccessKey"`
+			SessionToken    string `xml:"SessionToken"`
+			Expiration      string `xml:"Expiration"`
+		} `xml:"AssumeRoleWithWebIdentityResult>Credentials"`
+	}
+	if xml.Unmarshal(body, &r) != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "sts_invalid"
+	}
+	c := r.Credentials
+	if !accessKeyIDPattern.MatchString(c.AccessKeyID) ||
+		len(c.SecretAccessKey) > maxAWSSecretKey || !tokenPattern.MatchString(c.SecretAccessKey) ||
+		len(c.SessionToken) > maxAWSSessionToken || !tokenPattern.MatchString(c.SessionToken) {
+		return Secret{}, time.Time{}, time.Time{}, 0, "sts_invalid"
+	}
+	exp, err := time.Parse(time.RFC3339, c.Expiration)
+	if err != nil || !exp.After(start) || exp.After(start.Add(maxAWSKeyLifetime)) {
+		return Secret{}, time.Time{}, time.Time{}, 0, "sts_invalid"
+	}
+	lifetime := min(exp.Sub(start), maxTokenUse)
+	return Secret{v: c.SecretAccessKey, aws: &awsKeys{accessKeyID: c.AccessKeyID, sessionToken: c.SessionToken,
+		region: a.region, service: a.service}}, start.Add(lifetime), exp, lifetime, ""
 }
