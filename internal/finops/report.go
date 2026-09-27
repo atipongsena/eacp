@@ -193,7 +193,7 @@ func (s *Service) Chargeback(ctx context.Context, a registry.Actor, from, to tim
 				       COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE billable), 0) AS tokens,
 				       COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE billable AND cost_amount IS NULL), 0) AS unpriced,
 				       COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE NOT billable), 0) AS unbilled
-				FROM eacp.usage_records WHERE source = 'otel' AND observed_at >= $1 AND observed_at < $2
+				FROM eacp.usage_records WHERE source IN ('otel', 'gateway') AND observed_at >= $1 AND observed_at < $2
 				GROUP BY agent_id)
 			SELECT m.kind, m.gid, m.name, sum(t.tokens)::bigint, sum(t.unpriced)::bigint, sum(t.unbilled)::bigint
 			FROM m JOIN t ON t.agent_id = m.agent_id WHERE m.count_tokens
@@ -244,9 +244,9 @@ func (s *Service) Chargeback(ctx context.Context, a registry.Actor, from, to tim
 		// group's unit; unpriced lines follow its tokens.
 		rows, err = tx.Query(ctx, m+`, l AS (
 				SELECT agent_id, provider, COALESCE(model, '') AS model, cost_unit AS unit,
-				       COALESCE(sum(cost_amount) FILTER (WHERE source = 'otel'), 0) AS reported,
+				       COALESCE(sum(cost_amount) FILTER (WHERE source IN ('otel', 'gateway')), 0) AS reported,
 				       COALESCE(sum(cost_amount) FILTER (WHERE source = 'provider_billing'), 0) AS billed,
-				       COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE source = 'otel'), 0) AS tokens
+				       COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE source IN ('otel', 'gateway')), 0) AS tokens
 				FROM eacp.usage_records WHERE billable AND observed_at >= $1 AND observed_at < $2
 				GROUP BY 1, 2, 3, 4)
 			SELECT m.kind, m.gid, m.name, l.provider, l.model, COALESCE(l.unit, ''),

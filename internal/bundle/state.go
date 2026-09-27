@@ -61,6 +61,7 @@ type VersionState struct {
 	Runtime, CodeRef string
 	State            registry.State
 	AllowedTools     []string
+	AllowedModels    []string // LLM model names; a bundle never declares them (ADR-031)
 }
 
 func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
@@ -167,6 +168,9 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 		       COALESCE((SELECT array_agg(c.name || '.' || t.name) FROM eacp.agent_allowlists al
 		                 JOIN eacp.tools t ON t.tenant_id = al.tenant_id AND t.id = ANY (al.tool_ids)
 		                 JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id
+		                 WHERE al.tenant_id = v.tenant_id AND al.id = v.active_allowlist_id), '{}'),
+		       COALESCE((SELECT array_agg(m.name ORDER BY m.name) FROM eacp.agent_allowlists al
+		                 JOIN eacp.llm_models m ON m.tenant_id = al.tenant_id AND m.id = ANY (al.model_ids)
 		                 WHERE al.tenant_id = v.tenant_id AND al.id = v.active_allowlist_id), '{}')
 		FROM eacp.agent_versions v ORDER BY v.agent_id, v.version DESC`)
 	if err != nil {
@@ -175,12 +179,13 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 	var agentID uuid.UUID
 	var v VersionState
 	if _, err := pgx.ForEachRow(rows, []any{&agentID, &v.ID, &v.Number, &v.Runtime, &v.CodeRef, &v.State,
-		&v.AllowedTools}, func() error {
+		&v.AllowedTools, &v.AllowedModels}, func() error {
 		n := byID[agentID]
 		a := st.Agents[n]
 		x := v
 		x.AllowedTools = slices.Clone(v.AllowedTools)
 		slices.Sort(x.AllowedTools)
+		x.AllowedModels = slices.Clone(v.AllowedModels)
 		a.Versions = append(a.Versions, x)
 		st.Agents[n] = a
 		return nil

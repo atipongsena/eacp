@@ -103,7 +103,7 @@ func (e env) wire(t *testing.T) wired {
 		RiskClass: "high", OwnerPrincipalID: e.f.P["carol"]})).ID
 	w.version = must[registry.Version](t)(e.svc.RegisterVersion(e.ctx, e.as("erin"), w.agent, registry.NewVersion{
 		Runtime: "python", CodeRef: "git:abc"})).ID
-	w.allowlist = must[uuid.UUID](t)(e.svc.ProposeAllowlist(e.ctx, e.as("erin"), w.version, []string{"erp.create_po"}))
+	w.allowlist = must[uuid.UUID](t)(e.svc.ProposeAllowlist(e.ctx, e.as("erin"), w.version, []string{"erp.create_po"}, nil))
 	noErr(t, e.svc.ActivateAllowlist(e.ctx, e.as("rita"), w.version, w.allowlist))
 	noErr(t, e.svc.TransitionVersion(e.ctx, e.as("ravi"), w.version, registry.StateActive, "go live"))
 	return w
@@ -181,7 +181,7 @@ func TestServiceMapsDatabaseRulesToErrors(t *testing.T) {
 	wantErr(t, err, registry.ErrInvalid)
 
 	// Unknown references -> ErrNotFound.
-	_, err = e.svc.ProposeAllowlist(e.ctx, e.as("erin"), w.version, []string{"erp.nope"})
+	_, err = e.svc.ProposeAllowlist(e.ctx, e.as("erin"), w.version, []string{"erp.nope"}, nil)
 	wantErr(t, err, registry.ErrNotFound)
 	_, err = e.svc.GetAgent(e.ctx, e.as("erin"), "ghost")
 	wantErr(t, err, registry.ErrNotFound)
@@ -214,7 +214,7 @@ func TestCheckCapabilityDenials(t *testing.T) {
 		{"not in allowlist", func(*testing.T) (uuid.UUID, string) { return w.version, "erp.read_po" }, registry.DenyNotInAllowlist},
 		{"no active contract", func(t *testing.T) (uuid.UUID, string) {
 			v := must[registry.Version](t)(e.svc.RegisterVersion(e.ctx, e.as("erin"), w.agent, registry.NewVersion{Runtime: "py", CodeRef: "git:2"}))
-			al := must[uuid.UUID](t)(e.svc.ProposeAllowlist(e.ctx, e.as("erin"), v.ID, []string{"erp.create_po", "erp.read_po"}))
+			al := must[uuid.UUID](t)(e.svc.ProposeAllowlist(e.ctx, e.as("erin"), v.ID, []string{"erp.create_po", "erp.read_po"}, nil))
 			noErr(t, e.svc.ActivateAllowlist(e.ctx, e.as("rita"), v.ID, al))
 			noErr(t, e.svc.TransitionVersion(e.ctx, e.as("otto"), w.version, registry.StateSuspended, "swap"))
 			noErr(t, e.svc.TransitionVersion(e.ctx, e.as("ravi"), v.ID, registry.StateActive, "swap"))

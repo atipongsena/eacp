@@ -51,6 +51,7 @@ type Payload struct {
 	Contract     *registry.Contract     `json:"contract,omitempty"`
 	Name         string                 `json:"name,omitempty"`
 	Tools        []string               `json:"tools,omitempty"`
+	Models       []string               `json:"models,omitempty"` // kept from the active allowlist (ADR-031)
 	Parent       string                 `json:"parent,omitempty"`
 	ParentID     *uuid.UUID             `json:"parent_id,omitempty"`
 	ProposalStep int                    `json:"proposal_step,omitempty"`
@@ -409,13 +410,13 @@ func (p *planner) version(name string, want Agent, cur AgentState, agentID uuid.
 	for _, t := range tools {
 		p.toolRef(laddr, t)
 	}
-	var current []string
+	var current, models []string
 	if v != nil {
-		current = v.AllowedTools
+		current, models = v.AllowedTools, v.AllowedModels
 	}
 	if len(tools) > 0 && !slices.Equal(tools, current) {
 		par, parID := parent(vaddr, versionID)
-		n := p.add(StageSubmit, laddr, OpPropose, Payload{Tools: tools, Parent: par, ParentID: parID})
+		n := p.add(StageSubmit, laddr, OpPropose, Payload{Tools: tools, Models: models, Parent: par, ParentID: parID})
 		p.add(StageApprove, laddr, OpActivate, Payload{Parent: par, ParentID: parID, ProposalStep: n})
 	}
 

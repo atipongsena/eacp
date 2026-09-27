@@ -58,7 +58,8 @@ type Version struct {
 	State             State     `json:"state"`
 	StateReason       string    `json:"state_reason,omitempty"`
 	ActiveAllowlistID uuid.UUID `json:"active_allowlist_id,omitzero"`
-	AllowedTools      []string  `json:"allowed_tools"` // "connector.tool", sorted
+	AllowedTools      []string  `json:"allowed_tools"`  // "connector.tool", sorted
+	AllowedModels     []string  `json:"allowed_models"` // LLM model names, sorted (ADR-031)
 }
 
 // AgentDetail is an agent with all its versions, newest first.
@@ -126,6 +127,10 @@ func (s *Service) GetAgent(ctx context.Context, a Actor, idOrName string) (Agent
 			                 FROM eacp.agent_allowlists al
 			                 JOIN eacp.tools t ON t.tenant_id = al.tenant_id AND t.id = ANY (al.tool_ids)
 			                 JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id
+			                 WHERE al.tenant_id = v.tenant_id AND al.id = v.active_allowlist_id), '{}'),
+			       COALESCE((SELECT array_agg(m.name ORDER BY m.name)
+			                 FROM eacp.agent_allowlists al
+			                 JOIN eacp.llm_models m ON m.tenant_id = al.tenant_id AND m.id = ANY (al.model_ids)
 			                 WHERE al.tenant_id = v.tenant_id AND al.id = v.active_allowlist_id), '{}')
 			FROM eacp.agent_versions v
 			WHERE v.agent_id = $1
@@ -136,7 +141,7 @@ func (s *Service) GetAgent(ctx context.Context, a Actor, idOrName string) (Agent
 		d.Versions, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Version, error) {
 			var v Version
 			err := r.Scan(&v.ID, &v.AgentID, &v.Number, &v.Runtime, &v.CodeRef, &v.State, &v.StateReason,
-				&v.ActiveAllowlistID, &v.AllowedTools)
+				&v.ActiveAllowlistID, &v.AllowedTools, &v.AllowedModels)
 			return v, err
 		})
 		return err
@@ -159,13 +164,13 @@ func (s *Service) RegisterVersion(ctx context.Context, a Actor, agentID uuid.UUI
 	return v, err
 }
 
-// ProposeAllowlist records an immutable allowlist of "connector.tool" refs for
-// a version. A second person activates it.
-func (s *Service) ProposeAllowlist(ctx context.Context, a Actor, versionID uuid.UUID, tools []string) (uuid.UUID, error) {
+// ProposeAllowlist records an immutable allowlist of "connector.tool" refs and
+// LLM model names for a version. A second person activates it.
+func (s *Service) ProposeAllowlist(ctx context.Context, a Actor, versionID uuid.UUID, tools, models []string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
 		var err error
-		id, err = Tx{tx}.ProposeAllowlist(ctx, versionID, tools)
+		id, err = Tx{tx}.ProposeAllowlist(ctx, versionID, tools, models)
 		return err
 	})
 	return id, err

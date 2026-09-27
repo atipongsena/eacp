@@ -250,7 +250,7 @@ func apply(ctx context.Context, tx pgx.Tx, st Step, ids map[string]uuid.UUID,
 		if err != nil {
 			return uuid.Nil, err
 		}
-		return rtx.ProposeAllowlist(ctx, pid, p.Tools)
+		return rtx.ProposeAllowlist(ctx, pid, p.Tools, p.Models)
 	case "activate contract", "activate allowlist":
 		pid, err := parent()
 		if err != nil {

@@ -85,7 +85,8 @@ func (t Tx) RegisterAgent(ctx context.Context, n NewAgent) (Agent, error) {
 
 // RegisterVersion inserts a REGISTERED version (the database numbers it).
 func (t Tx) RegisterVersion(ctx context.Context, agentID uuid.UUID, n NewVersion) (Version, error) {
-	v := Version{AgentID: agentID, Runtime: n.Runtime, CodeRef: n.CodeRef, AllowedTools: []string{}}
+	v := Version{AgentID: agentID, Runtime: n.Runtime, CodeRef: n.CodeRef, AllowedTools: []string{},
+		AllowedModels: []string{}}
 	err := t.QueryRow(ctx, `
 		INSERT INTO eacp.agent_versions (tenant_id, agent_id, runtime, code_ref)
 		VALUES (eacp.current_tenant_id(), $1, $2, $3) RETURNING id, version, state`,
@@ -93,8 +94,9 @@ func (t Tx) RegisterVersion(ctx context.Context, agentID uuid.UUID, n NewVersion
 	return v, err
 }
 
-// ProposeAllowlist inserts an immutable allowlist of "connector.tool" refs.
-func (t Tx) ProposeAllowlist(ctx context.Context, versionID uuid.UUID, tools []string) (uuid.UUID, error) {
+// ProposeAllowlist inserts an immutable allowlist of "connector.tool" refs
+// and LLM model names (ADR-031).
+func (t Tx) ProposeAllowlist(ctx context.Context, versionID uuid.UUID, tools, models []string) (uuid.UUID, error) {
 	ids := make([]uuid.UUID, 0, len(tools))
 	for _, ref := range tools {
 		toolID, err := resolveTool(ctx, t.Tx, ref)
@@ -103,10 +105,18 @@ func (t Tx) ProposeAllowlist(ctx context.Context, versionID uuid.UUID, tools []s
 		}
 		ids = append(ids, toolID)
 	}
+	modelIDs := make([]uuid.UUID, 0, len(models))
+	for _, name := range models {
+		modelID, err := resolveModel(ctx, t.Tx, name)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		modelIDs = append(modelIDs, modelID)
+	}
 	var id uuid.UUID
 	err := t.QueryRow(ctx, `
-		INSERT INTO eacp.agent_allowlists (tenant_id, agent_version_id, tool_ids)
-		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, versionID, ids).Scan(&id)
+		INSERT INTO eacp.agent_allowlists (tenant_id, agent_version_id, tool_ids, model_ids)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3) RETURNING id`, versionID, ids, modelIDs).Scan(&id)
 	return id, err
 }
 

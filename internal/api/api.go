@@ -31,6 +31,7 @@ import (
 	"eacp/internal/identity"
 	"eacp/internal/incident"
 	"eacp/internal/kill"
+	"eacp/internal/llm"
 	"eacp/internal/registry"
 	"eacp/internal/release"
 	"eacp/internal/storage"
@@ -55,6 +56,7 @@ type Server struct {
 	actions   *action.Engine
 	releases  *release.Service
 	incidents *incident.Service
+	llm       *llm.Store
 }
 
 // New returns a Server using pool (connected as the application role).
@@ -63,6 +65,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
 		appr: approval.New(pool), log: log, budgets: budget.New(pool), kills: kill.New(pool),
 		fleet: fleet.New(pool), finops: finops.New(pool), bundles: bundle.New(pool), incidents: incident.New(pool),
+		llm:      llm.New(pool),
 		actions:  action.New(pool, action.Options{Provider: local, Log: log}),
 		releases: release.New(pool, release.Options{Provider: local, Log: log})}
 }
@@ -144,6 +147,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerFinOps(mux)
 	s.registerRelease(mux)
 	s.registerIncidents(mux)
+	s.registerLLM(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))
@@ -492,12 +496,13 @@ func (s *Server) proposeAllowlist(w http.ResponseWriter, r *http.Request, c iden
 		return err
 	}
 	var in struct {
-		Tools []string `json:"tools"`
+		Tools  []string `json:"tools"`
+		Models []string `json:"models"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	id, err := s.reg.ProposeAllowlist(r.Context(), actor(c), versionID, in.Tools)
+	id, err := s.reg.ProposeAllowlist(r.Context(), actor(c), versionID, in.Tools, in.Models)
 	return created(w, idBody{id}, err)
 }
 

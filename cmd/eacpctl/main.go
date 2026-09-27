@@ -108,6 +108,8 @@ const usage = `usage:
   eacpctl connector register|circuit|disable|enable|tools|mcp|scans|scan ...
   eacpctl tool get|definitions|quarantine|release ...
   eacpctl dependency blast-radius <kind> <id|name>
+  eacpctl llm-model register|list ...
+  eacpctl llm-calls list|show ...
   eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <AGT reason>]
   eacpctl kill list
   eacpctl fleet status|list|operation|pause|resume|quarantine|release|rollback ...
@@ -151,6 +153,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return runAction(ctx, args[1:], getenv, out)
 	case "dependency":
 		return runDependency(ctx, args[1:], getenv, out)
+	case "llm-model":
+		return runLLMModel(ctx, args[1:], getenv, out)
+	case "llm-calls":
+		return runLLMCalls(ctx, args[1:], getenv, out)
 	case "kill":
 		return runKill(ctx, args[1:], getenv, out)
 	case "fleet":
