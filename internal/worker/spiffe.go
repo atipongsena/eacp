@@ -1,14 +1,21 @@
 package worker
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"eacp/internal/logging"
 )
@@ -46,6 +53,21 @@ type spiffeClient struct {
 	now      func() time.Time
 	redact   *logging.SecretSet
 	log      *slog.Logger
+
+	mu       sync.Mutex
+	workload *workloadapi.Client             // created at the first fetch
+	cache    map[string]*spiffeAudienceCache // by audience
+}
+
+// spiffeAudienceCache holds the latest SVID of one audience. Its lock allows
+// one fetch at a time; callers queued behind a fetch that failed get its
+// class without a fetch of their own.
+type spiffeAudienceCache struct {
+	mu       sync.Mutex
+	attempts atomic.Int64
+	failed   string
+	svid     Secret
+	exp      time.Time
 }
 
 // newSpiffeClient validates the spiffe object. Its errors never repeat a
@@ -61,7 +83,103 @@ func newSpiffeClient(e spiffeEntry, c loadConfig) (*spiffeClient, error) {
 	if err != nil || id.Path() == "" {
 		return nil, errors.New("spiffe spiffe_id must be a SPIFFE ID with a path")
 	}
-	return &spiffeClient{endpoint: e.Endpoint, id: id, now: c.now, redact: c.redact, log: c.log}, nil
+	return &spiffeClient{endpoint: e.Endpoint, id: id, now: c.now, redact: c.redact, log: c.log,
+		cache: map[string]*spiffeAudienceCache{}}, nil
+}
+
+func (s *spiffeClient) audience(audience string) *spiffeAudienceCache {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.cache[audience]
+	if c == nil {
+		c = &spiffeAudienceCache{}
+		s.cache[audience] = c
+	}
+	return c
+}
+
+// svid returns the cached JWT-SVID for audience while it outlives minLife,
+// else the SVID of a new fetch whatever its remaining life (the caller
+// judges it), with its expiry; or a failure class.
+func (s *spiffeClient) svid(ctx context.Context, audience string, minLife time.Duration) (Secret, time.Time, string) {
+	c := s.audience(audience)
+	seen := c.attempts.Load()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.svid.v != "" && s.now().Add(minLife).Before(c.exp) {
+		return c.svid, c.exp, ""
+	}
+	if c.failed != "" && c.attempts.Load() != seen {
+		return Secret{}, time.Time{}, c.failed // the fetch this caller waited for failed
+	}
+	v, exp, class := s.fetch(ctx, audience)
+	c.failed = class
+	c.attempts.Add(1)
+	if class != "" {
+		s.log.WarnContext(ctx, "spiffe svid fetch failed", "audience", audience, "class", class)
+		return Secret{}, time.Time{}, class
+	}
+	c.svid, c.exp = v, exp
+	if s.redact != nil {
+		s.redact.Add(v.v, exp.Add(redactAfterExpiry))
+	}
+	s.log.InfoContext(ctx, "spiffe svid fetched", "audience", audience,
+		"expires_in", exp.Sub(s.now()).Round(time.Second))
+	return v, exp, ""
+}
+
+// fetch asks the Workload API for the worker's SVID for audience. The
+// signature is never checked here: only the relying party judges it.
+func (s *spiffeClient) fetch(ctx context.Context, audience string) (Secret, time.Time, string) {
+	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
+	defer cancel()
+	wl, err := s.client(ctx)
+	if err != nil {
+		return Secret{}, time.Time{}, "spiffe_unavailable"
+	}
+	started := s.now()
+	svid, err := wl.FetchJWTSVID(ctx, jwtsvid.Params{Audience: audience, Subject: s.id})
+	if err != nil {
+		st, ok := status.FromError(err)
+		switch {
+		case ok && st.Code() == codes.PermissionDenied:
+			return Secret{}, time.Time{}, "spiffe_denied"
+		case ok || ctx.Err() != nil:
+			return Secret{}, time.Time{}, "spiffe_unavailable"
+		default: // a response go-spiffe could not accept
+			return Secret{}, time.Time{}, "spiffe_invalid"
+		}
+	}
+	token := svid.Marshal()
+	if svid.ID != s.id || len(token) > maxAssertion || !tokenPattern.MatchString(token) || !svid.Expiry.After(started) {
+		return Secret{}, time.Time{}, "spiffe_invalid"
+	}
+	return Secret{token}, svid.Expiry, ""
+}
+
+// client returns the Workload API client, creating it at the first use; a
+// creation that fails is tried again at the next fetch.
+func (s *spiffeClient) client(ctx context.Context) (*workloadapi.Client, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workload == nil {
+		c, err := workloadapi.New(ctx, workloadapi.WithAddr(s.endpoint))
+		if err != nil {
+			return nil, err
+		}
+		s.workload = c
+	}
+	return s.workload, nil
+}
+
+// drop forgets audience's cached SVID when it is v.
+func (s *spiffeClient) drop(audience string, v Secret) {
+	c := s.audience(audience)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if v.v != "" && c.svid.v == v.v {
+		c.svid, c.exp = Secret{}, time.Time{}
+	}
 }
 
 // validSPIFFEEndpoint accepts unix:// with an absolute path, or, in
