@@ -211,20 +211,24 @@ form beside the inline value and the file:
   and uses the token until the request time plus two thirds of `min(lease_duration, 3600)`. The token is
   never renewed, persisted or logged. A read is `GET /v1/<mount>/data/<path>` with `X-Vault-Token` (and
   `X-Vault-Namespace`); the whole `data.data` map is cached per path for `refresh_seconds`, measured from
-  before the request, with one read per path at a time. A 403 drops the Vault token. Nothing is retried
-  within one call or mint.
+  before the request, with one read per path at a time; callers queued behind a read that fails get its
+  failure without a request of their own. A 403 drops the Vault token. Nothing is retried within one call or
+  mint.
 - **Failure classes:** `vault_login_unreadable`, `vault_login`, `vault_forbidden` (403), `vault_read`
   (transport, 5xx, non-JSON), `vault_missing` (404, no data, a soft-deleted or destroyed version, or the key
   absent) and `vault_invalid` (not a string, or not valid for the field it feeds).
 - **A static credential** is the cached value while it is fresh, else a new read; it must be 1–4096 bytes. A
-  failure makes the binding unavailable with §5's back-off (1 s doubling to 60 s), omitted from `Available()`.
+  failure makes the binding unavailable with §5's back-off (1 s doubling to 60 s, counted from the end of the
+  failed read, and grown once however many callers shared it), omitted from `Available()`.
   A stale value is never served: past its refresh deadline a failed read means no credential. When the target
   answers `unauthorized`, the binding drops its cached path, so a rotation takes effect at the next call.
 - **A client secret, key or certificate** from Vault is read inside each mint, before the token request; a
   failure is a failed mint with the Vault class. A key or certificate is parsed with §3b's rules whenever its
   text changes (the signer is rebuilt; a bad PEM is `vault_invalid`). A failed mint drops the provider's cached
-  Vault paths, so a rotated client secret is read at the next mint.
-- **Redaction and scrubbing:** every value read from Vault is redacted permanently (a PEM also line by line,
+  Vault paths (outside the provider's lock, which `Available()` and `Values()` need), so a rotated client secret
+  is read at the next mint.
+- **Redaction and scrubbing:** every value read from Vault is redacted permanently, once (`AddPermanent` ignores
+  a value it already holds, so the set does not grow with use) (a PEM also line by line,
   as §3b); the Vault token until its lease end plus 24 h. A static Vault binding's `Values()` holds its
   current value and, for one refresh interval after a rotation, the previous one. Neither the Vault token nor
   a private key ever enters `Values()`. Logins and reads are logged with the host, mount, path and class only.
@@ -354,7 +358,10 @@ worker and the Job. The e2e script replaces the merged manifest's `vault` block 
   `TestARejectedVaultCredentialIsReadAgain`, `TestTheWorkerStartsWithVaultDown`,
   `TestInvalidVaultEntriesRejectTheWholeFile`; `vaultoauth_test.go`: `TestAnOAuthClientSecretComesFromVault`,
   `TestAPrivateKeyComesFromVault` (a rotated key rebuilds the signer, a bad PEM backs off),
-  `TestInvalidOAuthVaultEntriesRejectTheWholeFile`; PostgreSQL (`vault_integration_test.go`):
+  `TestInvalidOAuthVaultEntriesRejectTheWholeFile`; `vaultreview_test.go`:
+  `TestRepeatedVaultReadsKeepTheRedactionSetConstant`, `TestConcurrentCallersShareAFailedVaultRead`,
+  `TestASlowVaultFailureStillBacksOff`, `TestAFailedMintDoesNotBlockAvailability`; `internal/logging`
+  `TestAddingAPermanentValueAgainKeepsOneEntry`; PostgreSQL (`vault_integration_test.go`):
   `TestTheWorkerExecutesWithAVaultCredential` (the real HTTP connector and Fake ERP; a stale value is refused,
   the rotated one is read at once and used, exactly two KV reads, no Vault token or value in the database or
   logs).

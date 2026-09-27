@@ -40,6 +40,8 @@ type fakeVault struct {
 	readStatus  int
 	readBody    string // a raw body answered instead of the KV data
 	redirectTo  string
+	readDelay   time.Duration // each KV read waits this long
+	onRead      func()        // called at each KV read, e.g. to move a test clock
 }
 
 func newFakeVault(t *testing.T) *fakeVault {
@@ -86,6 +88,10 @@ func (f *fakeVault) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.reads[path]++
+	if f.onRead != nil {
+		f.onRead()
+	}
+	time.Sleep(f.readDelay)
 	switch {
 	case f.readStatus != 0:
 		w.WriteHeader(f.readStatus)

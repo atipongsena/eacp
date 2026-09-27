@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"eacp/internal/logging"
@@ -124,6 +125,8 @@ type vaultPath struct {
 	mu         sync.Mutex // one read per path at a time
 	data       map[string]json.RawMessage
 	freshUntil time.Time
+	attempts   atomic.Uint64 // completed reads, so a queued caller sees one that ended while it waited
+	failed     string        // the class of the last read when it failed
 }
 
 // newVaultClient validates e and checks that its login files are readable.
@@ -225,11 +228,19 @@ func (v *vaultClient) refresh() time.Duration { return v.refreshEvery }
 func (v *vaultClient) value(ctx context.Context, r vaultRef) (Secret, string) {
 	r = v.withMount(r)
 	p := v.path(r)
+	seen := p.attempts.Load()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.data == nil && p.failed != "" && p.attempts.Load() != seen {
+		// A read that failed while this caller waited answers it too:
+		// callers queued on a failing Vault make no request each.
+		return Secret{}, p.failed
+	}
 	if p.data == nil || !v.now().Before(p.freshUntil) {
 		started := v.now()
 		data, class := v.read(ctx, r)
+		p.failed = class
+		p.attempts.Add(1)
 		if class != "" {
 			p.data = nil
 			v.log.WarnContext(ctx, "vault read failed", "vault", v.host, "mount", r.Mount, "path", r.Path, "class", class)
@@ -446,9 +457,8 @@ type vaultValue struct {
 }
 
 func (v *vaultValue) credential(ctx context.Context) (Secret, error) {
-	now := v.now()
 	v.mu.Lock()
-	waiting := now.Before(v.backoffUntil)
+	waiting := v.now().Before(v.backoffUntil)
 	v.mu.Unlock()
 	if waiting {
 		return Secret{}, ErrCredentialUnavailable
@@ -459,7 +469,11 @@ func (v *vaultValue) credential(ctx context.Context) (Secret, error) {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	now := v.now() // after the read: a read that failed slowly still backs off
 	if class != "" {
+		if now.Before(v.backoffUntil) {
+			return Secret{}, ErrCredentialUnavailable // another caller's failure already set the back-off
+		}
 		v.backoff = min(max(2*v.backoff, minMintBackoff), maxMintBackoff)
 		v.backoffUntil = now.Add(v.backoff)
 		v.log.WarnContext(ctx, "vault credential unavailable", "tenant", v.binding.TenantID.String(),

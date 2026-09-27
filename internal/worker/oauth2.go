@@ -235,6 +235,10 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 	tok, expiry, realExpiry, lifetime, class := p.request(ctx)
 	if class == "" {
 		p.redactUntil(tok, realExpiry)
+	} else {
+		// A rotated client secret or key is read at the next mint. Not under
+		// p.mu: a path lock may wait on Vault, and Available and Values need p.mu.
+		p.dropVault()
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -251,7 +255,6 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 		}
 	}
 	if class != "" {
-		p.dropVault() // a rotated client secret or key is read at the next mint
 		p.backoff = min(max(2*p.backoff, minMintBackoff), maxMintBackoff)
 		p.backoffUntil = now.Add(p.backoff)
 		p.log.WarnContext(ctx, "credential mint failed", "tenant", p.binding.TenantID.String(),
