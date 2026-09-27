@@ -24,6 +24,7 @@ import (
 
 	"eacp/internal/config"
 	"eacp/internal/connector"
+	"eacp/internal/connector/a2a"
 	"eacp/internal/connector/mcp"
 	"eacp/internal/messaging"
 	"eacp/internal/service"
@@ -59,7 +60,10 @@ func main() {
 			if err != nil {
 				return err
 			}
-			connectors := map[string]worker.Connector{"http": connector.NewHTTP()}
+			// A2A delegations (ADR-030): one client sends, follows and discovers.
+			a2aClient := a2a.New()
+			a2aClient.Log = d.Log
+			connectors := map[string]worker.Connector{"http": connector.NewHTTP(), "a2a": a2aClient}
 			w, err := worker.New(d.DB, worker.Options{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
 				GroupConcurrency: d.Config.WorkerGroupConcurrency, BreakerFailures: d.Config.WorkerBreakerFailures,
@@ -86,7 +90,8 @@ func main() {
 			}
 			scanner, err := worker.NewScanner(d.DB, worker.ScannerOptions{
 				ID: id, Interval: d.Config.MCPScanInterval, Timeout: d.Config.MCPScanTimeout,
-				Secrets: secrets, Discoverer: mcp.New(), Log: d.Log,
+				Secrets: secrets, Log: d.Log,
+				Discoverers: map[string]worker.Discoverer{"mcp": mcp.New(), "a2a": a2aClient},
 			})
 			if err != nil {
 				return err
