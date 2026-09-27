@@ -33,7 +33,7 @@ The core is split into **ingress adapters** and a **shared core**:
 | Shared core (ingress-agnostic) | Ingress adapters |
 |---|---|
 | Principal authentication | Tool/Action API (Slice A) |
-| Capability check | LLM Gateway (later, optional) |
+| Capability check | LLM Gateway (Phase 25b, optional; ADR-031) |
 | `GovernanceProvider` (ADR-002) | A2A ingress (later) |
 | Approval store (ADR-005) | |
 | Audit/evidence journal | |
@@ -43,6 +43,8 @@ The core is split into **ingress adapters** and a **shared core**:
 Shared-core types must stay generic (`operation`, `target`, `payload`, `side_effect_class`), with no "tool call" or "chat completion" specific shapes. A future LLM gateway is a new ingress that reuses the core without changing it.
 
 Note (Phase 25a, ADR-030): *outbound* A2A is not an ingress. A governed agent delegating to a remote A2A agent submits an ordinary action on a connector with protocol `a2a`, and the execution worker, which alone holds the credential, sends the message. An A2A ingress (a remote agent calling EACP) remains later work.
+
+Note (Phase 25b, ADR-031): the LLM gateway is that ingress. It reuses agent authentication, the PDP, the capability check (a per-version model allowlist), kill states, hard budgets, the rate card and the audit journal; its ledger `eacp.llm_calls` follows the shared core's rules. The gateway is the second process that holds secrets, and it holds **LLM provider credentials only**: `EACP_LLM_SECRETS_FILE` is accepted by `llm-gateway` alone, which refuses connector secrets, and an agent sends its own EACP key, never a provider key. Only the gateway reaches a provider (on compose, the internal `llm` network).
 
 ### 3. Enforcement point: credential custody, capability and network (Slice A)
 

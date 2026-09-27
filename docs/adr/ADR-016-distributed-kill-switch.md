@@ -23,6 +23,8 @@ The current action has authoritative tenant, team (pinned owner group), agent, a
 
 `global` is platform-wide in AGT and in MASTER_PLAN §39. EACP's principals and operator role are tenant-scoped; treating a tenant operator as a platform operator would break tenant isolation. A `tenant` kill is explicitly tenant-wide, not a claim of global authority. `run` and `model` are also rejected: actions have no authenticated run or model binding, and ADR-015's observed model edges cannot prove absence. Accepting either request while it could match no action would create false containment. These scopes need an approved platform identity and binding design before exposure.
 
+Amendment (Phase 25b, ADR-031): scope `model` is accepted for a tenant's declared LLM model (`eacp.llm_models`). An LLM call through the gateway carries an authenticated model binding, so the scope matches it; actions still carry no model, so a `model` kill stops LLM calls only. `eacp.llm_admit` checks tenant, team, agent, agent version and model scopes under the tenant kill advisory lock; the gateway compares the tenant kill epoch before its provider request and every `EACP_LLM_KILL_POLL` during it, and cuts a killed call (`TestKillScopesBindLLMCalls`, `TestKillCutsAStream`). `global` and `run` remain rejected.
+
 The worker can request cancellation of a cooperative connector call. A target may already have committed an effect, so an executing kill always enters the unknown-outcome evidence path. A kill activated after a terminal action does not change that action's state.
 
 ## Verification

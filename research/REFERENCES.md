@@ -3,6 +3,16 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 25b — Anthropic Messages and OpenAI Chat Completions, via the official Go SDKs (2026-09-27)
+
+Verified against the module sources of `github.com/anthropics/anthropic-sdk-go` v1.75.0 and `github.com/openai/openai-go/v3` v3.66.0 (both test-only requirements in `go.mod`), and exercised end to end by `internal/llmgateway` `TestAnthropicSDKThroughTheGateway` and `TestOpenAISDKThroughTheGateway`, which point the unmodified clients at the gateway.
+
+- **Anthropic authentication.** `option.WithAPIKey` sets the `X-Api-Key` header (`option/requestoption.go`); every request carries `anthropic-version: 2023-06-01` (`internal/requestconfig/requestconfig.go`). The gateway accepts the agent's EACP key in `x-api-key` or a Bearer header and forwards `anthropic-version` and `anthropic-beta` only.
+- **Anthropic usage.** A message's `usage` has `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` and `output_tokens`. In a stream, `message_start.message.usage` opens the count and each `message_delta.usage` (`MessageDeltaUsage`) carries **cumulative** counts ("The cumulative number of …", `message.go`), so the gateway keeps the last value, not a sum.
+- **OpenAI authentication.** The Chat Completions client sends its API key as `Authorization: Bearer` (bearer security; the interop test fails otherwise, since the gateway accepts only a Bearer on that route).
+- **OpenAI usage.** `usage.prompt_tokens` includes `prompt_tokens_details.cached_tokens` ("Cached tokens present in the prompt", `completion.go`): input = prompt − cached, cache read = cached. A stream reports usage only in a final chunk when `stream_options.include_usage` is true (`chatcompletion.go` `IncludeUsage`), and ends with `data: [DONE]` (`packages/ssestream/ssestream.go`).
+- **OpenAI output cap.** `max_tokens` is "deprecated in favor of `max_completion_tokens`" (`chatcompletion.go`); the gateway accepts at most one of them and sets `max_completion_tokens` to the model's cap when neither is sent.
+
 ## Phase 25a — A2A 1.0 and the a2a-go reference implementation (2026-09-27)
 
 Checked against the module source (`go mod download`) of `github.com/a2aproject/a2a-go/v2` **v2.6.0** (`a2a/core.go`, `a2a/agent.go`, `a2a/errors.go`, `a2a/svcparams.go`, `a2asrv/jsonrpc.go`, `a2asrv/handler.go`, `a2asrv/agentcard.go`, `internal/taskexec`) and by running its server in `internal/connector/a2a/interop_test.go`. ADR-030 relies on these.

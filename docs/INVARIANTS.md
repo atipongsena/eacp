@@ -26,6 +26,8 @@ Phase 22a adds incidents and the Agent SOC read model (ADR-027). An incident obs
 
 Phase 23a adds high availability without a leader (ADR-029). `internal/worker` TestReplicasShareTheWorkAndSurviveLosingOne (three API loop sets, three workers, one of each stopped mid-run) joins invariants 4 and 16, and `internal/action` TestTwoSweepersReclaimEachLapsedLeaseOnce joins invariant 4. Phase 23b (the Helm chart, ADR-029 Rev 1.1) adds `test/demo` TestKubernetesDisruption on a 2-node minikube cluster (scripts/k8s-e2e.sh); like the demos it needs a running stack, so it is not in the map. Phase 24a (JIT credentials, ADR-019) adds `internal/worker` TestTheWorkerExecutesWithAMintedToken to invariant 11; `test/demo` TestJITDemo scans responses, logs and the database for every issued token. Phases 24b and 24c (ADR-019 Rev 1.1, Rev 1.2) add TestTheWorkerExecutesThroughWorkloadIdentityFederation and TestTheWorkerExecutesWithPrivateKeyJWT to invariant 11; `test/demo` TestFederatedJITDemo and TestPrivateKeyJWTDemo scan for tokens, assertions and (24c) private keys. Phase 24d (ADR-019 Rev 1.3) adds TestTheWorkerExecutesWithAVaultCredential to invariant 11; `test/demo` TestVaultDemo scans for Vault tokens, Vault-held values and issued tokens. Phase 24e (ADR-019 Rev 1.4) adds TestTheWorkerExecutesWithAnSVID and TestTheWorkerMintsWithAnSVIDAssertion to invariant 11; `test/demo` TestSPIFFEDemo scans for JWT-SVIDs and issued tokens. Phase 25a (A2A delegation, ADR-030) adds TestNothingSecretIsPersistedByADelegation to invariant 11; `test/demo` TestA2ADemo scans responses, logs and the database for the A2A token.
 
+Phase 25b adds the LLM gateway (ADR-031): an agent's model calls are admitted, reserved against its hard budget and settled in PostgreSQL through an insert-only ledger, and only the gateway holds provider keys. Its tests join invariants 3, 11 and 17. `internal/llm/schema_test.go` also checks every `llm_admit` denial in order, the settle outcomes and costs, the sweeper and the kill scopes in raw SQL; `internal/llmgateway` checks validation, forwarding, the SSE relay, kills, limits and interoperability with the official Anthropic and OpenAI Go SDKs. `test/demo` TestLLMGatewayDemo scans responses, logs and the database for the provider key, the agent key and the prompt.
+
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
 
 MASTER_PLAN §82 sets the Slice A exit criterion: every invariant in §103 tagged [A] has an automated test that passes. This page maps each one to the tests that prove it.
@@ -68,6 +70,9 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/action` TestAnExpiredReleaseGivesItsBudgetBack — the reservation TTL: expiry at `not_after` releases it
 - `internal/action` TestABudgetDenialNeverSpendsTheApproval — the budget is checked before the grant is consumed
 - `internal/action` TestBudgetFailuresDenyClosed — no account or an invalid cost denies
+- `internal/llm` TestReservationGuardForLLMCalls — an LLM call's reservation is made only inside `llm_admit` by its agent, for the estimate, and committed or released only by the gateway or the sweeper, never above the amount (ADR-031)
+- `internal/llm` TestAdmitReservesTheEstimate — admission reserves PostgreSQL's estimate on the agent's leaf and denies `budget_exceeded` when it does not fit
+- `internal/llmgateway` TestTheGatewayMetersAndLimitsSpend — through the real gateway and fakellm: exact cost committed, and a call that could overspend is denied before any provider request
 
 ## 4 [A] Duplicate messages, submissions or reclaims do not duplicate external effects
 
@@ -174,6 +179,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestTheWorkerExecutesWithAWSKeysFromAnSVID — with AWS keys bought with the worker's JWT-SVID, neither the SVID, the secret key nor the session token appears in any row, journal, outbox or log (ADR-019 Rev 1.6)
 - `internal/worker` TestTheWorkerMintsWithAnSVIDAssertion — with the worker's JWT-SVID as the OAuth client assertion and no client secret, neither the SVID nor a token appears in any row, journal, outbox or log (ADR-019 Rev 1.4)
 - `internal/worker` TestNothingSecretIsPersistedByADelegation — after the worker scans a remote A2A agent and delegates to it, the agent's token appears in no row, journal, outbox or log (ADR-030)
+- `internal/llmgateway` TestNothingSecretIsPersistedByTheGateway — after metered, killed and swept LLM calls, neither the provider key, the agent key nor the prompt appears in any row, journal, outbox or log (ADR-031)
+- `internal/config` TestProviderSecretsOnlyInTheGateway — only the LLM gateway accepts provider secrets, and it refuses connector secrets
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 
@@ -223,6 +230,10 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 
 - `internal/action` TestActionTransitionsAreJournaledWithActorKinds — transitions with actor kinds
 - `internal/registry` TestRawSQLChangesAreAuditedByTheDatabase — the database journals even raw SQL changes
+- `internal/llm` TestLedgerNeverChanges — an LLM call row cannot be edited, deleted or inserted outside `llm_admit` (ADR-031)
+- `internal/llm` TestAdmitDeniesInOrder — every denial is journaled `llm.denied` in its transaction
+- `internal/llm` TestAdmitReservesTheEstimate — an admission is journaled `llm.admitted`, last in its transaction
+- `internal/llm` TestSettleOutcomes — every settlement is journaled `llm.settled`
 - `internal/audit` TestVerifyDetectsTampering — edits, deletions and reordering break the chain
 - `internal/audit` TestConcurrentAppendsStayGapless — the chain has no gaps under concurrency
 - `internal/worker` TestHumanResolutionIsSeparatedJournaledAndTwoPersonForRetry — operator resolutions are journaled

@@ -290,6 +290,16 @@ eacpctl connector register --name procurement --protocol a2a --endpoint https://
 
 The worker's scanner reads the Agent Card (`/.well-known/agent-card.json`) with the worker-held credential and discovers one tool, `delegate`, certified over the whole card: a new skill or any other change except the icon and documentation URLs quarantines it. A `delegate` contract has no idempotency and no lookup, so each delegation is sent once. The worker sends `SendMessage` (the action id is the `messageId`), follows the task with `GetTask`, and cancels a task it stops following (the call ran out of time, was killed, or the remote agent asked for input). Such an outcome is unknown and goes to a human, with the remote task id in the action's evidence. Only ids, states and digests are kept, never the remote agent's output. `DEMO=D scripts/demo.sh` runs the A2A demo.
 
+## Phase 25b: the LLM gateway
+
+An agent can call a model through EACP with its unmodified Anthropic or OpenAI SDK, using its own EACP agent key as the API key ([ADR-031](docs/adr/ADR-031-llm-gateway.md)). Point the SDK's base URL at `llm-gateway` (`:8083`); it serves `POST /v1/messages` and `POST /v1/chat/completions`, streamed or not. Declare each model and the provider key's name, then add it to an agent version's allowlist (`"models": ["sonnet"]` beside `"tools"`; a second person activates it):
+
+```bash
+eacpctl llm-model register --name sonnet --provider anthropic --base-url https://api.anthropic.com \n  --upstream claude-sonnet-4-5 --secret-ref anthropic --max-output-tokens 64000
+```
+
+Every call is decided in PostgreSQL before it is sent: the model must be on the allowlist, no kill scope may match (an operator can now kill a `model`), and a hard budget reservation must fit at the rate card's price. The gateway alone holds provider keys (`EACP_LLM_SECRETS_FILE`, the worker's manifest format), cuts a killed call within seconds, and settles the provider's reported usage at PostgreSQL's price. `eacpctl llm-calls list` shows the ledger: tokens, cost and outcome, never content. `DEMO=L scripts/demo.sh` runs the LLM gateway demo.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start
@@ -302,7 +312,7 @@ curl localhost:8080/readyz
 
 The stack's governance decisions come from the AGT sidecar (`agt-pdp`). To use the in-process local provider instead, set `EACP_GOVERNANCE_PROVIDER=local` on `controlplane-api`.
 
-The preparation command copies the existing local-development ERP, MCP and A2A tokens into Git-ignored files for the Fake ERP, Fake MCP and Fake A2A secret mounts. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
+The preparation command copies the existing local-development ERP, MCP and A2A tokens and the Fake LLM key into Git-ignored files for the Fake ERP, Fake MCP, Fake A2A and Fake LLM secret mounts. Run it again if the worker's local-development secret changes. This is a demo credential; production deployments supply their own secrets.
 
 Bootstrap a tenant (each admin generates their own key; only the hash is registered):
 

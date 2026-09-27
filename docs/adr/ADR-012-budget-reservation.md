@@ -115,6 +115,10 @@ The API is:
 - `GET /v1/budgets` (admin, operator, auditor), which shows limit, allocated, active reservations, committed and available;
 - action evidence, which shows the reservation.
 
+## Amendment (Phase 25b, ADR-031): LLM calls
+
+`eacp.budget_reservations` also holds reservations for LLM calls: `llm_call_id` is set instead of `action_id` and `contract_id` (a CHECK requires exactly one subject). Only `eacp.llm_admit`, as the call's agent, inserts one, on the agent's leaf account in the price's unit and for exactly PostgreSQL's estimate; only `eacp.llm_settle` (system actor `llm_gateway`) or `eacp.llm_sweep` (`llm_sweeper`) commits or releases it, never above the amount. Counters, fold and escrow are unchanged, so the hard limit binds LLM spend as it binds tool spend. An unknown usage commits the full reservation.
+
 ## Consequences
 
 - A budgeted tool can't run without an account. Activating a costed contract is a deliberate, two-person act.

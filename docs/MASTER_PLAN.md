@@ -2085,6 +2085,8 @@ provider billing / usage export
 
 ถ้าเพิ่ม LLM gateway module ภายหลัง จะ reserve budget ต่อ LLM call ได้
 
+**Delivered (Phase 25b, 2026-09-27, ADR-031):** the LLM gateway reserves a hard budget per LLM call at PostgreSQL's estimate, commits the priced usage and records it as `gateway` usage beside OTel.
+
 ---
 
 # 46. Hierarchical Budget
@@ -3787,6 +3789,8 @@ LLM Gateway (optional): ingress ใหม่ที่ใช้ shared core เ�
 ```text
 identity + capability + GovernanceProvider + audit + budget
 ```
+
+**Delivered (Phase 25b, 2026-09-27, ADR-031):** the `llm-gateway` service. Agents send Anthropic Messages or OpenAI Chat Completions requests, streamed or not, with their own EACP key; the gateway authenticates the agent, asks the PDP (metadata only, never content), admits the call in PostgreSQL against a per-version model allowlist, kill scopes (including the new `model` scope) and a hard budget reservation at the rate card's price, forwards it with a provider key only the gateway holds, cuts it within seconds when killed, and settles its priced usage. An insert-only ledger (`eacp.llm_calls`) records every call without content; a sweeper settles abandoned calls. Inbound A2A remains later work.
 
 ---
 

@@ -97,7 +97,11 @@ Agents are untrusted (§67). An agent's usage report is an observation, not proo
 - **Forecasts.**
 - **A NATS signal for alerts.** The API shows alerts. A `finops.alert` outbox topic would follow ADR-014 later.
 - **A new `finops` role.** `admin` manages prices, billing imports and soft limits.
-- **An LLM gateway** that would reserve per call (§45).
+- **An LLM gateway** that would reserve per call (§45). Decided by ADR-031 (Phase 25b).
+
+## Amendment (Phase 25b, ADR-031)
+
+`eacp.usage_records` accepts source `gateway`, one row per settled gateway call with known usage (`llm_call_id`, unique), priced in PostgreSQL from the price pinned at admission. The dashboard's reported spend, chargeback, spend anomalies and release metrics count `otel` and `gateway` together, so an agent that also emits OTel spans for a gateway call is over-counted in reported spend, never under-counted. The gateway's reservations are hard budgets (ADR-012), not soft limits; FinOps still never blocks.
 
 ## Verification
 

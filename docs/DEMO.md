@@ -25,9 +25,9 @@ scripts/demo.sh
 ```
 
 The script:
-1. prepares the local Fake ERP, Fake MCP and Fake A2A credentials and the Fake ERP's OAuth client secret;
-2. starts a **fresh, isolated** stack as the compose project `eacp-demo` (API on `127.0.0.1:18080`, PostgreSQL on `127.0.0.1:55433`, with its own volumes);
-3. runs every demo (`DEMO` picks some: letters from `A`, `C`, `D` and `J`, e.g. `DEMO=J`);
+1. prepares the local Fake ERP, Fake MCP, Fake A2A and Fake LLM credentials and the Fake ERP's OAuth client secret;
+2. starts a **fresh, isolated** stack as the compose project `eacp-demo` (API on `127.0.0.1:18080`, LLM gateway on `127.0.0.1:18083`, PostgreSQL on `127.0.0.1:55433`, with its own volumes);
+3. runs every demo (`DEMO` picks some: letters from `A`, `C`, `D`, `J` and `L`, e.g. `DEMO=J`);
 4. removes the demo stack and its volumes.
 
 A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The two demos take about two minutes after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
@@ -126,6 +126,20 @@ The walk-through below is what `docs/reviews/2026-09-26-phase22b-console-e2e.md`
 - **D5.** The A2A token appears in no API response, service log or database dump.
 
 The agent cannot reach Fake A2A, and only Fake A2A mounts its verifier (`test/security` `TestAgentCannotReachFakeA2A`, `TestFakeA2ACredentialMountIsLimitedToTheAgent`).
+
+## LLM gateway demo
+
+`TestLLMGatewayDemo` shows Phase 25b (ADR-031) and runs with `DEMO=L` on compose. Fake LLM (`fakellm:8093`, on the `llm` network only the gateway joins) speaks Anthropic Messages and OpenAI Chat Completions behind its own key, answers with fixed text and exact usage (input = 10 + prompt bytes / 4, output = 20), picks a scenario from the last user message (`error_429`, `error_500`, `no_usage`, `cut`, `slow`) and logs every call's shape, status and tokens, never content. The gateway's provider manifest binds tenant Hooli-AI's `fakellm` to it.
+
+- **L0.** Bootstrap tenant Hooli-AI and a policy that allows `llm.generate`.
+- **L1.** erin declares models `sonnet` (anthropic, `claude-fake`) and `gpt` (openai, `gpt-fake`) on Fake LLM; alice prices them (sonnet 3/15 USD per million tokens). Agent `writer` gets an allowlist naming `sonnet` only and a USD account whose 0.05 limit alice proposes and bob approves.
+- **L2.** writer calls sonnet plain and streamed. Both succeed; the ledger shows the exact tokens and PostgreSQL's cost, and exactly that is committed to the budget.
+- **L3.** `gpt` is denied `model_not_in_allowlist` before any provider call. A provider 429 is relayed, settled `provider_error` and charged nothing.
+- **L4.** `max_tokens` 100 000 could cost up to 1.5 USD: denied `budget_exceeded`, nothing reserved or sent.
+- **L5.** During a `slow` stream otto kills model `sonnet`. The gateway ends the stream with an error event within one poll (2 s) and settles it `killed`; writer's next call is denied `killed` and never reaches the provider.
+- **L6.** The provider key, writer's key and the prompt appear in no API or gateway response, service log or database dump.
+
+The agent cannot reach Fake LLM, and only the gateway mounts provider secrets (`test/security` `TestAgentCannotReachFakeLLM`, `TestOnlyTheGatewayHoldsProviderSecrets`).
 
 ## JIT credential demo
 
