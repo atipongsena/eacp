@@ -9,19 +9,23 @@ require (
 	github.com/nats-io/nats-server/v2 v2.15.0
 	github.com/nats-io/nats.go v1.54.0
 	github.com/pressly/goose/v3 v3.28.0
+	github.com/spiffe/go-spiffe/v2 v2.8.2
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.yaml.in/yaml/v3 v3.0.5
+	google.golang.org/grpc v1.83.2
 )
 
 require (
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.8.0-default-no-op // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
@@ -55,6 +59,5 @@ require (
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a // indirect
-	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
