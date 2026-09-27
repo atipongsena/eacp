@@ -376,10 +376,11 @@ The `oauth2` provider gains a grant; everything §3 says about the token it retu
   Each token goes to one place only: the subject token to the STS, the federated token to the impersonation
   endpoint, the final token to the connector. A failed step fails the mint with its class: §3's back-off,
   withheld from claims, no dispatch and no retry within the mint. The mint's log names the binding, the token
-  endpoint's host, the grant, whether it impersonated and the lifetime, never a token.
+  endpoint's host, the grant, whether it impersonated (and then the impersonation host, `impersonation_host`)
+  and the lifetime or failure class, never a token.
 - **Kubernetes.** Nothing new in the chart: a file subject is the worker's projected token (§3a's
-  `worker.workloadIdentity`), a SPIFFE subject comes through §3d's socket. The impersonation endpoint is one
-  more egress destination of the worker.
+  `worker.workloadIdentity`), a SPIFFE subject comes through §3d's socket. The impersonation endpoint's host
+  belongs in `worker.connectorEgress` beside the token endpoint's.
 
 AWS STS and SigV4, `actor_token` (delegation), `delegates`, refresh tokens, caching the federated token
 across mints, GCP workforce pools and STS `options` are out of scope.

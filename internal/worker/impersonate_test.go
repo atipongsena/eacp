@@ -164,7 +164,8 @@ func TestEveryInvalidImpersonationResponseIsRefused(t *testing.T) {
 	s := g.store(t, &clock{t: time.Now()}, file, worker.WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
 	g.set(func() (int, any) { g.srv.CloseClientConnections(); return 200, nil })
 	if _, err := s.Credential(context.Background(), tenant, "erp", erpEndpoint, time.Second); !errors.Is(err, worker.ErrCredentialUnavailable) ||
-		!strings.Contains(buf.String(), `"class":"transport"`) {
+		!strings.Contains(buf.String(), `"class":"transport"`) ||
+		!strings.Contains(buf.String(), `"impersonation_host":"`+strings.TrimPrefix(g.srv.URL, "http://")+`"`) {
 		t.Fatalf("a broken connection: %v %s", err, buf.String())
 	}
 }
@@ -227,6 +228,10 @@ func TestAMintLogNamesTheGrant(t *testing.T) {
 			}
 			if !strings.Contains(buf.String(), c.want) || strings.Contains(buf.String(), canary) {
 				t.Fatalf("log lacks %s, or holds a token: %s", c.want, buf.String())
+			}
+			host := `"impersonation_host":"` + strings.TrimPrefix(g.srv.URL, "http://") + `"`
+			if strings.Contains(buf.String(), host) != (name == "impersonation") {
+				t.Fatalf("impersonation host logged wrongly (%s): %s", name, buf.String())
 			}
 		})
 	}

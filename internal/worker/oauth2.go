@@ -296,15 +296,22 @@ func (p *oauthProvider) credential(ctx context.Context, validFor time.Duration) 
 	if class != "" {
 		p.backoff = min(max(2*p.backoff, minMintBackoff), maxMintBackoff)
 		p.backoffUntil = now.Add(p.backoff)
-		p.log.WarnContext(ctx, "credential mint failed", "tenant", p.binding.TenantID.String(),
-			"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "grant", p.grant(), "impersonated", p.impersonates(),
-			"class", class, "retry_after", p.backoff)
+		p.log.WarnContext(ctx, "credential mint failed", append(p.mintAttrs(), "class", class, "retry_after", p.backoff)...)
 		return Secret{}, ErrCredentialUnavailable
 	}
-	p.log.InfoContext(ctx, "credential minted", "tenant", p.binding.TenantID.String(),
-		"ref", p.binding.Ref, "host", hostOf(p.tokenURL), "grant", p.grant(), "impersonated", p.impersonates(),
-		"expires_in", expiry.Sub(now).Round(time.Second))
+	p.log.InfoContext(ctx, "credential minted", append(p.mintAttrs(), "expires_in", expiry.Sub(now).Round(time.Second))...)
 	return tok, nil
+}
+
+// mintAttrs are the log attributes of a mint: the binding, the hosts it
+// contacts, the grant and whether it impersonated. Never a token.
+func (p *oauthProvider) mintAttrs() []any {
+	attrs := []any{"tenant", p.binding.TenantID.String(), "ref", p.binding.Ref, "host", hostOf(p.tokenURL),
+		"grant", p.grant(), "impersonated", p.impersonates()}
+	if p.impersonates() {
+		attrs = append(attrs, "impersonation_host", hostOf(p.exchange.impersonate.url))
+	}
+	return attrs
 }
 
 // grant names the binding's OAuth grant for the log.

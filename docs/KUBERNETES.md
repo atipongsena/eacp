@@ -43,7 +43,9 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   **only** way out to them. The chart refuses to render when it is empty, unless
   `worker.allowNoConnectorEgress=true`.
 - Just-in-time credentials (ADR-019): an `oauth2` entry in `worker.connectorSecrets` makes the worker call its
-  `token_url`, so that host belongs in `worker.connectorEgress` too. The chart mounts only the manifest file,
+  `token_url`, so that host belongs in `worker.connectorEgress` too, and so does the host of a token
+  exchange's `impersonate.url` (Rev 1.5; a mint that cannot reach it logs `class=transport` with its
+  `impersonation_host`). The chart mounts only the manifest file,
   so give the client secret inline (`client_secret`); a `client_secret_file` path would not exist in the pod
   and the worker would refuse to start. A plain `http` token URL is accepted only when `environment` is
   `development` or `test`.
