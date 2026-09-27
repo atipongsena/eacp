@@ -151,6 +151,7 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			ValueVault  *vaultRef       `json:"value_vault"`
 			ValueSPIFFE *spiffeAudience `json:"value_spiffe"`
 			OAuth2      *oauthEntry     `json:"oauth2"`
+			AWS         *awsEntry       `json:"aws"`
 		} `json:"secrets"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -193,13 +194,13 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 		}
 		kinds := 0
 		for _, set := range []bool{e.Value != nil, e.ValueFile != nil, e.ValueVault != nil, e.ValueSPIFFE != nil,
-			e.OAuth2 != nil} {
+			e.OAuth2 != nil, e.AWS != nil} {
 			if set {
 				kinds++
 			}
 		}
 		if kinds != 1 {
-			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file, value_vault, value_spiffe and oauth2 is required", i)
+			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file, value_vault, value_spiffe, oauth2 and aws is required", i)
 		}
 		if e.ValueSPIFFE != nil {
 			if c.spiffe == nil {
@@ -222,6 +223,14 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			}
 			store.m[k] = secretEntry{host: e.Host, vault: &vaultValue{client: c.vault, ref: ref,
 				binding: Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, now: c.now, log: c.log}}
+			continue
+		}
+		if e.AWS != nil {
+			p, err := newAWSProvider(i, *e.AWS, Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, c)
+			if err != nil {
+				return nil, err
+			}
+			store.m[k] = secretEntry{host: e.Host, oauth: p}
 			continue
 		}
 		if e.OAuth2 != nil {

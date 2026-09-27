@@ -82,26 +82,11 @@ func validateExchange(e oauthEntry, c loadConfig) (*exchangeConfig, error) {
 	default:
 		return nil, errors.New("grant must be client_credentials or token_exchange")
 	}
-	s := e.SubjectToken
-	if s == nil || (s.File == nil) == (s.SPIFFE == nil) {
-		return nil, errors.New("token_exchange needs a subject_token with exactly one of file and spiffe")
+	x, err := validateSubject(e.SubjectToken, c)
+	if err != nil {
+		return nil, err
 	}
-	x := &exchangeConfig{subjectType: tokenTypeJWT, audience: e.Audience}
-	if s.File != nil {
-		// Only the file's shape is checked: the kubelet may be about to rotate it.
-		if _, _, class := readAssertion(*s.File, time.Time{}); class != "" {
-			return nil, errors.New("subject_token file must hold a compact JWS with a numeric exp (" + class + ")")
-		}
-		x.subjectFile = *s.File
-	} else {
-		if c.spiffe == nil {
-			return nil, errors.New("a spiffe subject_token needs the file's spiffe object")
-		}
-		if err := s.SPIFFE.validate(); err != nil {
-			return nil, err
-		}
-		x.subjectSPIFFE, x.spiffe = s.SPIFFE.Audience, c.spiffe
-	}
+	x.subjectType, x.audience = tokenTypeJWT, e.Audience
 	if e.SubjectTokenType != "" {
 		if !subjectTokenTypes[e.SubjectTokenType] {
 			return nil, errors.New("subject_token_type must be the jwt, id_token or id-token token type")
@@ -118,6 +103,31 @@ func validateExchange(e oauthEntry, c loadConfig) (*exchangeConfig, error) {
 		}
 		x.impersonate = imp
 	}
+	return x, nil
+}
+
+// validateSubject checks a subject_token object (token exchange and aws):
+// exactly one of a file and a SPIFFE audience.
+func validateSubject(s *subjectTokenEntry, c loadConfig) (*exchangeConfig, error) {
+	if s == nil || (s.File == nil) == (s.SPIFFE == nil) {
+		return nil, errors.New("needs a subject_token with exactly one of file and spiffe")
+	}
+	x := &exchangeConfig{}
+	if s.File != nil {
+		// Only the file's shape is checked: the kubelet may be about to rotate it.
+		if _, _, class := readAssertion(*s.File, time.Time{}); class != "" {
+			return nil, errors.New("subject_token file must hold a compact JWS with a numeric exp (" + class + ")")
+		}
+		x.subjectFile = *s.File
+		return x, nil
+	}
+	if c.spiffe == nil {
+		return nil, errors.New("a spiffe subject_token needs the file's spiffe object")
+	}
+	if err := s.SPIFFE.validate(); err != nil {
+		return nil, err
+	}
+	x.subjectSPIFFE, x.spiffe = s.SPIFFE.Audience, c.spiffe
 	return x, nil
 }
 

@@ -86,7 +86,8 @@ type oauthProvider struct {
 	spiffe             *spiffeClient    // client_assertion_spiffe: an SVID for spiffeAudience at each mint
 	spiffeAudience     string
 	scope, resource    string
-	exchange           *exchangeConfig // token_exchange; nil for client credentials
+	exchange           *exchangeConfig // token_exchange (and aws: its subject); nil for client credentials
+	aws                *awsConfig      // AssumeRoleWithWebIdentity instead of an OAuth grant (§3f)
 	publicClient       bool            // token_exchange with client_id alone: sent in the form
 	client             *http.Client
 	now                func() time.Time
@@ -209,21 +210,26 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 			return nil, bad("resource must be an absolute URL without a fragment")
 		}
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
 	p := &oauthProvider{
 		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
 		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp, signer: signer,
 		vault: c.vault, secretRef: secretRef, pk: pk, spiffe: sc,
 		scope: e.Scope, resource: e.Resource, exchange: x, publicClient: x != nil && kinds == 0 && e.ClientID != "", now: c.now, redact: c.redact, log: c.log,
-		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
-			// A redirect could carry the client secret or assertion to another host.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		client: newTokenClient(),
 	}
 	if sc != nil {
 		p.spiffeAudience = e.ClientAssertionSPIFFE.Audience
 	}
 	p.redactUntil(assertion, assertionExp)
 	return p, nil
+}
+
+// newTokenClient is the HTTP client of every mint: a 10 s timeout and no
+// redirects (a redirect could carry a secret, assertion or subject token to
+// another host).
+func newTokenClient() *http.Client {
+	return &http.Client{Timeout: tokenRequestTimeout, Transport: http.DefaultTransport.(*http.Transport).Clone(),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // cached returns the held token when it outlives validFor.
@@ -316,6 +322,9 @@ func (p *oauthProvider) mintAttrs() []any {
 
 // grant names the binding's OAuth grant for the log.
 func (p *oauthProvider) grant() string {
+	if p.aws != nil {
+		return "aws_web_identity"
+	}
 	if p.exchange != nil {
 		return "token_exchange"
 	}
@@ -324,7 +333,7 @@ func (p *oauthProvider) grant() string {
 
 // impersonates reports whether a mint ends with service-account impersonation.
 func (p *oauthProvider) impersonates() bool {
-	return p.exchange != nil && p.exchange.impersonate != nil
+	return p.aws == nil && p.exchange != nil && p.exchange.impersonate != nil
 }
 
 func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
