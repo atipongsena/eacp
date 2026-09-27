@@ -277,8 +277,8 @@ func (p *planner) tool(conn, name string, want Connector, tools map[string]ToolS
 	ts, exists := tools[name]
 	var toolID uuid.UUID
 	switch {
-	case !exists && want.Protocol == "mcp":
-		p.find(addr, KindUnresolvedReference, "MCP tools are discovered, never declared (ADR-023): scan the connector first")
+	case !exists && discovered(want.Protocol):
+		p.find(addr, KindUnresolvedReference, "MCP and A2A tools are discovered, never declared (ADR-023, ADR-030): scan the connector first")
 		return
 	case !exists:
 		par, parID := parent("connector."+conn, connID)
@@ -296,7 +296,7 @@ func (p *planner) tool(conn, name string, want Connector, tools map[string]ToolS
 		return
 	}
 	desired := *c
-	if want.Protocol == "mcp" {
+	if discovered(want.Protocol) {
 		if ts.Quarantined {
 			p.find(caddr, KindContained, "the tool is quarantined: release it through the registry (ADR-023)")
 			return

@@ -41,8 +41,8 @@ type Connector struct {
 	Tools     map[string]Tool `json:"tools,omitempty"`
 }
 
-// Tool is a declared tool. A tool of an MCP connector is discovered, never
-// created; declaring it only manages its contract.
+// Tool is a declared tool. A tool of an MCP or A2A connector is discovered,
+// never created; declaring it only manages its contract.
 type Tool struct {
 	Contract *registry.Contract `json:"contract,omitempty"`
 }
@@ -147,8 +147,8 @@ func Validate(d Document, raw json.RawMessage) []Finding {
 		if !slugRE.MatchString(name) {
 			bad(addr, "connector names match %s", slugRE)
 		}
-		if c.Protocol != "http" && c.Protocol != "mcp" {
-			bad(addr, "protocol is http or mcp")
+		if c.Protocol != "http" && !discovered(c.Protocol) {
+			bad(addr, "protocol is http, mcp or a2a")
 		}
 		if !endpointRE.MatchString(c.Endpoint) || len(c.Endpoint) > 2048 {
 			bad(addr, "endpoint is an http(s) URL")
@@ -248,3 +248,7 @@ func sortedKeys[V any](m map[string]V) []string {
 	slices.Sort(keys)
 	return keys
 }
+
+// discovered reports a protocol whose tools the scanner discovers (MCP,
+// ADR-023; A2A, ADR-030).
+func discovered(protocol string) bool { return protocol == "mcp" || protocol == "a2a" }
