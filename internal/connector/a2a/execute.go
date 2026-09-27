@@ -33,6 +33,26 @@ const (
 
 const maxText = 65536
 
+// preTaskCodes are the JSON-RPC errors the protocol layer returns before
+// any task exists (parse, request, method, params, and A2A's unsupported
+// operation, content type, extension and version). Every other code may
+// follow real work, so it proves nothing.
+var preTaskCodes = map[string]bool{"32700": true, "32600": true, "32601": true, "32602": true,
+	"32004": true, "32005": true, "32008": true, "32009": true}
+
+// knownState keeps remote content out of the log: a state EACP does not
+// know is logged as "unknown".
+func knownState(s string) string {
+	switch s {
+	case "":
+		return ""
+	case stateSubmitted, stateWorking, stateCompleted, stateFailed, stateCanceled, stateRejected,
+		stateInputRequired, stateAuthRequired:
+		return s
+	}
+	return "unknown"
+}
+
 type rpcError struct {
 	Code json.Number `json:"code"`
 }
@@ -59,6 +79,7 @@ type delegation struct {
 	nextID int
 	polls  int
 	final  task
+	worked bool // the agent reported the task WORKING
 }
 
 // Execute sends the enforced payload to the agent once, follows the task
@@ -76,7 +97,7 @@ func (c *Client) Execute(ctx context.Context, call worker.Call) worker.Result {
 	d := &delegation{c: c, call: call}
 	res := d.run(ctx, parts)
 	c.Log.InfoContext(ctx, "a2a delegation", "host", hostOf(call.Endpoint), "action_id", call.ActionID,
-		"task_id", d.final.ID, "state", d.final.Status.State, "polls", d.polls, "outcome", res.Outcome,
+		"task_id", d.final.ID, "state", knownState(d.final.Status.State), "polls", d.polls, "outcome", res.Outcome,
 		"class", res.ErrorClass, "artifacts", artifactCount(d.final.Artifacts),
 		"artifacts_sha256", digest(d.final.Artifacts))
 	return res
@@ -139,9 +160,12 @@ func (d *delegation) run(ctx context.Context, parts []any) worker.Result {
 	case resp == nil:
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 	case resp.Error != nil:
-		// The agent refused the message: no task was started.
-		if code, ok := rpcCode(resp.Error); ok {
+		// A protocol-layer refusal starts no task; any other error may
+		// follow real work.
+		if code, ok := rpcCode(resp.Error); ok && preTaskCodes[code] {
 			return worker.Result{Outcome: worker.NoEffect, ErrorClass: "a2a_rpc_" + code}
+		} else if ok {
+			return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rpc_" + code}
 		}
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 	}
@@ -181,6 +205,10 @@ func (d *delegation) follow(ctx context.Context, t task) worker.Result {
 		case stateCompleted:
 			return worker.Result{Outcome: worker.Succeeded, ExternalReference: id}
 		case stateRejected:
+			if d.worked {
+				// Work was reported: a rejection now proves nothing.
+				return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rejected_after_work", RemoteReference: id}
+			}
 			return worker.Result{Outcome: worker.NoEffect, ErrorClass: "a2a_rejected", RemoteReference: id}
 		case stateFailed:
 			return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_failed", RemoteReference: id}
@@ -194,7 +222,9 @@ func (d *delegation) follow(ctx context.Context, t task) worker.Result {
 				class = "a2a_auth_required"
 			}
 			return worker.Result{Outcome: worker.Ambiguous, ErrorClass: class, RemoteReference: id}
-		case stateSubmitted, stateWorking:
+		case stateWorking:
+			d.worked = true
+		case stateSubmitted:
 		default:
 			d.cancel(ctx, id)
 			return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response", RemoteReference: id}

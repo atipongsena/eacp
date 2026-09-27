@@ -37,7 +37,7 @@ A `delegate` contract pins the tool's current `definition_id` (ADR-023 §6). The
 
 - `idempotency_mode = none`, so the existing rule makes `max_attempts = 1`: **a delegation is sent at most once.**
 - `reconciliation_lookup = none`: no lookup can prove a lost task absent, so an unknown outcome goes to a human once it settles (ADR-004).
-- `no_effect_errors` only from the classes the connector reports before or instead of any work: `a2a_rejected`, `connection_refused_before_send`, `unauthorized`, `invalid_payload` and `a2a_rpc_<code>` (a JSON-RPC error reply, at most six digits).
+- `no_effect_errors` only from the classes the connector reports before or instead of any work: `a2a_rejected`, `connection_refused_before_send`, `unauthorized`, `invalid_payload`, and `a2a_rpc_<code>` for the JSON-RPC errors the protocol layer returns before any task exists: 32700, 32600, 32601, 32602 (parse, request, method, params) and A2A's 32004, 32005, 32008, 32009 (unsupported operation, content type, required extension, version). An internal (-32603), server-defined (-32000 to -32099) or application error may follow real work and is never certifiable.
 - Never `READ_ONLY`.
 
 The payload is an object with `text` (1–65 536 characters) and/or `data` (a JSON object), nothing else and at least one of them.
@@ -55,12 +55,14 @@ After the dispatch intent (T16), with the lease, kill, circuit and credential ru
 |---|---|---|
 | `{"message": …}` reply | `Succeeded` | reference `message:<messageId>` |
 | task `COMPLETED` | `Succeeded` | reference = task id |
-| task `REJECTED` | `NoEffect` | `a2a_rejected` (`Ambiguous` unless certified) |
+| task `REJECTED`, never reported `WORKING` | `NoEffect` | `a2a_rejected` (`Ambiguous` unless certified) |
+| task `REJECTED` after the agent reported it `WORKING` | `Ambiguous` | `a2a_rejected_after_work` |
 | task `FAILED` / `CANCELED` | `Ambiguous` | `a2a_failed` / `a2a_canceled` |
 | task `INPUT_REQUIRED` / `AUTH_REQUIRED` | `Ambiguous` | `a2a_input_required` / `a2a_auth_required` |
 | still running when the context ends | `Ambiguous` | `a2a_interrupted` |
 | no reply to `SendMessage` before the deadline | `Ambiguous` | `timeout` |
-| JSON-RPC error reply to `SendMessage` | `NoEffect` | `a2a_rpc_<abs(code)>` (`Ambiguous` unless certified) |
+| JSON-RPC protocol-layer error reply to `SendMessage` (the codes in §3) | `NoEffect` | `a2a_rpc_<abs(code)>` (`Ambiguous` unless certified) |
+| any other JSON-RPC error reply to `SendMessage` | `Ambiguous` | `a2a_rpc_<abs(code)>` |
 | HTTP 401/403 to `SendMessage` | `NoEffect` | `unauthorized` (the worker drops the credential) |
 | connection refused | `NoEffect` | `connection_refused_before_send` |
 | anything else | `Ambiguous` | `http_<code>`, `transport_error`, `invalid_response`, … |
@@ -72,11 +74,11 @@ After the dispatch intent (T16), with the lease, kill, circuit and credential ru
 
 ### 5. The remote reference
 
-An ambiguous or no-effect attempt carries no external reference (ADR-004). `eacp.action_attempts.remote_reference` holds the remote task id: at most 512 characters of `[A-Za-z0-9._:-]`, set only with the attempt's outcome by its worker, only when that outcome is `ambiguous` or `no_effect`, and never changed afterwards. The worker drops a malformed one, and one that contains a credential. It is kept when a kill replaces the result. The action's evidence shows it, so the human who settles an unknown outcome can look the task up at the remote agent. It never decides anything.
+An ambiguous or no-effect attempt carries no external reference (ADR-004). `eacp.action_attempts.remote_reference` holds the remote task id: at most 512 characters of `[A-Za-z0-9._:-]`, set only with the attempt's outcome by its worker, only when that outcome is `ambiguous` or `no_effect`, and never changed afterwards. The worker drops a malformed one, and one that contains a credential. It is kept when a kill replaces the result, and when a kill turns a success into an unknown outcome the success's reference (the task id) becomes the remote reference. The action's evidence shows it, so the human who settles an unknown outcome can look the task up at the remote agent. It never decides anything.
 
 ### 6. What is stored
 
-Only ids, states, counts and digests. The delegation log line names the host, action id, task id, final state, `GetTask` polls, artifact count and the SHA-256 of the artifacts' canonical JSON. Message and artifact content from the remote agent is untrusted and never stored, journaled or logged; the calling agent sees the external reference, not the output.
+Only ids, states, counts and digests. The delegation log line names the host, action id, task id, final state (a state EACP does not know is logged as `unknown`), `GetTask` polls, artifact count and the SHA-256 of the artifacts' canonical JSON. Message and artifact content from the remote agent is untrusted and never stored, journaled or logged; the calling agent sees the external reference, not the output.
 
 ## Consequences
 
@@ -91,6 +93,7 @@ Only ids, states, counts and digests. The delegation log line names the host, ac
 |---|---|
 | Whether a resent message is deduplicated | No: a delegation is sent at most once, never retried after a send |
 | What an unfinished, failed or interrupted task did | Unknown, for a human; only `REJECTED` and pre-work errors may be certified as no effect |
+| Whether a `REJECTED` task did any work | Trusted only if the agent never reported it `WORKING`; an agent that works without saying so defeats this, which is why certifying `a2a_rejected` is a human's choice per contract |
 | Which card members are display-only | Only `iconUrl` and `documentationUrl`; unknown members are certified |
 | Where the worker may send a task | Only the certified interface URL, which must equal the connector endpoint exactly |
 | Whether a cancel stopped the work | Never assumed; one best-effort `CancelTask`, the outcome unchanged |

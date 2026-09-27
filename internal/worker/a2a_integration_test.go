@@ -258,6 +258,57 @@ func TestTheWorkerDelegatesToAnA2AAgent(t *testing.T) {
 	}
 }
 
+// TestAKillDuringADelegationCancelsTheTaskOnce: a kill while the worker
+// follows a task interrupts the call; the attempt is kill_interrupted with
+// the remote task id, and exactly one CancelTask reaches the agent.
+func TestAKillDuringADelegationCancelsTheTaskOnce(t *testing.T) {
+	v := newA2AEnv(t, []string{"a2a_rejected"}, 30000)
+	client := a2a.New()
+	client.PollStart = 100 * time.Millisecond
+	w, err := worker.New(v.f.App, worker.Options{ID: "w-kill", Lease: 30 * time.Second,
+		KillPollInterval: 100 * time.Millisecond, Connectors: map[string]worker.Connector{"a2a": client},
+		Secrets: v.secrets, Backoff: func(int) time.Duration { return time.Hour }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"text": "Buy 10 laptops", "data": map[string]any{"scenario": "hang"}})
+	a, err := v.e.Submit(context.Background(), action.Agent(v.f.Tenant, v.agent.Agent, v.agent.Version),
+		action.Submission{IdempotencyKey: uuid.NewString(), Subject: "carol@tenant-a.test", Operation: "delegate",
+			Target: "procurement", Tool: "procurement.delegate", ToolSchemaVersion: "1", Resource: "purchase", Payload: b})
+	if err != nil || a.State != "QUEUED" {
+		t.Fatalf("submit: %s %v", a.State, err)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = w.RunOnce(context.Background()) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for v.count("SendMessage", "message", a.ID.String()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the delegation was not sent")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := v.f.Exec("otto", `SELECT eacp.set_kill('action', $1, true, 'incident containment')`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the kill did not end the call")
+	}
+	got, err := v.e.Get(context.Background(), v.f.Tenant, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := v.evidence(a.ID)
+	if got.State != "UNKNOWN_OUTCOME" || len(ev.Attempts) != 1 || ev.Attempts[0].ErrorClass != "kill_interrupted" ||
+		!strings.HasPrefix(ev.Attempts[0].RemoteReference, "task-") {
+		t.Fatalf("killed delegation: %s, attempts %+v", got.State, ev.Attempts)
+	}
+	if n := v.count("CancelTask", "task", ev.Attempts[0].RemoteReference); n != 1 {
+		t.Fatalf("%d cancels of the killed task", n)
+	}
+}
+
 // TestAnUncertifiedRejectionIsUnknown: without a2a_rejected in the
 // contract, a rejection proves nothing and a human settles it.
 func TestAnUncertifiedRejectionIsUnknown(t *testing.T) {

@@ -65,3 +65,34 @@ func TestEvidenceShowsTheRemoteReference(t *testing.T) {
 		})
 	}
 }
+
+// TestAKillKeepsTheReferenceOfASuccess: a kill that lands during a call
+// turns its success into an unknown outcome; the reference the connector
+// proved is kept as the remote reference, so the human who settles the
+// action can find the work (ADR-030 §5).
+func TestAKillKeepsTheReferenceOfASuccess(t *testing.T) {
+	v := newERPEnv(t)
+	w, err := worker.New(v.f.App, worker.Options{ID: "w1", Lease: 5 * time.Second,
+		Connectors: map[string]worker.Connector{"http": remoteConnector(func(call worker.Call) worker.Result {
+			if err := v.f.Exec("otto", `SELECT eacp.set_kill('action', $1, true, 'incident containment')`,
+				call.ActionID); err != nil {
+				t.Error(err)
+			}
+			return worker.Result{Outcome: worker.Succeeded, ExternalReference: "task-9"}
+		})}, Secrets: v.secrets, Backoff: func(int) time.Duration { return time.Hour }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := v.submit("create_po_eventual", map[string]any{})
+	if n, err := w.RunOnce(context.Background()); err != nil || n != 1 {
+		t.Fatalf("dispatched %d, %v", n, err)
+	}
+	ev, err := v.e.Evidence(context.Background(), v.f.Tenant, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ev.Attempts) != 1 || ev.Attempts[0].ErrorClass != "kill_interrupted" ||
+		ev.Attempts[0].ExternalReference != "" || ev.Attempts[0].RemoteReference != "task-9" {
+		t.Fatalf("attempts %+v", ev.Attempts)
+	}
+}

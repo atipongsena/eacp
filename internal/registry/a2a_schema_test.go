@@ -203,12 +203,18 @@ func TestA2AContractRules(t *testing.T) {
 	_, err = f.TryID("erin", mcpReadContractSQL, tool, def)
 	wantState(t, err, sqlCheck)
 	// Only the classes the A2A connector can prove are certifiable no-effect.
-	for _, class := range []string{"http_500", "timeout", "a2a_failed", "a2a_rpc_", "a2a_rpc_1234567", "a2a_rpc_-32001"} {
+	// JSON-RPC errors only from the protocol layer, before any task: an
+	// internal, server-defined or application error may follow real work.
+	for _, class := range []string{"http_500", "timeout", "a2a_failed", "a2a_rpc_", "a2a_rpc_1234567", "a2a_rpc_-32001",
+		"a2a_rpc_32603", "a2a_rpc_32000", "a2a_rpc_32099", "a2a_rpc_32001", "a2a_rpc_32002", "a2a_rpc_7",
+		"a2a_rejected_after_work"} {
 		_, err = f.TryID("erin", a2aWriteContractSQL, tool, def, []string{"a2a_rejected", class})
 		wantState(t, err, sqlCheck)
 	}
 	f.ID(t, "erin", a2aWriteContractSQL, tool, def,
-		[]string{"a2a_rejected", "connection_refused_before_send", "unauthorized", "invalid_payload", "a2a_rpc_32001"})
+		[]string{"a2a_rejected", "connection_refused_before_send", "unauthorized", "invalid_payload", "a2a_rpc_32700",
+			"a2a_rpc_32600", "a2a_rpc_32601", "a2a_rpc_32602", "a2a_rpc_32004", "a2a_rpc_32005", "a2a_rpc_32008",
+			"a2a_rpc_32009"})
 }
 
 func TestA2AFingerprintIsV2(t *testing.T) {

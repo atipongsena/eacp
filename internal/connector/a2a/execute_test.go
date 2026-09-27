@@ -1,10 +1,12 @@
 package a2a_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -221,7 +223,12 @@ func TestEveryOutcomeIsClassified(t *testing.T) {
 			want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_auth_required", RemoteReference: "task-1"}},
 		{name: "unknown state", result: map[string]any{"task": task("task-1", "TASK_STATE_PAUSED")}, cancels: true,
 			want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response", RemoteReference: "task-1"}},
-		{name: "JSON-RPC error", code: -32001, want: worker.Result{Outcome: worker.NoEffect, ErrorClass: "a2a_rpc_32001"}},
+		{name: "JSON-RPC error before any task", code: -32601, want: worker.Result{Outcome: worker.NoEffect, ErrorClass: "a2a_rpc_32601"}},
+		{name: "JSON-RPC version not supported", code: -32009, want: worker.Result{Outcome: worker.NoEffect, ErrorClass: "a2a_rpc_32009"}},
+		{name: "JSON-RPC internal error", code: -32603, want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rpc_32603"}},
+		{name: "JSON-RPC server error", code: -32000, want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rpc_32000"}},
+		{name: "JSON-RPC task not found", code: -32001, want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rpc_32001"}},
+		{name: "JSON-RPC application error", code: 7, want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rpc_7"}},
 		{name: "JSON-RPC error out of range", code: -1234567, want: worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}},
 		{name: "HTTP 401", raw: status(http.StatusUnauthorized), want: worker.Result{Outcome: worker.NoEffect, ErrorClass: "unauthorized"}},
 		{name: "HTTP 403", raw: status(http.StatusForbidden), want: worker.Result{Outcome: worker.NoEffect, ErrorClass: "unauthorized"}},
@@ -544,3 +551,60 @@ func TestADelegationIsSignedWithSigV4(t *testing.T) {
 		}
 	}
 }
+
+// A task the agent reported as working may already have had effects: a
+// later rejection proves nothing (ADR-030 §4).
+func TestARejectionAfterWorkIsUnknown(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		states []string
+		want   worker.Result
+	}{
+		{"rejected before work", []string{"TASK_STATE_SUBMITTED", "TASK_STATE_REJECTED"},
+			worker.Result{Outcome: worker.NoEffect, ErrorClass: "a2a_rejected", RemoteReference: "task-1"}},
+		{"rejected after work", []string{"TASK_STATE_SUBMITTED", "TASK_STATE_WORKING", "TASK_STATE_REJECTED"},
+			worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rejected_after_work", RemoteReference: "task-1"}},
+		{"working at once, then rejected", []string{"TASK_STATE_WORKING", "TASK_STATE_REJECTED"},
+			worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_rejected_after_work", RemoteReference: "task-1"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := newRPCAgent(t)
+			a.reply = func(method string, n int, _ json.RawMessage) (any, int) {
+				if method == "SendMessage" {
+					return map[string]any{"task": task("task-1", c.states[0])}, 0
+				}
+				return task("task-1", c.states[min(n, len(c.states)-1)]), 0
+			}
+			if res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`)); res != c.want {
+				t.Fatalf("result %+v", res)
+			}
+		})
+	}
+}
+
+// A state the agent invents is remote content: it never reaches the log.
+func TestARemoteStateNeverReachesTheLog(t *testing.T) {
+	a := newRPCAgent(t)
+	invented := "TASK_STATE_" + strings.Repeat("X", 4096) + "-remote-canary"
+	a.reply = sent(map[string]any{"task": task("task-1", invented)}, invented)
+	buf := &bytes.Buffer{}
+	var mu sync.Mutex
+	c := fastClient()
+	c.Log = slog.New(slog.NewJSONHandler(writerFunc(func(p []byte) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}), nil))
+	if res := execute(t, c, delegation(t, a.endpoint, `{"text":"Buy"}`)); res.ErrorClass != "invalid_response" {
+		t.Fatalf("result %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Contains(buf.String(), "remote-canary") || !strings.Contains(buf.String(), `"state":"unknown"`) {
+		t.Fatalf("log %.300s", buf.String())
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

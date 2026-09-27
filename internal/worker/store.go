@@ -393,7 +393,13 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 			return err
 		}
 		if killChanged {
-			r = Result{Outcome: Ambiguous, ErrorClass: "kill_interrupted", RemoteReference: r.RemoteReference}
+			// The kill makes the outcome unknown; a reference the connector
+			// proved still tells the human where to look (ADR-030 §5).
+			remote := r.RemoteReference
+			if r.Outcome == Succeeded && remoteReferencePattern.MatchString(r.ExternalReference) {
+				remote = r.ExternalReference
+			}
+			r = Result{Outcome: Ambiguous, ErrorClass: "kill_interrupted", RemoteReference: remote}
 		}
 		if err := tx.QueryRow(ctx, `UPDATE eacp.action_attempts
 			SET outcome = $3, external_reference = NULLIF($4, ''), error_class = NULLIF($5, ''),
