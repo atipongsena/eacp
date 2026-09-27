@@ -49,5 +49,6 @@
 {{- $vexp := $vi.expirationSeconds -}}
 {{- if not (or (kindIs "int" $vexp) (kindIs "int64" $vexp) (kindIs "float64" $vexp)) -}}{{- fail "worker.vaultIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
 {{- if or (lt (float64 $vexp) 600.0) (gt (float64 $vexp) 86400.0) (ne (float64 $vexp) (float64 (int $vexp))) -}}{{- fail "worker.vaultIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
+{{- if and $v.worker.spiffe.enabled (or (not $v.worker.spiffe.csiDriver) (regexMatch "[[:space:]]" (toString $v.worker.spiffe.csiDriver))) -}}{{- fail "worker.spiffe.csiDriver must name the SPIFFE CSI driver when worker.spiffe is enabled" -}}{{- end -}}
 {{- if not $v.database.peers -}}{{- fail "database.peers must select PostgreSQL for NetworkPolicy egress" -}}{{- end -}}
 {{- if and $v.nats.enabled (not $v.nats.peers) -}}{{- fail "nats.peers must select NATS for NetworkPolicy egress (or set nats.enabled=false)" -}}{{- end -}}

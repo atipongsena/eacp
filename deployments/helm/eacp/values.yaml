@@ -68,6 +68,9 @@ worker:
     enabled: false
     audience: vault             # the audience the Vault role binds
     expirationSeconds: 3600     # 600-86400
+  spiffe:                       # ADR-019 Rev 1.4: the SPIRE agent's Workload API socket, for JWT-SVID credentials
+    enabled: false
+    csiDriver: csi.spiffe.io    # the SPIFFE CSI driver; its volume holds the socket spire-agent.sock
   env: {}
   resources:
     requests: {cpu: 100m, memory: 128Mi}

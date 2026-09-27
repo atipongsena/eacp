@@ -141,3 +141,50 @@ func TestTheVaultIdentityIsTheWorkersOwn(t *testing.T) {
 		t.Error("the Vault identity is projected while disabled")
 	}
 }
+
+// spiffeVolume returns the pod's SPIFFE Workload API volume, or nil.
+func spiffeVolume(spec map[string]any) any {
+	for _, v := range list(spec, "volumes") {
+		if get(v, "name") == "spiffe-workload-api" {
+			return v
+		}
+	}
+	return nil
+}
+
+// ADR-019 Rev 1.4: only the worker reaches the SPIRE agent, through the
+// SPIFFE CSI driver's read-only socket volume (allowed under the restricted
+// Pod Security Standard; a hostPath socket would not be).
+func TestTheSPIFFESocketIsTheWorkersOwn(t *testing.T) {
+	if s, _ := get(defaults(t), "worker", "spiffe", "enabled").(bool); s {
+		t.Fatal("worker.spiffe is enabled by default")
+	}
+	for _, w := range workloads {
+		spec := podSpec(find(t, render(t, "--set", "worker.spiffe.enabled=false"), w.kind, w.name))
+		if spiffeVolume(spec) != nil || mountedAt(spec, "/spiffe-workload-api") {
+			t.Errorf("%s mounts the SPIFFE socket while it is disabled", w.name)
+		}
+	}
+	for driver, args := range map[string][]string{
+		"csi.spiffe.io":    {"--set", "worker.spiffe.enabled=true"},
+		"csi.example.test": {"--set", "worker.spiffe.enabled=true", "--set", "worker.spiffe.csiDriver=csi.example.test"},
+	} {
+		objs := render(t, args...)
+		for _, w := range workloads {
+			spec := podSpec(find(t, objs, w.kind, w.name))
+			vol := spiffeVolume(spec)
+			if w.component != "worker" {
+				if vol != nil || mountedAt(spec, "/spiffe-workload-api") {
+					t.Errorf("%s mounts the SPIFFE socket", w.name)
+				}
+				continue
+			}
+			if get(vol, "csi", "driver") != driver || get(vol, "csi", "readOnly") != true || len(get(vol, "csi").(map[string]any)) != 2 {
+				t.Errorf("the worker's SPIFFE volume = %v, want a read-only csi volume of %s", vol, driver)
+			}
+			if !mountedReadOnly(spec, "/spiffe-workload-api") {
+				t.Error("the SPIFFE socket is not mounted read-only at /spiffe-workload-api")
+			}
+		}
+	}
+}

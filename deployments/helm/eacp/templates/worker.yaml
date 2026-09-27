@@ -62,6 +62,9 @@ spec:
             {{- if .Values.worker.vaultIdentity.enabled }}
             - {name: vault-identity, mountPath: /run/secrets/eacp-vault-identity, readOnly: true}
             {{- end }}
+            {{- if .Values.worker.spiffe.enabled }}
+            - {name: spiffe-workload-api, mountPath: /spiffe-workload-api, readOnly: true}
+            {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
         {{- include "eacp.caVolumes" (dict "root" . "nats" true) | nindent 8 }}
@@ -100,5 +103,17 @@ spec:
                   audience: {{ .audience | quote }}
                   expirationSeconds: {{ int .expirationSeconds }}
                   path: token
+        {{- end }}
+        {{- end }}
+        {{- with .Values.worker.spiffe }}
+        {{- if .enabled }}
+        # ADR-019 Rev 1.4: the SPIRE agent's Workload API through the SPIFFE
+        # CSI driver (a csi volume is allowed by the restricted Pod Security
+        # Standard, a hostPath socket is not); the secrets file's spiffe block
+        # names unix:///spiffe-workload-api/spire-agent.sock.
+        - name: spiffe-workload-api
+          csi:
+            driver: {{ .csiDriver | quote }}
+            readOnly: true
         {{- end }}
         {{- end }}
