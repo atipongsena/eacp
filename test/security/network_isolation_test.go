@@ -54,6 +54,15 @@ func TestAgentCannotReachFakeMCP(t *testing.T) {
 	}
 }
 
+// ADR-030: nor to the remote A2A agent the worker delegates to.
+func TestAgentCannotReachFakeA2A(t *testing.T) {
+	requireCompose(t)
+	out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", "http://fakea2a:8092/healthz")
+	if err == nil {
+		t.Fatalf("agent reached fakea2a directly: %q", out)
+	}
+}
+
 // Positive control for the nc probe: the same invocation must succeed against
 // a port the agent is allowed to reach.
 func TestAgentNcProbeWorks(t *testing.T) {
@@ -93,6 +102,16 @@ func TestERPNetworkCanReachFakeMCP(t *testing.T) {
 	}
 }
 
+// Positive control for the A2A agent, on the same worker-only network.
+func TestERPNetworkCanReachFakeA2A(t *testing.T) {
+	requireCompose(t)
+	out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_erp", "busybox:1.37",
+		"wget", "-q", "-T", "3", "-O", "-", "http://fakea2a:8092/healthz").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), `"ok"`) {
+		t.Fatalf("erp network could not reach fakea2a (err=%v out=%q)", err, out)
+	}
+}
+
 // inspect returns a running compose service's environment and mount targets.
 func inspect(t *testing.T, service string) (env, mounts string) {
 	t.Helper()
@@ -117,17 +136,18 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 	if !strings.Contains(env, "EACP_CONNECTOR_SECRETS_FILE=") || !strings.Contains(mounts, "/run/secrets/connector_secrets") {
 		t.Fatalf("worker has no connector secrets (env=%s mounts=%s); the negative checks would be meaningless", env, mounts)
 	}
-	for _, service := range []string{"controlplane-api", "fakeerp", "fakemcp", "agent", "postgres"} {
+	for _, service := range []string{"controlplane-api", "fakeerp", "fakemcp", "fakea2a", "agent", "postgres"} {
 		env, mounts := inspect(t, service)
 		if strings.Contains(env, "CONNECTOR_SECRETS") || strings.Contains(mounts, "connector_secrets") {
 			t.Errorf("%s holds connector secrets (env=%s mounts=%s)", service, env, mounts)
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":8`) {
+	if err != nil || !strings.Contains(string(logs), `"bindings":9`) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
 	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") ||
+		strings.Contains(string(logs), "dev-only-fakea2a-token") ||
 		strings.Contains(string(logs), "dev-only-fakeerp-oauth-client-secret") {
 		t.Fatal("worker logged a connector secret")
 	}
@@ -143,7 +163,7 @@ func TestFakeERPCredentialMountsAreLimitedToWorkerAndERP(t *testing.T) {
 			t.Errorf("%s has no ERP credential mount: %s", service, mounts)
 		}
 	}
-	for _, service := range []string{"controlplane-api", "agent", "postgres", "fakemcp"} {
+	for _, service := range []string{"controlplane-api", "agent", "postgres", "fakemcp", "fakea2a"} {
 		_, mounts := inspect(t, service)
 		if strings.Contains(mounts, "fakeerp_token") {
 			t.Errorf("%s has the ERP credential mount: %s", service, mounts)
@@ -161,6 +181,33 @@ func TestFakeMCPCredentialMountIsLimitedToTheServer(t *testing.T) {
 	for _, service := range []string{"controlplane-api", "execution-worker", "fakeerp", "agent", "postgres"} {
 		if _, mounts := inspect(t, service); strings.Contains(mounts, "fakemcp_token") {
 			t.Errorf("%s has the MCP verifier mount: %s", service, mounts)
+		}
+	}
+}
+
+// The A2A agent's verifier is mounted into the agent only; the worker holds
+// the token through its connector-secret manifest.
+func TestFakeA2ACredentialMountIsLimitedToTheAgent(t *testing.T) {
+	requireCompose(t)
+	if _, mounts := inspect(t, "fakea2a"); !strings.Contains(mounts, "/run/secrets/fakea2a_token") {
+		t.Fatalf("fakea2a has no credential mount: %s", mounts)
+	}
+	for _, service := range []string{"controlplane-api", "execution-worker", "fakeerp", "fakemcp", "agent", "postgres"} {
+		if _, mounts := inspect(t, service); strings.Contains(mounts, "fakea2a_token") {
+			t.Errorf("%s has the A2A verifier mount: %s", service, mounts)
+		}
+	}
+}
+
+// A caller on the worker network without the token cannot read the A2A
+// agent's card or send it a message.
+func TestFakeA2ARejectsUnauthenticatedCalls(t *testing.T) {
+	requireCompose(t)
+	for _, path := range []string{"/.well-known/agent-card.json", "/v1/audit"} {
+		out, err := exec.Command("docker", "run", "--rm", "--network", "eacp_erp", "busybox:1.37",
+			"wget", "-q", "-T", "3", "-O", "-", "http://fakea2a:8092"+path).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "401") {
+			t.Fatalf("unauthenticated %s (err=%v out=%q)", path, err, out)
 		}
 	}
 }

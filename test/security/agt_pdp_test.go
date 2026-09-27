@@ -70,7 +70,7 @@ func TestOnlyTheAPIAndTheSidecarHoldThePDPPKI(t *testing.T) {
 			t.Fatalf("%s has no PKI mount (%s); the negative checks would be meaningless", service, mounts)
 		}
 	}
-	for _, service := range []string{"execution-worker", "fakeerp", "fakemcp", "agent", "postgres"} {
+	for _, service := range []string{"execution-worker", "fakeerp", "fakemcp", "fakea2a", "agent", "postgres"} {
 		if _, mounts := inspect(t, service); strings.Contains(mounts, "/pki") {
 			t.Errorf("%s mounts the PDP PKI: %s", service, mounts)
 		}

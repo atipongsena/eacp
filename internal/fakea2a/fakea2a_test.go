@@ -270,9 +270,6 @@ func TestTheFakeAgentsLogSurvivesARestart(t *testing.T) {
 
 func TestTheCardFileIsReReadForDrift(t *testing.T) {
 	cardFile := filepath.Join(t.TempDir(), "card.json")
-	if err := os.WriteFile(cardFile, []byte(`{"name":"v1"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	f := start(t, cardFile, filepath.Join(t.TempDir(), "a2a.log"))
 	get := func() string {
 		req, _ := http.NewRequest(http.MethodGet, f.srv.URL+a2a.CardPath, nil)
@@ -288,6 +285,13 @@ func TestTheCardFileIsReReadForDrift(t *testing.T) {
 			t.Fatalf("card: HTTP %d", resp.StatusCode)
 		}
 		return c.Name
+	}
+	// Until the file exists, the built-in card is served.
+	if n := get(); n != "Fake Procurement Agent" {
+		t.Fatalf("card without its file %q", n)
+	}
+	if err := os.WriteFile(cardFile, []byte(`{"name":"v1"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if n := get(); n != "v1" {
 		t.Fatalf("card %q", n)

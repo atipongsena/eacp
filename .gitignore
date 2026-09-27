@@ -20,6 +20,8 @@ deployments/docker/secrets/fakeerp-token.dev
 deployments/docker/secrets/.fakeerp-token-*
 deployments/docker/secrets/fakemcp-token.dev
 deployments/docker/secrets/.fakemcp-token-*
+deployments/docker/secrets/fakea2a-token.dev
+deployments/docker/secrets/.fakea2a-token-*
 deployments/docker/secrets/fakeerp-oauth-client.dev
 deployments/docker/secrets/.fakeerp-jit-oauth-client-*
 

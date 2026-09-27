@@ -1,4 +1,4 @@
-"""Create the local Fake ERP and Fake MCP verifier secrets, and the Fake ERP's
+"""Create the local Fake ERP, Fake MCP and Fake A2A verifier secrets, and the Fake ERP's
 OAuth client secret, from the existing dev manifest."""
 
 import json
@@ -60,4 +60,5 @@ def write_oauth_client(secret_ref, client_id, filename):
 
 write_verifier("fakeerp", "fakeerp:8090", "fakeerp-token.dev")
 write_verifier("fakemcp", "fakemcp:8091", "fakemcp-token.dev")
+write_verifier("fakea2a", "fakea2a:8092", "fakea2a-token.dev")
 write_oauth_client("fakeerp-jit", "eacp-worker", "fakeerp-oauth-client.dev")

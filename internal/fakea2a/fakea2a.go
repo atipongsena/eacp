@@ -1,6 +1,7 @@
 // Package fakea2a is a credential-protected A2A 1.0 agent for tests and the
 // A2A demo (ADR-030). It speaks JSON-RPC at /a2a, serves its Agent Card
-// (re-read from a file on every request, so a demo can make it drift) and
+// (re-read from a file on every request, so a demo can make it drift; the
+// built-in card while that file does not exist) and
 // keeps a durable log of every message and task: ids, states and the
 // SHA-256 of each message, never its content. A message's data part picks
 // the behaviour with "scenario":
@@ -24,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -199,11 +201,12 @@ func (a *Agent) card(w http.ResponseWriter) {
 	var b []byte
 	if a.cardFile != "" {
 		var err error
-		if b, err = os.ReadFile(a.cardFile); err != nil {
+		if b, err = os.ReadFile(a.cardFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "card unavailable", http.StatusServiceUnavailable)
 			return
 		}
-	} else {
+	}
+	if b == nil { // no card file (yet): the built-in card
 		b, _ = json.Marshal(map[string]any{
 			"name":        "Fake Procurement Agent",
 			"description": "Raises purchase orders in the fake ERP",

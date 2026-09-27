@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Slice A, Slice C and JIT credential demos (MASTER_PLAN §111, docs/DEMO.md).
+# Slice A, Slice C, A2A delegation and JIT credential demos (MASTER_PLAN §111, docs/DEMO.md).
 #
 # Starts a fresh, isolated demo stack (compose project "eacp-demo", its own
 # volumes, API on 127.0.0.1:18080, PostgreSQL on 127.0.0.1:55433), runs the
@@ -8,23 +8,25 @@
 # Each demo has its own tenant, so both run on the same stack.
 #
 #   scripts/demo.sh           run every demo
-#   DEMO=A scripts/demo.sh    run some demos: letters from A (Slice A), C (Slice C), J (JIT credentials)
+#   DEMO=A scripts/demo.sh    run some demos: letters from A (Slice A), C (Slice C), D (A2A delegation),
+#                             J (JIT credentials)
 #   KEEP=1 scripts/demo.sh    leave the demo stack running afterwards
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: do not rewrite container paths
 
-demos=${DEMO:-ACJ}
+demos=${DEMO:-ACDJ}
 case "$demos" in
-"" | *[!ACJ]*)
-	echo "DEMO must be letters from A, C and J, or unset" >&2
+"" | *[!ACDJ]*)
+	echo "DEMO must be letters from A, C, D and J, or unset" >&2
 	exit 2
 	;;
 esac
 tests=()
 case "$demos" in *A*) tests+=(TestSliceADemo) ;; esac
 case "$demos" in *C*) tests+=(TestSliceCDemo) ;; esac
+case "$demos" in *D*) tests+=(TestA2ADemo) ;; esac
 case "$demos" in *J*) tests+=(TestJITDemo TestPrivateKeyJWTDemo TestVaultDemo) ;; esac
 pattern="^($(
 	IFS='|'

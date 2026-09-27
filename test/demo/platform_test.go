@@ -101,7 +101,7 @@ func (c *composePlatform) vault(args ...string) (string, error) {
 }
 func (c *composePlatform) logs() string {
 	c.t.Helper()
-	return c.must("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "fakemcp", "migrate",
+	return c.must("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "fakemcp", "fakea2a", "migrate",
 		"postgres", "agt-pdp", "nats")
 }
 func (c *composePlatform) erpAudit(token string) ([]byte, error) {
