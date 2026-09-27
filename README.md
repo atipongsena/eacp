@@ -268,6 +268,18 @@ A binding can trade the worker's own identity for an access token (ADR-019 Rev 1
 
 The subject token is read again (or fetched from the SPIRE agent) at every mint and goes only to the STS; client authentication there is optional. The exchange must return an access token (`issued_token_type`). With `impersonate`, the federated token goes only to the impersonation endpoint and is never cached; the service account's token is the one the connector receives. The final token follows every Phase 24a rule, and any failed step withholds only that binding with the usual back-off. Subject and federated tokens are redacted from every log and never stored. `scripts/k8s-e2e.sh` runs `TestTokenExchangeDemo` against Fake ERP's STS.
 
+## Phase 24g: AWS STS and SigV4
+
+AWS issues no Bearer tokens, so an `aws` binding (ADR-019 Rev 1.6) assumes an IAM role with the worker's projected token or JWT-SVID (`AssumeRoleWithWebIdentity`) and signs every call to the connector with the temporary keys (SigV4), as API Gateway with IAM authorisation, Lambda function URLs and AWS APIs require:
+
+```json
+{"tenant_id": "…", "secret_ref": "erp-aws", "host": "abc123.execute-api.eu-west-1.amazonaws.com:443",
+ "aws": {"role_arn": "arn:aws:iam::123456789012:role/eacp-worker", "region": "eu-west-1", "service": "execute-api",
+         "subject_token": {"file": "/run/secrets/eacp-identity/token"}}}
+```
+
+The STS endpoint defaults to the regional one; keys are requested for at most an hour and used for at most an hour. The HTTP connector signs execute and lookup with the pinned `aws-sdk-go-v2` signer after every other header is set. The secret key never leaves the worker and the session token rides only on signed calls to the bound host; both are redacted from every log and never stored, while the access key id is logged so it can be matched in CloudTrail. MCP servers are not signed. `scripts/k8s-e2e.sh` runs `TestAWSDemo` against Fake ERP's AWS STS. This completes Phase 24.
+
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
 ## Quick start

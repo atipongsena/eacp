@@ -170,6 +170,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestTheWorkerExecutesWithAnSVID — with the worker's JWT-SVID from the SPIFFE Workload API as the Bearer and no secret, the SVID appears in no row, journal, outbox or log (ADR-019 Rev 1.4)
 - `internal/worker` TestTheWorkerExecutesWithAnExchangedToken — with the worker's platform token exchanged at an STS (RFC 8693) and no client credential, neither the subject token nor the exchanged token appears in any row, journal, outbox or log (ADR-019 Rev 1.5)
 - `internal/worker` TestTheWorkerExecutesWithAnImpersonatedToken — with the worker's JWT-SVID exchanged and the federated token impersonating a service account, no SVID, federated or final token appears in any row, journal, outbox or log (ADR-019 Rev 1.5)
+- `internal/worker` TestTheWorkerExecutesWithAWSKeysFromAFileSubject — with temporary AWS keys from AssumeRoleWithWebIdentity with the worker's platform token and every call signed with SigV4, neither the subject token, the secret key nor the session token appears in any row, journal, outbox or log (ADR-019 Rev 1.6)
+- `internal/worker` TestTheWorkerExecutesWithAWSKeysFromAnSVID — with AWS keys bought with the worker's JWT-SVID, neither the SVID, the secret key nor the session token appears in any row, journal, outbox or log (ADR-019 Rev 1.6)
 - `internal/worker` TestTheWorkerMintsWithAnSVIDAssertion — with the worker's JWT-SVID as the OAuth client assertion and no client secret, neither the SVID nor a token appears in any row, journal, outbox or log (ADR-019 Rev 1.4)
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key

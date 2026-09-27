@@ -1,7 +1,7 @@
 # ADR-019: Credential custody — providers and just-in-time credentials
 
-Status: Accepted (Rev 1.5, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2), 24d (Rev 1.3),
-24e (Rev 1.4) and 24f (Rev 1.5).
+Status: Accepted (Rev 1.6, 2026-09-27). Phases 24a (Rev 1.0), 24b (Rev 1.1), 24c (Rev 1.2), 24d (Rev 1.3),
+24e (Rev 1.4), 24f (Rev 1.5) and 24g (Rev 1.6).
 Scope: MASTER_PLAN §96.
 Related: ADR-001 (the product boundary: agents never hold enterprise credentials), ADR-003 §4 (a credential is
 bound to one connector host), ADR-004 (execution semantics, unknown outcomes and reconciliation), ADR-022
@@ -51,6 +51,11 @@ Workload Identity Federation (an STS, then optionally a service account's token 
 Keycloak and Okta token exchange. An `oauth2` binding may now mint through an RFC 8693 token exchange of the
 worker's projected token or JWT-SVID, optionally impersonating a GCP service account, with no long-lived
 secret (§3e).
+
+Rev 1.6 (Phase 24g) adds the last cloud identity. AWS issues no Bearer tokens: a workload trades its identity
+token for temporary keys (`AssumeRoleWithWebIdentity`) and signs every request with them (SigV4), as API
+Gateway with IAM authorisation, Lambda function URLs and AWS service APIs require. An `aws` binding now does
+both with the worker's projected token or JWT-SVID and no long-lived secret (§3f).
 
 ## Decision
 
@@ -382,8 +387,69 @@ The `oauth2` provider gains a grant; everything §3 says about the token it retu
   `worker.workloadIdentity`), a SPIFFE subject comes through §3d's socket. The impersonation endpoint's host
   belongs in `worker.connectorEgress` beside the token endpoint's.
 
-AWS STS and SigV4, `actor_token` (delegation), `delegates`, refresh tokens, caching the federated token
-across mints, GCP workforce pools and STS `options` are out of scope.
+`actor_token` (delegation), `delegates`, refresh tokens, caching the federated token across mints, GCP
+workforce pools and STS `options` are out of scope. AWS is §3f.
+
+### 3f. AWS STS web identity and SigV4 (Rev 1.6)
+
+Verified against `github.com/aws/aws-sdk-go-v2/service/sts` v1.51.1 (the request and reply shapes) and
+`github.com/aws/aws-sdk-go-v2` v1.47.1 (`aws/signer/v4`, whose only dependency is `github.com/aws/smithy-go`
+v1.28.1); only the signer is imported (`research/REFERENCES.md`).
+
+```json
+{"tenant_id": "…", "secret_ref": "erp-aws", "host": "abc123.execute-api.eu-west-1.amazonaws.com:443",
+ "aws": {"role_arn": "arn:aws:iam::123456789012:role/eacp-worker",
+         "role_session_name": "eacp-worker",
+         "region": "eu-west-1", "service": "execute-api",
+         "sts_endpoint": "https://sts.eu-west-1.amazonaws.com",
+         "duration_seconds": 3600,
+         "subject_token": {"file": "/run/secrets/eacp-identity/token"}}}
+```
+
+- **At load** (any failure rejects the whole file; the worker contacts nothing; errors never repeat a value):
+  `aws` is a sixth credential form, exclusive with `value`, `value_file`, `value_vault`, `value_spiffe` and
+  `oauth2`. `role_arn` is `arn:<partition>:iam::<12 digits>:role/<path and name>` with partition `aws`,
+  `aws-cn` or `aws-us-gov`, 20–2048 characters. `role_session_name` is 2–64 characters of `[\w+=,.@-]`,
+  default `eacp-worker`. `region` matches `^[a-z]{2}(-[a-z]+)+-[0-9]+$` (at most 32 characters) and `service`
+  `^[a-z0-9-]{1,64}$`. `sts_endpoint` defaults to the regional endpoint, as the SDK's does:
+  `https://sts.<region>.amazonaws.com` (`.amazonaws.com.cn` for `aws-cn`); an explicit one follows §3's
+  `token_url` rules (absolute, lowercase host, no user info, query or fragment, `https` and `http` only in
+  development and test). `duration_seconds` is 900–3600, default 3600. `subject_token` is §3e's `file` or
+  `spiffe` object with its rules.
+- **A mint** is a mode of §3's provider: one at a time per binding, the cache, the one-hour cap,
+  `ErrCredentialTooShort`, the 1–60 s back-off, `Available()` and `Rejected()` are unchanged.
+  1. *The subject token*, §3e's (classes `assertion_*`, `spiffe_*`).
+  2. *STS.* An unsigned `POST sts_endpoint`, `Content-Type: application/x-www-form-urlencoded`,
+     `Accept: text/xml`, with `Action=AssumeRoleWithWebIdentity`, `Version=2011-06-15`, `RoleArn`,
+     `RoleSessionName`, `WebIdentityToken` and `DurationSeconds`; no client authentication, a 10 s timeout, no
+     redirects, at most 64 KiB read. HTTP 200 is required (else `http_<code>`); a transport error is
+     `transport`, a larger reply `response_unreadable`.
+  3. *The reply*, XML `AssumeRoleWithWebIdentityResponse` → `AssumeRoleWithWebIdentityResult` →
+     `Credentials`: `AccessKeyId` `^[A-Z0-9]{16,128}$`, `SecretAccessKey` and `SessionToken` printable ASCII
+     without spaces of 1–1024 and 1–8192 bytes, `Expiration` RFC 3339 after the request started and at most
+     12 h later; anything else is `sts_invalid`.
+  4. *The credential* is a `worker.Secret` whose value is the secret access key and which carries the key id,
+     the session token, the region and the service (`SignsRequests()`). It is used for at most an hour after
+     the request and never for a call it could expire during; the secret key and the session token are
+     redacted until the real expiry plus 24 h and kept in `Values()` until then. The key id is an identifier,
+     not a secret: the mint log names it (`access_key_id`) beside `grant` `aws_web_identity`, the STS host and
+     the lifetime, so an operator can match CloudTrail.
+- **Signing.** `Secret.Authorize(req, body)` replaces setting the Authorization header: a Bearer credential
+  sets `Authorization: Bearer …` as before; AWS keys sign with the pinned signer for their region and
+  service, the payload hash being the SHA-256 of the body, at the real clock (the target judges the date,
+  whatever clock the provider was given). It is called after every other header is set, so all of them are
+  signed, and it sets `X-Amz-Date` and `X-Amz-Security-Token`. The HTTP connector signs execute and lookup; a
+  signing error is `Ambiguous` with class `credential_signing` before anything is sent. The secret key never
+  leaves the worker, and the session token only rides on signed requests to the bound host. Scrubbing covers
+  both (`Secret.Contains`), and a lookup's external reference containing either is refused.
+- **MCP servers are not signed.** The scanner records a scan whose binding signs requests as failed with
+  class `unsupported_credential` without contacting the server; the MCP client refuses one too
+  (`no_credential`).
+- **Kubernetes.** Nothing new in the chart: a file subject is the projected token (§3a), a SPIFFE subject
+  comes through §3d's socket. The STS host belongs in `worker.connectorEgress` beside the connector's.
+
+SigV4 for MCP servers, SigV4a, presigned URLs, `AssumeRole` chaining, `ProviderId`, session policies and
+tags, IAM Roles Anywhere, EC2/ECS metadata credentials and the global STS endpoint are out of scope.
 
 ### 4. Redaction
 
@@ -393,7 +459,8 @@ The worker adds each client secret permanently, each client assertion until its 
 token until its real expiry plus 24 h, keeping at most 10 000 temporary values (the oldest go first). Rev 1.3
 adds every Vault-held value permanently and each Vault token until its lease end plus 24 h. Rev 1.4 adds each
 JWT-SVID received until its `exp` plus 24 h. Rev 1.5 adds each subject token until its `exp` plus 24 h and
-each federated token until its expiry plus 24 h.
+each federated token until its expiry plus 24 h. Rev 1.6 adds each AWS secret key and session token until the
+keys' real expiry plus 24 h; the access key id is not redacted.
 
 ### 5. Failure handling
 
@@ -485,6 +552,32 @@ from the cluster's issuer and JWKS and the SPIRE bundle it already captures, and
 authentication) and `fakeerp-sts-sa` (the JWT-SVID for `fakeerp-sts`, then impersonating
 `eacp-erp@eacp-demo.iam.gserviceaccount.com`) (`deployments/k8s/connector-secrets.exchange.json`). Compose
 has no platform issuer and is unchanged.
+
+Rev 1.6: with `EACP_FAKEERP_AWS_ROLE_ARN`, `_REGION` and `_SERVICE` (all or none) and at least one subject
+group, `EACP_FAKEERP_AWS_K8S_{ISSUER,AUDIENCE,SUBJECT,JWKS_FILE}` or
+`EACP_FAKEERP_AWS_SPIFFE_{ISSUER,AUDIENCE,SUBJECT,BUNDLE_FILE}` (each all or none; the role needs a subject
+and a subject needs the role), Fake ERP serves an AWS STS at `POST /aws/sts`. `Action` must be
+`AssumeRoleWithWebIdentity` (else `400 InvalidAction`) and `Version` `2011-06-15`; a missing token, role or
+session name is `400 MissingParameter`; a bad session name or a `DurationSeconds` outside 900–3600 is
+`400 InvalidParameterValue`; another role is `403 AccessDenied`; a web identity token that does not verify
+against a configured subject (§3e's `ExchangeSubject` checks) is `400 InvalidIdentityToken`, as AWS answers.
+Errors are an XML `ErrorResponse`. It issues a key id `ASIA` plus 16 random base32 characters, a secret key
+derived as base64url(HMAC-SHA256(its static credential, `aws-secret:` + key id)), so there is nothing new to
+keep secret, and a random 32-byte session token, and answers with §3f's XML (`AssumedRoleUser.Arn`
+`arn:aws:sts::<account>:assumed-role/<role name>/<session>`). The durable log keeps the key id, the session
+token's SHA-256, the principal `aws:<assumed-role ARN>`, the expiry and the subject token's SHA-256, never a
+token or key, so keys survive a restart. A request to the ERP API whose Authorization starts with
+`AWS4-HMAC-SHA256 ` is verified before routing (`fakeerp.VerifySigV4`): its body (at most 64 KiB) is read and
+restored; the credential scope must name the configured region and service; `X-Amz-Date` must be within five
+minutes; `host`, `x-amz-date` and `x-amz-security-token` must be signed; the key must be known and unexpired
+and the session token must hash to its record; and re-signing a request rebuilt from exactly the signed
+headers and the body with the derived secret key at `X-Amz-Date` must give the same Authorization
+(constant-time). The principal is `aws:<assumed-role ARN>` and the audit records the key id
+(`aws_access_key_id`); `aws:` principals authorise the ERP API like the others. On Kubernetes the e2e script
+configures both subjects and binds tenant `…00aa` `fakeerp-aws` (the projected token, audience `fakeerp`,
+session `eacp-worker-k8s`) and `fakeerp-aws-spiffe` (the JWT-SVID for `sts.amazonaws.com`, session
+`eacp-worker-spiffe`), role `arn:aws:iam::000000000000:role/eacp-erp`, `us-east-1`, `execute-api`, STS
+`http://fakeerp:8090/aws/sts` (`deployments/k8s/connector-secrets.aws.json`). Compose is unchanged.
 
 ### 7. Proof
 
@@ -597,6 +690,33 @@ has no platform issuer and is unchanged.
   `sts:system:serviceaccount:eacp:eacp-worker` and `sa:eacp-erp@eacp-demo.iam.gserviceaccount.com`, both
   subjects exchanged with their digests audited, and no subject token or issued token in responses, logs or a
   database dump.
+- Rev 1.5 follow-ups (Rev 1.6): `TestTheSubjectTokenIsReadAfterClientAuthentication`,
+  `TestAShortSPIFFESubjectIsRefused`, `TestATooShortLogNamesTheGrant`, `TestAnExchangeClientSecretComesFromVault`,
+  a `private_key_jwt` case in `TestExchangeClientAuthentication`; `internal/fakeerp`
+  `TestAnExchangeAuditKeepsTheClient`, `TestAMissingSubjectIsNotDigested`, `TestAPercentAccountIsRefused`.
+- Rev 1.6, `internal/worker` (`awsentry_test.go`): `TestAnAWSEntryLoads` (the endpoint by partition, the
+  defaults) and `TestInvalidAWSEntriesRejectTheWholeFile`; `awsmint_test.go`:
+  `TestAnAssumeRoleSendsTheSubjectToken` (both subject sources), `TestEveryInvalidSTSReplyIsRefused`,
+  `TestAWSKeysAreUsedForAtMostAnHour`, `TestAWSKeysAreRedactedAndScrubbed`,
+  `TestARejectedAWSCredentialIsDropped`; `sigv4_test.go`: `TestABearerSecretAuthorizes`,
+  `TestAnAWSSecretSignsSigV4` (signed at the real clock, every header signed, verified by re-signing),
+  `TestContainsLooksForEverySecretPart`; `scanner_test.go`
+  `TestAScanWithAnAWSCredentialIsRecordedUnsupported`; PostgreSQL (`aws_integration_test.go`):
+  `TestTheWorkerExecutesWithAWSKeysFromAFileSubject` and `TestTheWorkerExecutesWithAWSKeysFromAnSVID` (the
+  real HTTP connector and Fake ERP, principal `aws:…/<session>`, no subject, secret key or session token in the
+  database or logs; both fail when `Authorize` sends a Bearer). `internal/connector`:
+  `TestExecuteSignsAnAWSCredential`, `TestLookupSignsAnAWSCredential`,
+  `TestALookupReferenceWithTheSessionTokenIsRefused`; `internal/connector/mcp`
+  `TestDiscoverRefusesAnAWSCredential`.
+- Rev 1.6, `internal/fakeerp` (`sigv4_test.go`): `TestSigV4IsVerified`, `TestSigV4RefusesEveryMismatch`
+  (unknown key, session token, region, service, a date six minutes off, an altered body, signed header or
+  date, a removed signed header, an unsigned session token, a Bearer); `aws_test.go`:
+  `TestAssumeRoleIssuesKeysForTheSubject` (both subjects, a signed execute each, keys across a restart, no
+  secret in the audit), `TestAssumeRoleRefusesBadRequests`, `TestTheERPVerifiesSigV4`, `TestAWSOptionsFailClosed`;
+  `cmd/fakeerp` `TestAWSSettingsComeTogether`; `test/demo` `TestAWSDemo` on minikube: purchases as
+  `aws:arn:aws:sts::000000000000:assumed-role/eacp-erp/eacp-worker-k8s` and `…/eacp-worker-spiffe`, every
+  execute signed by a key the STS issued, and no web identity token, secret key (re-derived from each audited
+  key id) or session token (found by hashing 43-character windows) in responses, logs or a database dump.
 
 ## Consequences
 
@@ -620,7 +740,11 @@ has no platform issuer and is unchanged.
   platform's or SPIRE's issuer, and an impersonated service account's permissions stay in the cloud's IAM.
   Revoking the trust (or the impersonation grant) stops new tokens; a token already issued lives for at most
   its lifetime and is used for at most an hour.
-- AWS STS, Vault dynamic secrets and HSM/KMS-held keys (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
+- With AWS (Rev 1.6) the worker holds no AWS secret for the binding: the role's trust policy names the
+  platform's or SPIRE's issuer, and its permissions stay in IAM. Revoking the trust stops new keys; keys already
+  issued live for at most `duration_seconds` and are used for at most an hour. Phase 24's identities are
+  complete.
+- Vault dynamic secrets and HSM/KMS-held keys (later phases) implement the same seam: a provider that returns a credential valid for `validFor`, reports
   availability and drops a rejected value.
 
 ## Unresolved assumptions (conservative choices)
@@ -676,3 +800,10 @@ has no platform issuer and is unchanged.
 | Impersonation lifetime | Requested 300–3600 s (Google's default maximum); the final token is used for at most an hour anyway (Rev 1.5). |
 | The federated token | Two hops per mint, never cached for a later mint; sent only to the impersonation endpoint (Rev 1.5). |
 | The impersonation URL | Must have Google's path shape, so a mistyped URL fails at load rather than receiving a federated token (Rev 1.5). |
+| AWS key lifetime | `DurationSeconds` at most 3600 (the role may allow up to 12 h); the keys are used for at most an hour anyway (Rev 1.6). |
+| The STS endpoint | Regional by default, as the SDK's; the global endpoint is a single region (Rev 1.6). |
+| The access key id | Logged and audited: AWS treats it as an identifier, not a secret; the secret key and session token never are (Rev 1.6). |
+| The signing clock | The real clock, never the provider's test clock: the target judges `X-Amz-Date` (Rev 1.6). |
+| MCP with an AWS credential | A recorded, classified scan failure (`unsupported_credential`), never a silent skip or an unsigned call (Rev 1.6). |
+| A signing error | `Ambiguous` (`credential_signing`) before anything is sent; never expected with valid keys (Rev 1.6). |
+| Fake ERP's STS errors | `InvalidIdentityToken` is HTTP 400, as AWS answers (Rev 1.6). |

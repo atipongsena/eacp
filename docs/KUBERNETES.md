@@ -45,7 +45,8 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
 - Just-in-time credentials (ADR-019): an `oauth2` entry in `worker.connectorSecrets` makes the worker call its
   `token_url`, so that host belongs in `worker.connectorEgress` too, and so does the host of a token
   exchange's `impersonate.url` (Rev 1.5; a mint that cannot reach it logs `class=transport` with its
-  `impersonation_host`). The chart mounts only the manifest file,
+  `impersonation_host`), and so does an `aws` entry's STS host (Rev 1.6: `sts.<region>.amazonaws.com:443`
+  unless `sts_endpoint` names another). The chart mounts only the manifest file,
   so give the client secret inline (`client_secret`); a `client_secret_file` path would not exist in the pod
   and the worker would refuse to start. A plain `http` token URL is accepted only when `environment` is
   `development` or `test`.
@@ -182,7 +183,7 @@ enforced:
 5. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml --wait`;
 6. opens `minikube service eacp-api --url` (through the Service, so it survives pod restarts) and runs
    `TestSliceADemo`, `TestKubernetesDisruption` and the credential demos (`TestJITDemo`,
-   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`, `TestTokenExchangeDemo`) from `test/demo` with
+   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`, `TestTokenExchangeDemo`, `TestAWSDemo`) from `test/demo` with
    `EACP_DEMO_PLATFORM=k8s`;
 7. deletes the profile.
 

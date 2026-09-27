@@ -174,6 +174,14 @@ A withheld purchase is not shown: the worker keeps using an SVID it already hold
 - **X1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `sts:system:serviceaccount:eacp:eacp-worker` and `sa:eacp-erp@eacp-demo.iam.gserviceaccount.com`. The ERP audit shows both subjects exchanged, each with the subject token's SHA-256 (never the token), and the impersonation.
 - **X2.** No issued token (exchanged, federated or impersonated) and no subject token or JWT naming either subject appears in API responses, service logs or a database dump.
 
+### AWS demo (Kubernetes only)
+
+`TestAWSDemo` shows Phase 24g (ADR-019 Rev 1.6) and runs only through `scripts/k8s-e2e.sh`, for the same reason. Fake ERP runs an AWS STS for role `arn:aws:iam::000000000000:role/eacp-erp` that trusts both issuers, and verifies SigV4 (`us-east-1`, `execute-api`) on its API. The worker's secrets bind tenant Soylent's `fakeerp-aws` (the projected token, session `eacp-worker-k8s`) and `fakeerp-aws-spiffe` (the JWT-SVID for `sts.amazonaws.com`, session `eacp-worker-spiffe`). There is no secret for either binding.
+
+- **Y0.** Bootstrap tenant Soylent and a policy that allows routine ERP work.
+- **Y1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `aws:arn:aws:sts::000000000000:assumed-role/eacp-erp/eacp-worker-k8s` and `…/eacp-worker-spiffe`. Each execute is signed by a key the STS issued to that session: the ERP audit shows the key id, the session token's SHA-256 and the subject token's SHA-256, never a token or key.
+- **Y2.** No web identity token, no secret key (re-derived from each audited key id) and no session token appears in API responses, service logs or a database dump.
+
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP and Fake MCP tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).

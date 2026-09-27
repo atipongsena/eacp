@@ -3,6 +3,25 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 24g — AWS STS web identity and SigV4 (2026-09-27)
+
+Checked against the module source (`go mod download`) of `github.com/aws/aws-sdk-go-v2/service/sts` **v1.51.1** (`serializers.go`, `deserializers.go`, `endpoints.go`) and `github.com/aws/aws-sdk-go-v2` **v1.47.1** (`aws/signer/v4`, `aws/credentials.go`). ADR-019 Rev 1.6 relies on these.
+
+### Pinned modules
+
+- `github.com/aws/aws-sdk-go-v2` **v1.47.1** is a direct dependency for the SigV4 signer only; it adds `github.com/aws/smithy-go` **v1.28.1** (indirect). The STS service module is not imported: the worker speaks its query protocol with the standard library.
+
+### STS
+
+- `AssumeRoleWithWebIdentity` is sent **unsigned**: `POST` `application/x-www-form-urlencoded`, form `Action=AssumeRoleWithWebIdentity`, `Version=2011-06-15`, `RoleArn`, `RoleSessionName`, `WebIdentityToken`, optional `DurationSeconds` (and `Policy`, `PolicyArns`, `ProviderId`, unused here).
+- The reply is XML `AssumeRoleWithWebIdentityResponse` → `AssumeRoleWithWebIdentityResult` → `Credentials` {`AccessKeyId`, `SecretAccessKey`, `SessionToken`, `Expiration` (ISO 8601)}, beside `AssumedRoleUser` {`Arn`, `AssumedRoleId`}, `SubjectFromWebIdentityToken`, `Audience` and `Provider`. Errors are XML `ErrorResponse` → `Error` {`Type`, `Code`, `Message`}; a web identity token that fails validation is `InvalidIdentityToken` with HTTP 400.
+- The SDK's default endpoint is regional: `https://sts.<region>.amazonaws.com`, `.amazonaws.com.cn` in the `aws-cn` partition.
+
+### SigV4 signer
+
+- `v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID, SecretAccessKey, SessionToken}, req, payloadHash, service, region, signingTime)`: `payloadHash` is the hex SHA-256 of the body. It sets `X-Amz-Date` (`20060102T150405Z`), `X-Amz-Security-Token` when a session token is given, and `Authorization: AWS4-HMAC-SHA256 Credential=<id>/<yyyymmdd>/<region>/<service>/aws4_request, SignedHeaders=…, Signature=<64 hex>`.
+- It signs every header present except `Authorization`, `User-Agent`, `X-Amzn-Trace-Id`, `Expect` and `Transfer-Encoding`, plus `host` and `content-length` when positive. It strips a default port from the host (`SanitizeHostForHeader`) and sets `req.Host`; a verifier must rebuild the request with the host it received.
+
 ## Phase 24f — RFC 8693 token exchange and GCP impersonation (2026-09-27)
 
 Checked against RFC 8693 (rfc-editor.org) and Google's own client, `golang.org/x/oauth2` **v0.36.0** (module source: `google/internal/stsexchange`, `google/internal/impersonate`, `google/externalaccount/basecredentials.go`). No new dependency: the worker speaks both protocols with the standard library. ADR-019 Rev 1.5 builds on these facts.
