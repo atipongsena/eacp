@@ -463,6 +463,16 @@ func (f *Fixture) A2AConnector(t testing.TB, name string) uuid.UUID {
 		VALUES (eacp.current_tenant_id(), $1, 'a2a', 'http://a2a.test:9000/a2a', $1) RETURNING id`, name)
 }
 
+// LLMModel registers an LLM model (by erin) with secret_ref "llm", an
+// output cap of 4096 tokens and the default timeout, and returns its id
+// (ADR-031).
+func (f *Fixture) LLMModel(t testing.TB, name, provider, baseURL, upstream string) uuid.UUID {
+	t.Helper()
+	return f.ID(t, "erin", `INSERT INTO eacp.llm_models (tenant_id, name, provider, base_url, upstream_model,
+		secret_ref, max_output_tokens) VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, 'llm', 4096) RETURNING id`,
+		name, provider, baseURL, upstream)
+}
+
 // ScanClaimSQL takes the scan lease of MCP connector $1 for scanner $2
 // for one minute. Bind the scanner at the next lease generation.
 const ScanClaimSQL = `UPDATE eacp.mcp_servers SET lease_worker = $2, lease_until = now() + interval '1 minute',
