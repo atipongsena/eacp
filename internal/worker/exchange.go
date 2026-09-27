@@ -1,8 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -171,4 +176,54 @@ func (p *oauthProvider) subjectToken(ctx context.Context) (Secret, string) {
 	p.subject, p.subjectExp = s, exp
 	p.mu.Unlock()
 	return s, ""
+}
+
+// impersonate trades the federated token for a service account's access
+// token (IAM Credentials generateAccessToken). The federated token goes only
+// to the impersonation endpoint and is never cached for a later mint; it is
+// redacted and kept for scrubbing until federatedExp. It returns 24a's
+// token, use-until, real expiry and lifetime, or a failure class.
+func (p *oauthProvider) impersonate(ctx context.Context, federated Secret, federatedExp time.Time) (Secret, time.Time, time.Time, time.Duration, string) {
+	p.redactUntil(federated, federatedExp)
+	p.mu.Lock()
+	p.federated, p.federatedExp = federated, federatedExp
+	p.mu.Unlock()
+	imp := p.exchange.impersonate
+	body, err := json.Marshal(map[string]any{"scope": imp.scope, "lifetime": fmt.Sprintf("%ds", int(imp.lifetime/time.Second))})
+	if err != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "request"
+	}
+	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, imp.url, bytes.NewReader(body))
+	if err != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "request"
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+federated.v)
+	start := p.now()
+	resp, err := p.client.Do(req) // never follows a redirect
+	if err != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "transport"
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponse+1))
+	if resp.StatusCode != http.StatusOK {
+		return Secret{}, time.Time{}, time.Time{}, 0, fmt.Sprintf("impersonation_http_%d", resp.StatusCode)
+	}
+	var r struct {
+		AccessToken string `json:"accessToken"`
+		ExpireTime  string `json:"expireTime"`
+	}
+	if err != nil || len(raw) > maxTokenResponse || json.Unmarshal(raw, &r) != nil ||
+		len(r.AccessToken) > maxAccessToken || !tokenPattern.MatchString(r.AccessToken) {
+		return Secret{}, time.Time{}, time.Time{}, 0, "impersonation_invalid"
+	}
+	exp, err := time.Parse(time.RFC3339, r.ExpireTime)
+	if err != nil || !exp.After(start) || exp.After(start.Add(maxTokenLifetime*time.Second)) {
+		return Secret{}, time.Time{}, time.Time{}, 0, "impersonation_invalid"
+	}
+	lifetime := min(exp.Sub(start), maxTokenUse)
+	return Secret{r.AccessToken}, start.Add(lifetime), exp, lifetime, ""
 }

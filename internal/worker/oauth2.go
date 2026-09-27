@@ -105,6 +105,8 @@ type oauthProvider struct {
 	assertionExp time.Time
 	subject      Secret // the subject token last exchanged (§3e), kept for scrubbing until subjectExp
 	subjectExp   time.Time
+	federated    Secret // the last federated token, kept for scrubbing until federatedExp
+	federatedExp time.Time
 	backoff      time.Duration
 	backoffUntil time.Time
 }
@@ -382,9 +384,9 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	if p.publicClient {
 		form.Set("client_id", p.clientID) // RFC 6749 §3.2.1: a public client identifies itself in the form
 	}
-	ctx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
+	reqCtx, cancel := context.WithTimeout(ctx, tokenRequestTimeout) // the impersonation hop gets its own
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, p.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Secret{}, time.Time{}, time.Time{}, 0, "request"
 	}
@@ -433,6 +435,9 @@ func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Ti
 	if p.exchange != nil && tr.IssuedTokenType != tokenTypeAccess {
 		// RFC 8693 §2.2.1 requires it; a JWT or refresh token is never sent as a Bearer.
 		return Secret{}, time.Time{}, time.Time{}, 0, "wrong_token_type"
+	}
+	if p.exchange != nil && p.exchange.impersonate != nil {
+		return p.impersonate(ctx, Secret{tr.AccessToken}, start.Add(time.Duration(n)*time.Second))
 	}
 	lifetime := min(time.Duration(n)*time.Second, maxTokenUse)
 	return Secret{tr.AccessToken}, start.Add(lifetime), start.Add(time.Duration(n) * time.Second), lifetime, ""
@@ -512,6 +517,9 @@ func (p *oauthProvider) live() []string {
 	}
 	if p.subject.v != "" && now.Before(p.subjectExp) {
 		out = append(out, p.subject.v)
+	}
+	if p.federated.v != "" && now.Before(p.federatedExp) {
+		out = append(out, p.federated.v)
 	}
 	if p.token.v != "" && now.Before(p.realExpiry) {
 		out = append(out, p.token.v)
