@@ -122,7 +122,7 @@ func (d *delegation) run(ctx context.Context, parts []any) worker.Result {
 	params := map[string]any{
 		"message": map[string]any{"messageId": d.call.ActionID.String(), "role": "ROLE_USER", "parts": parts,
 			"metadata": map[string]any{"eacp": map[string]any{"operation_key": d.call.OperationKey}}},
-		"configuration": map[string]any{"returnImmediately": false},
+		"configuration": map[string]any{"returnImmediately": true},
 	}
 	resp, status, err := d.send(ctx, "SendMessage", params)
 	switch {

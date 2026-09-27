@@ -177,7 +177,7 @@ func TestADelegationSendsOneMessage(t *testing.T) {
 			want := map[string]any{"jsonrpc": "2.0", "id": "1", "method": "SendMessage", "params": map[string]any{
 				"message": map[string]any{"messageId": call.ActionID.String(), "role": "ROLE_USER", "parts": c.parts,
 					"metadata": map[string]any{"eacp": map[string]any{"operation_key": call.OperationKey}}},
-				"configuration": map[string]any{"returnImmediately": false}}}
+				"configuration": map[string]any{"returnImmediately": true}}}
 			if !reflect.DeepEqual(body, want) || r.path != "/a2a" {
 				t.Fatalf("POST %s\n%s\nwant %v", r.path, r.rawBody, want)
 			}

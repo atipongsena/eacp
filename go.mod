@@ -3,6 +3,7 @@ module eacp
 go 1.27.0
 
 require (
+	github.com/a2aproject/a2a-go/v2 v2.6.0
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
