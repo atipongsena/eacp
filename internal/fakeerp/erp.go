@@ -53,6 +53,9 @@ type audit struct {
 	// and the client that authenticated it, if any.
 	SubjectSHA256 string `json:"subject_sha256,omitempty"`
 	Client        string `json:"client,omitempty"`
+	// Issued or signing AWS keys record the access key id, never the secret
+	// key; an issuance records the session token's SHA-256 as TokenSHA256.
+	AWSAccessKeyID string `json:"aws_access_key_id,omitempty"`
 }
 
 type event struct {
@@ -70,6 +73,7 @@ type ERP struct {
 	audit   []audit
 	tokens  map[string]issued // SHA-256 of each minted token
 	jtis    map[string]bool   // private_key_jwt assertions already used
+	awsKeys map[string]awsKey // issued AWS keys by access key id
 }
 
 type issued struct {
@@ -91,6 +95,7 @@ type Options struct {
 	SPIFFEBearer      *SPIFFEBearer  // optional: JWT-SVIDs authorise the ERP API
 	Exchange          *TokenExchange // optional: RFC 8693 token exchange at the token endpoint
 	Impersonation     *Impersonation // optional: generateAccessToken for exchanged tokens
+	AWS               *AWS           // optional: AssumeRoleWithWebIdentity and SigV4-signed calls
 }
 
 const defaultTokenTTL = 300 * time.Second
@@ -151,6 +156,11 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 			return nil, err
 		}
 	}
+	if o.AWS != nil {
+		if err := o.AWS.valid(); err != nil {
+			return nil, err
+		}
+	}
 	if o.TokenTTL == 0 {
 		o.TokenTTL = defaultTokenTTL
 	}
@@ -169,7 +179,7 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 		return nil, err
 	}
 	e := &ERP{token: token, oauth: o, path: dataPath, records: map[string][]record{}, tokens: map[string]issued{},
-		jtis: map[string]bool{}}
+		jtis: map[string]bool{}, awsKeys: map[string]awsKey{}}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	for scanner.Scan() {
@@ -192,6 +202,10 @@ func NewWithOptions(token, dataPath string, o Options) (http.Handler, error) {
 	if o.Impersonation != nil {
 		mux.HandleFunc("POST /v1/projects/-/serviceAccounts/{account}", e.generateAccessToken)
 	}
+	if o.AWS != nil {
+		mux.HandleFunc("POST /aws/sts", e.assumeRole)
+		return e.verifyingSigV4(mux), nil
+	}
 	return mux, nil
 }
 
@@ -202,6 +216,9 @@ func (e *ERP) apply(ev event) {
 		if ev.Audit.AssertionJTI != "" {
 			e.jtis[ev.Audit.AssertionJTI] = true // single use, across restarts
 		}
+	}
+	if ev.Audit.Outcome == "keys_issued" && ev.Audit.ExpiresAt != nil {
+		e.awsKeys[ev.Audit.AWSAccessKeyID] = awsKey{ev.Audit.Principal, ev.Audit.TokenSHA256, *ev.Audit.ExpiresAt}
 	}
 	if ev.Record != nil {
 		e.records[ev.Record.OperationKey] = append(e.records[ev.Record.OperationKey], *ev.Record)
@@ -235,6 +252,9 @@ func (e *ERP) append(ev event) error {
 }
 
 func (e *ERP) principal(r *http.Request) string {
+	if c, ok := sigV4CallerOf(r); ok {
+		return c.principal
+	}
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
 		return "unauthenticated"
@@ -257,7 +277,7 @@ func (e *ERP) principal(r *http.Request) string {
 // audit: the static credential or an unexpired minted token.
 func privileged(principal string) bool {
 	return principal == "execution-worker" || strings.HasPrefix(principal, "oauth:") || strings.HasPrefix(principal, "spiffe:") ||
-		strings.HasPrefix(principal, "sts:") || strings.HasPrefix(principal, "sa:")
+		strings.HasPrefix(principal, "sts:") || strings.HasPrefix(principal, "sa:") || strings.HasPrefix(principal, "aws:")
 }
 
 // issue is an OAuth 2.0 client-credentials token endpoint (RFC 6749 §4.4).
@@ -395,6 +415,9 @@ func (e *ERP) begin(r *http.Request, key string) audit {
 	if strings.HasPrefix(a.Principal, "spiffe:") {
 		sum := sha256.Sum256([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
 		a.SVIDSHA256 = hex.EncodeToString(sum[:])
+	}
+	if c, ok := sigV4CallerOf(r); ok {
+		a.AWSAccessKeyID = c.keyID
 	}
 	return a
 }

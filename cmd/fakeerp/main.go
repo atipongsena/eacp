@@ -184,34 +184,9 @@ func loadExchange(getenv func(string) string) (*fakeerp.TokenExchange, *fakeerp.
 	if v := getenv("EACP_FAKEERP_IMPERSONATE_ACCOUNTS"); v != "" {
 		imp = &fakeerp.Impersonation{Accounts: strings.Split(v, ",")}
 	}
-	var subjects []fakeerp.ExchangeSubject
-	k8s, err := settings(getenv, "EACP_FAKEERP_STS_K8S_", "ISSUER", "AUDIENCE", "SUBJECT", "JWKS_FILE")
+	subjects, err := loadSubjects(getenv, "EACP_FAKEERP_STS_")
 	if err != nil {
 		return nil, nil, err
-	}
-	if k8s != nil {
-		raw, err := os.ReadFile(k8s["JWKS_FILE"])
-		if err != nil {
-			return nil, nil, errors.New("fakeerp: cannot read the STS subject's JWKS file")
-		}
-		keys, err := fakeerp.ParseKeySet(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		subjects = append(subjects, fakeerp.ExchangeSubject{Issuer: k8s["ISSUER"], Audience: k8s["AUDIENCE"],
-			Subject: k8s["SUBJECT"], Keys: keys})
-	}
-	svid, err := settings(getenv, "EACP_FAKEERP_STS_SPIFFE_", "ISSUER", "AUDIENCE", "SUBJECT", "BUNDLE_FILE")
-	if err != nil {
-		return nil, nil, err
-	}
-	if svid != nil {
-		keys, err := spiffeKeys(svid["BUNDLE_FILE"])
-		if err != nil {
-			return nil, nil, err
-		}
-		subjects = append(subjects, fakeerp.ExchangeSubject{Issuer: svid["ISSUER"], Audience: svid["AUDIENCE"],
-			Subject: svid["SUBJECT"], Keys: keys})
 	}
 	audience := getenv("EACP_FAKEERP_STS_AUDIENCE")
 	switch {
@@ -221,6 +196,66 @@ func loadExchange(getenv func(string) string) (*fakeerp.TokenExchange, *fakeerp.
 		return nil, nil, errors.New("fakeerp: EACP_FAKEERP_STS_AUDIENCE needs a subject group, and a subject group or impersonation needs it")
 	}
 	return &fakeerp.TokenExchange{Audience: audience, Subjects: subjects}, imp, nil
+}
+
+// loadSubjects reads the trusted subject tokens under prefix: a Kubernetes
+// service-account token (prefix+K8S_*: issuer, audience, subject, JWKS file)
+// and a JWT-SVID (prefix+SPIFFE_*: issuer, audience, subject, SPIRE's
+// bundle), each group all or none.
+func loadSubjects(getenv func(string) string, prefix string) ([]fakeerp.ExchangeSubject, error) {
+	var subjects []fakeerp.ExchangeSubject
+	k8s, err := settings(getenv, prefix+"K8S_", "ISSUER", "AUDIENCE", "SUBJECT", "JWKS_FILE")
+	if err != nil {
+		return nil, err
+	}
+	if k8s != nil {
+		raw, err := os.ReadFile(k8s["JWKS_FILE"])
+		if err != nil {
+			return nil, errors.New("fakeerp: cannot read the " + prefix + "K8S_JWKS_FILE")
+		}
+		keys, err := fakeerp.ParseKeySet(raw)
+		if err != nil {
+			return nil, err
+		}
+		subjects = append(subjects, fakeerp.ExchangeSubject{Issuer: k8s["ISSUER"], Audience: k8s["AUDIENCE"],
+			Subject: k8s["SUBJECT"], Keys: keys})
+	}
+	svid, err := settings(getenv, prefix+"SPIFFE_", "ISSUER", "AUDIENCE", "SUBJECT", "BUNDLE_FILE")
+	if err != nil {
+		return nil, err
+	}
+	if svid != nil {
+		keys, err := spiffeKeys(svid["BUNDLE_FILE"])
+		if err != nil {
+			return nil, err
+		}
+		subjects = append(subjects, fakeerp.ExchangeSubject{Issuer: svid["ISSUER"], Audience: svid["AUDIENCE"],
+			Subject: svid["SUBJECT"], Keys: keys})
+	}
+	return subjects, nil
+}
+
+// loadAWS reads the optional AWS STS (ADR-019 Rev 1.6): the role, region and
+// service (EACP_FAKEERP_AWS_ROLE_ARN, _REGION, _SERVICE, all or none) and
+// the web identities it trusts (EACP_FAKEERP_AWS_K8S_* and
+// EACP_FAKEERP_AWS_SPIFFE_*, as for the token exchange). A role needs a
+// subject, and a subject needs the role.
+func loadAWS(getenv func(string) string) (*fakeerp.AWS, error) {
+	role, err := settings(getenv, "EACP_FAKEERP_AWS_", "ROLE_ARN", "REGION", "SERVICE")
+	if err != nil {
+		return nil, err
+	}
+	subjects, err := loadSubjects(getenv, "EACP_FAKEERP_AWS_")
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case role == nil && len(subjects) == 0:
+		return nil, nil
+	case role == nil || len(subjects) == 0:
+		return nil, errors.New("fakeerp: the EACP_FAKEERP_AWS_ role and a subject group go together")
+	}
+	return &fakeerp.AWS{RoleARN: role["ROLE_ARN"], Region: role["REGION"], Service: role["SERVICE"], Subjects: subjects}, nil
 }
 
 func main() {
@@ -243,6 +278,9 @@ func main() {
 				return err
 			}
 			if o.Exchange, o.Impersonation, err = loadExchange(os.Getenv); err != nil {
+				return err
+			}
+			if o.AWS, err = loadAWS(os.Getenv); err != nil {
 				return err
 			}
 			h, token, err := loadHandler(os.Getenv("EACP_FAKEERP_TOKEN_FILE"), os.Getenv("EACP_FAKEERP_DATA_FILE"), o)

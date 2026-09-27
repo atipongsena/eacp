@@ -291,3 +291,47 @@ func TestExchangeSettingsComeTogether(t *testing.T) {
 		t.Error("an exchange without a subject was accepted")
 	}
 }
+
+func TestAWSSettingsComeTogether(t *testing.T) {
+	jwks := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(jwks, jwttest.New(t).JWKS(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	all := map[string]string{
+		"EACP_FAKEERP_AWS_ROLE_ARN":           "arn:aws:iam::000000000000:role/eacp-erp",
+		"EACP_FAKEERP_AWS_REGION":             "us-east-1",
+		"EACP_FAKEERP_AWS_SERVICE":            "execute-api",
+		"EACP_FAKEERP_AWS_K8S_ISSUER":         "https://kubernetes.default.svc.cluster.local",
+		"EACP_FAKEERP_AWS_K8S_AUDIENCE":       "fakeerp",
+		"EACP_FAKEERP_AWS_K8S_SUBJECT":        "system:serviceaccount:eacp:eacp-worker",
+		"EACP_FAKEERP_AWS_K8S_JWKS_FILE":      jwks,
+		"EACP_FAKEERP_AWS_SPIFFE_ISSUER":      "https://spire.eacp.test",
+		"EACP_FAKEERP_AWS_SPIFFE_AUDIENCE":    "sts.amazonaws.com",
+		"EACP_FAKEERP_AWS_SPIFFE_SUBJECT":     "spiffe://eacp.test/ns/eacp/sa/eacp-worker",
+		"EACP_FAKEERP_AWS_SPIFFE_BUNDLE_FILE": spiffeBundleFile(t),
+	}
+	if a, err := loadAWS(env(map[string]string{})); a != nil || err != nil {
+		t.Fatalf("no settings = %+v, %v", a, err)
+	}
+	a, err := loadAWS(env(all))
+	if err != nil || a.RoleARN != "arn:aws:iam::000000000000:role/eacp-erp" || a.Region != "us-east-1" || a.Service != "execute-api" ||
+		len(a.Subjects) != 2 || a.Subjects[0].Audience != "fakeerp" || a.Subjects[1].Audience != "sts.amazonaws.com" {
+		t.Fatalf("settings = %+v, %v", a, err)
+	}
+	for k := range all {
+		some := map[string]string{}
+		for k2, v := range all {
+			if k2 != k {
+				some[k2] = v
+			}
+		}
+		if _, err := loadAWS(env(some)); err == nil {
+			t.Errorf("without %s: accepted", k)
+		}
+	}
+	if _, err := loadAWS(env(map[string]string{"EACP_FAKEERP_AWS_ROLE_ARN": all["EACP_FAKEERP_AWS_ROLE_ARN"],
+		"EACP_FAKEERP_AWS_REGION": "us-east-1", "EACP_FAKEERP_AWS_SERVICE": "execute-api"})); err == nil {
+		t.Error("a role without a subject was accepted")
+	}
+}
