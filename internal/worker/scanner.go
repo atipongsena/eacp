@@ -29,18 +29,23 @@ type ScannerOptions struct {
 	PollInterval time.Duration
 	// Secrets are the worker-held credentials: a server is scanned only
 	// with the token bound to its tenant, secret reference and host.
-	Secrets    *SecretStore
-	Discoverer Discoverer
-	Log        *slog.Logger
+	Secrets *SecretStore
+	// Discoverer discovers MCP servers; Discoverers maps a connector
+	// protocol (mcp, a2a) to its discoverer (ADR-030). A server whose
+	// protocol has none is recorded failed (no_discoverer).
+	Discoverer  Discoverer
+	Discoverers map[string]Discoverer
+	Log         *slog.Logger
 }
 
-// Scanner discovers the tools of MCP servers and records every scan
-// (ADR-023 §2). It runs in the execution worker because discovery needs the
+// Scanner discovers the tools of MCP servers and A2A agents and records
+// every scan (ADR-023 §2, ADR-030). It runs in the execution worker because discovery needs the
 // server's credential. PostgreSQL fingerprints and classifies what it
 // records; the scanner never decides trust.
 type Scanner struct {
-	store *Store
-	o     ScannerOptions
+	store       *Store
+	o           ScannerOptions
+	discoverers map[string]Discoverer
 }
 
 // NewScanner returns a Scanner over pool (the application role).
@@ -66,13 +71,22 @@ func NewScanner(pool *pgxpool.Pool, o ScannerOptions) (*Scanner, error) {
 	if o.PollInterval <= 0 {
 		o.PollInterval = 10 * time.Second
 	}
-	if o.Discoverer == nil {
+	discoverers := map[string]Discoverer{}
+	for p, d := range o.Discoverers {
+		if d != nil {
+			discoverers[p] = d
+		}
+	}
+	if o.Discoverer != nil {
+		discoverers["mcp"] = o.Discoverer
+	}
+	if len(discoverers) == 0 {
 		return nil, errors.New("scanner: a discoverer is required")
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Scanner{store: NewStore(pool, o.ID), o: o}, nil
+	return &Scanner{store: NewStore(pool, o.ID), o: o, discoverers: discoverers}, nil
 }
 
 // RunOnce claims up to Concurrency due servers, scans them concurrently and
@@ -123,8 +137,19 @@ func (s *Scanner) Run(ctx context.Context) {
 // the result under the lease. A scan interrupted by shutdown is not
 // recorded: its lease expires and another scanner retries.
 func (s *Scanner) scan(ctx context.Context, l ScanLease) {
-	log := s.o.Log.With("tenant_id", l.TenantID, "connector_id", l.ConnectorID, "generation", l.Generation)
+	log := s.o.Log.With("tenant_id", l.TenantID, "connector_id", l.ConnectorID, "generation", l.Generation,
+		"protocol", l.Protocol)
 	var d Discovery
+	discoverer := s.discoverers[l.Protocol]
+	if discoverer == nil {
+		// Recorded, so the operator sees why the server is never listed.
+		err := &DiscoveryError{Class: "no_discoverer", Err: fmt.Errorf("this worker cannot discover %q servers", l.Protocol)}
+		log.WarnContext(ctx, "mcp scan failed", "class", DiscoveryClass(err))
+		if rerr := s.store.RecordScan(ctx, l, d, err, s.o.Interval); rerr != nil && ctx.Err() == nil {
+			log.ErrorContext(ctx, "mcp scan not recorded", "err", rerr)
+		}
+		return
+	}
 	secret, err := s.o.Secrets.Credential(ctx, l.TenantID, l.SecretRef, l.Endpoint, s.o.Timeout+CredentialSkew)
 	if errors.Is(err, ErrCredentialUnavailable) {
 		// Not recorded: the scan lease expires and the scan is retried once
@@ -135,13 +160,13 @@ func (s *Scanner) scan(ctx context.Context, l ScanLease) {
 	switch {
 	case err != nil:
 		err = &DiscoveryError{Class: "no_credential", Err: errors.New("no credential bound to this server")}
-	case secret.SignsRequests():
+	case secret.SignsRequests() && l.Protocol == "mcp":
 		// MCP servers are never signed (ADR-019 §3f): the scan is a classified
 		// failure and the server is not contacted.
 		err = &DiscoveryError{Class: "unsupported_credential", Err: errors.New("an MCP server takes no AWS credential")}
 	default:
 		dctx, cancel := context.WithTimeout(ctx, s.o.Timeout)
-		d, err = s.o.Discoverer.Discover(dctx, l.Endpoint, secret)
+		d, err = discoverer.Discover(dctx, l.Endpoint, secret)
 		cancel()
 	}
 	if ctx.Err() != nil {

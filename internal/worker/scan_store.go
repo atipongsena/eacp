@@ -26,7 +26,9 @@ type ScanCandidate struct {
 // the server's scan lease.
 type ScanLease struct {
 	ScanCandidate
-	Endpoint, SecretRef string
+	// Protocol is the connector's protocol (mcp or a2a): it picks the
+	// discoverer.
+	Endpoint, SecretRef, Protocol string
 }
 
 // ScansDue returns MCP servers due for a scan whose secret the worker holds
@@ -65,8 +67,8 @@ func (s *Store) ClaimScan(ctx context.Context, c ScanCandidate, lease time.Durat
 			SET lease_worker = $2, lease_until = now() + make_interval(secs => $3), lease_generation = $4
 			FROM eacp.connectors c
 			WHERE m.connector_id = $1 AND m.lease_generation = $5 AND c.tenant_id = m.tenant_id AND c.id = m.connector_id
-			RETURNING c.endpoint, c.secret_ref`,
-			c.ConnectorID, s.id, lease.Seconds(), l.Generation, c.Generation).Scan(&l.Endpoint, &l.SecretRef)
+			RETURNING c.endpoint, c.secret_ref, c.protocol`,
+			c.ConnectorID, s.id, lease.Seconds(), l.Generation, c.Generation).Scan(&l.Endpoint, &l.SecretRef, &l.Protocol)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

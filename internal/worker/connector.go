@@ -57,6 +57,11 @@ type Result struct {
 	Outcome           Outcome
 	ExternalReference string
 	ErrorClass        string
+	// RemoteReference is the remote system's own id for the call (an A2A
+	// task id, ADR-030 §6), kept with an ambiguous or no-effect attempt as
+	// evidence for the human who settles it. It never proves a success and
+	// is dropped from one.
+	RemoteReference string
 }
 
 // LookupCall asks a connector for evidence about the stable operation key.

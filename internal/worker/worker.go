@@ -68,6 +68,9 @@ type Options struct {
 var workerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 var errorClassPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
+// remoteReferencePattern is the action_attempts.remote_reference check.
+var remoteReferencePattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,512}$`)
+
 // Worker claims and executes actions (ADR-004 T14, T16-T22a).
 type Worker struct {
 	store     *Store
@@ -509,25 +512,33 @@ func scrub(r Result, secrets []string) Result {
 		if strings.Contains(r.ErrorClass, s) {
 			r.ErrorClass = "redacted"
 		}
+		if strings.Contains(r.RemoteReference, s) {
+			r.RemoteReference = ""
+		}
 	}
 	return r
 }
 
 // classify enforces the definitive-result rules: a success needs an
 // external reference, a no-effect needs a certified error class; anything
-// else is ambiguous.
+// else is ambiguous. A well-formed remote reference is kept with a result
+// that is not a success.
 func classify(r Result, c Contract) Result {
 	class := r.ErrorClass
 	if !errorClassPattern.MatchString(class) {
 		class = ""
+	}
+	remote := r.RemoteReference
+	if !remoteReferencePattern.MatchString(remote) {
+		remote = ""
 	}
 	ref := strings.TrimSpace(r.ExternalReference)
 	switch {
 	case r.Outcome == Succeeded && ref != "" && len(ref) <= 512:
 		return Result{Outcome: Succeeded, ExternalReference: ref}
 	case r.Outcome == NoEffect && ref == "" && class != "" && slices.Contains(c.NoEffectErrors, class):
-		return Result{Outcome: NoEffect, ErrorClass: class}
+		return Result{Outcome: NoEffect, ErrorClass: class, RemoteReference: remote}
 	default:
-		return Result{Outcome: Ambiguous, ErrorClass: class}
+		return Result{Outcome: Ambiguous, ErrorClass: class, RemoteReference: remote}
 	}
 }

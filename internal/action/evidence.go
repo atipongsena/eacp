@@ -81,7 +81,10 @@ type AttemptView struct {
 	Outcome           string     `json:"outcome,omitempty"`
 	ExternalReference string     `json:"external_reference,omitempty"`
 	ErrorClass        string     `json:"error_class,omitempty"`
-	Late              bool       `json:"late"`
+	// RemoteReference is the remote agent's task id (ADR-030 §6): evidence
+	// for settling an unknown outcome, never a proof of success.
+	RemoteReference string `json:"remote_reference,omitempty"`
+	Late            bool   `json:"late"`
 }
 
 // CheckView is one reconciliation lookup and what it saw.
@@ -315,7 +318,7 @@ func approvals(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]ApprovalView, er
 func attempts(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]AttemptView, error) {
 	rows, err := tx.Query(ctx, `SELECT attempt_no, lease_generation, worker_id, operation_key,
 		connector_contract_version, dispatched_at, call_deadline, completed_at, COALESCE(outcome, ''),
-		COALESCE(external_reference, ''), COALESCE(error_class, ''), late
+		COALESCE(external_reference, ''), COALESCE(error_class, ''), COALESCE(remote_reference, ''), late
 		FROM eacp.action_attempts WHERE action_id = $1 ORDER BY attempt_no`, id)
 	if err != nil {
 		return nil, err
@@ -323,7 +326,8 @@ func attempts(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]AttemptView, erro
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AttemptView, error) {
 		var x AttemptView
 		err := r.Scan(&x.AttemptNo, &x.LeaseGeneration, &x.WorkerID, &x.OperationKey, &x.ContractVersion,
-			&x.DispatchedAt, &x.CallDeadline, &x.CompletedAt, &x.Outcome, &x.ExternalReference, &x.ErrorClass, &x.Late)
+			&x.DispatchedAt, &x.CallDeadline, &x.CompletedAt, &x.Outcome, &x.ExternalReference, &x.ErrorClass,
+			&x.RemoteReference, &x.Late)
 		return x, err
 	})
 }

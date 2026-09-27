@@ -393,12 +393,14 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 			return err
 		}
 		if killChanged {
-			r = Result{Outcome: Ambiguous, ErrorClass: "kill_interrupted"}
+			r = Result{Outcome: Ambiguous, ErrorClass: "kill_interrupted", RemoteReference: r.RemoteReference}
 		}
 		if err := tx.QueryRow(ctx, `UPDATE eacp.action_attempts
-			SET outcome = $3, external_reference = NULLIF($4, ''), error_class = NULLIF($5, '')
+			SET outcome = $3, external_reference = NULLIF($4, ''), error_class = NULLIF($5, ''),
+			    remote_reference = NULLIF($6, '')
 			WHERE action_id = $1 AND lease_generation = $2 RETURNING late`,
-			l.ActionID, l.Generation, string(r.Outcome), r.ExternalReference, r.ErrorClass).Scan(&c.Late); err != nil {
+			l.ActionID, l.Generation, string(r.Outcome), r.ExternalReference, r.ErrorClass,
+			r.RemoteReference).Scan(&c.Late); err != nil {
 			return fenced(err)
 		}
 		if c.Late {
