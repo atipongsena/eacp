@@ -30,7 +30,10 @@ type platform interface {
 	name() string
 	eacpctl(args ...string) (string, error) // eacpctl with the owner DSN
 	restart(services ...string)
-	kill(service string) // SIGKILL every process of it
+	// armKill stages a SIGKILL of every process of service; the returned
+	// func fires it and returns once it landed. Arm it before the call to
+	// interrupt is in flight: firing must beat that call's budget.
+	armKill(service string) func()
 	stop(service string)
 	start(service string)                    // after kill or stop; waits until ready
 	agent(args ...string) (string, error)    // run in the stand-in agent
@@ -82,7 +85,9 @@ func (c *composePlatform) restart(services ...string) {
 	c.t.Helper()
 	c.must(append([]string{"restart"}, services...)...)
 }
-func (c *composePlatform) kill(s string)  { c.t.Helper(); c.must("kill", s) }
+func (c *composePlatform) armKill(s string) func() {
+	return func() { c.t.Helper(); c.must("kill", s) }
+}
 func (c *composePlatform) stop(s string)  { c.t.Helper(); c.must("stop", s) }
 func (c *composePlatform) start(s string) { c.t.Helper(); c.must("start", s) }
 func (c *composePlatform) agent(args ...string) (string, error) {
@@ -204,14 +209,21 @@ func (k *k8sPlatform) restart(services ...string) {
 	}
 }
 
-// kill SIGKILLs every container of the service's pods through its node's
-// container runtime, as docker compose kill does: no process gets SIGTERM
-// or any time to record what it was doing. (A forced pod delete still lets
-// the kubelet send SIGTERM first, and a draining worker whose in-flight call
-// the teardown broke records an ambiguous result before it dies.) The
+// armKill stages a SIGKILL of every container of the service's pods through
+// its node's container runtime, as docker compose kill does: no process gets
+// SIGTERM or any time to record what it was doing. (A forced pod delete still
+// lets the kubelet send SIGTERM first, and a draining worker whose in-flight
+// call the teardown broke records an ambiguous result before it dies.) The
 // kubelet restarts the containers in place, in the same pods; start waits
-// for them. The kube context names the minikube profile (scripts/k8s-e2e.sh).
-func (k *k8sPlatform) kill(s string) {
+// for them.
+//
+// Arming lists the pods and opens one shell per node that resolves the
+// containers' pids and then waits: firing only writes a newline, so the kill
+// lands in milliseconds, well inside the budget of the call it interrupts
+// (listing pods and reaching a node took most of a 3 s budget on a loaded
+// cluster). The shells are docker exec into the minikube node containers
+// (the Docker driver names them after the nodes; scripts/k8s-e2e.sh).
+func (k *k8sPlatform) armKill(s string) func() {
 	k.t.Helper()
 	w := workload(s)
 	if k.killed == nil {
@@ -231,30 +243,63 @@ func (k *k8sPlatform) kill(s string) {
 	if len(byNode) == 0 {
 		k.t.Fatalf("%s: no running containers to kill", w.ref)
 	}
-	// One shell per node, all nodes at once: the call in flight must not
-	// finish while the kill is on its way.
-	errs := make(chan error, len(byNode))
-	for node, ids := range byNode {
-		go func() {
-			script := `for id in "$@"; do pid=$(crictl inspect -o go-template --template '{{.info.pid}}' "$id") && ` +
-				`[ "$pid" -gt 1 ] && kill -KILL "$pid" || exit 1; done`
-			out, err := exec.Command("minikube", append([]string{"-p", k.context, "ssh", "-n", node, "--",
-				"sudo", "sh", "-c", shellQuote(script), "kill"}, ids...)...).CombinedOutput()
-			if err != nil {
-				err = fmt.Errorf("SIGKILL %v on %s: %w\n%s", ids, node, err, out)
-			}
-			errs <- err
-		}()
+	script := `pids=; for id in "$@"; do pid=$(crictl inspect -o go-template --template '{{.info.pid}}' "$id") && ` +
+		`[ "$pid" -gt 1 ] || exit 1; pids="$pids $pid"; done; echo armed; read _ && kill -KILL $pids`
+	type shell struct {
+		node   string
+		cmd    *exec.Cmd
+		stdin  io.WriteCloser
+		stdout *bufio.Reader
+		stderr *strings.Builder
 	}
-	for range byNode {
-		if err := <-errs; err != nil {
+	var shells []shell
+	for node, ids := range byNode {
+		sh := shell{node: node, stderr: &strings.Builder{}}
+		sh.cmd = exec.Command("docker", append([]string{"exec", "-i", node, "sh", "-c", script, "kill"}, ids...)...)
+		sh.cmd.Stderr = sh.stderr
+		in, err := sh.cmd.StdinPipe()
+		if err != nil {
 			k.t.Fatal(err)
+		}
+		out, err := sh.cmd.StdoutPipe()
+		if err != nil {
+			k.t.Fatal(err)
+		}
+		sh.stdin, sh.stdout = in, bufio.NewReader(out)
+		if err := sh.cmd.Start(); err != nil {
+			k.t.Fatalf("arm the kill on %s: %v", node, err)
+		}
+		shells = append(shells, sh)
+	}
+	for _, sh := range shells {
+		if line, err := sh.stdout.ReadString('\n'); err != nil || strings.TrimSpace(line) != "armed" {
+			k.t.Fatalf("arm the kill on %s: %q %v\n%s", sh.node, line, err, sh.stderr)
+		}
+	}
+	return func() {
+		k.t.Helper()
+		errs := make(chan error, len(shells))
+		for _, sh := range shells { // all nodes at once
+			go func() {
+				_, err := io.WriteString(sh.stdin, "\n")
+				_ = sh.stdin.Close()
+				_, _ = io.Copy(io.Discard, sh.stdout) // drain before Wait
+				if werr := sh.cmd.Wait(); err == nil {
+					err = werr
+				}
+				if err != nil {
+					err = fmt.Errorf("SIGKILL on %s: %w\n%s", sh.node, err, sh.stderr)
+				}
+				errs <- err
+			}()
+		}
+		for range shells {
+			if err := <-errs; err != nil {
+				k.t.Fatal(err)
+			}
 		}
 	}
 }
-
-// shellQuote quotes s for the remote shell minikube ssh runs its command in.
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // stop scales the workload to zero and waits until none of its pods remain.
 func (k *k8sPlatform) stop(s string) {

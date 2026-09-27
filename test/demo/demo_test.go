@@ -121,10 +121,11 @@ func TestSliceADemo(t *testing.T) {
 	d.onePO(high)
 
 	d.step("7. Kill the worker mid-dispatch: UNKNOWN_OUTCOME, reconcile, exactly one PO")
+	kill := d.p.armKill("execution-worker") // staged now: firing must beat the 3 s call budget
 	killed := d.submit("killed-1", "purchase", "erp.create_po", map[string]any{"amount": 900,
 		"scenario": "slow_response", "delay_ms": 5000})
 	d.until(killed, "EXECUTING")
-	d.p.kill("execution-worker")
+	kill()
 	d.logf("execution-worker killed while its call was in flight")
 	d.p.start("execution-worker") // a new worker process
 	d.until(killed, "SUCCEEDED")
