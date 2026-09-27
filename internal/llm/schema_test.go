@@ -434,6 +434,40 @@ func TestLedgerNeverChanges(t *testing.T) {
 	wantState(t, err, sqlForbidden)
 }
 
+// The gate a trigger reads (eacp.llm_call) is a setting any transaction can
+// set; setting it by hand must not let raw SQL as eacp_app write the ledger,
+// an LLM reservation or gateway usage outside llm_admit, llm_settle and
+// llm_sweep (ADR-031 §3).
+func TestTheLedgerCannotBeWrittenBySettingItsGate(t *testing.T) {
+	e := newEnv(t)
+	a := e.admit(t, req("sonnet", "anthropic", 100, 10))
+	gate := func(id uuid.UUID, stmt string) string {
+		return "DO $$ BEGIN PERFORM set_config('eacp.llm_call', '" + id.String() + "', true); " + stmt + "; END $$"
+	}
+	forged := uuid.New()
+	// An admitted call for a model off the allowlist, over the cap, with no reservation.
+	wantState(t, e.f.ExecAgent(e.agent.Version, gate(forged, `INSERT INTO eacp.llm_calls (tenant_id, id,
+		agent_version_id, model_id, model_name, provider, stream, request_bytes, max_output_tokens, price_id, cost_unit,
+		state, gateway_id, deadline) SELECT eacp.current_tenant_id(), '`+forged.String()+`', '`+e.agent.Version.String()+`',
+		'`+e.gpt.String()+`', 'gpt', 'openai', false, 1, 99999999, id, 'USD', 'ADMITTED', 'gw', now() + interval '1 hour'
+		FROM eacp.model_prices WHERE model = 'gpt-x'`)), sqlForbidden)
+	// A settlement at cost 0 that leaves the reservation active.
+	wantState(t, e.f.ExecSystem("llm_gateway", gate(a.CallID, `UPDATE eacp.llm_calls SET state = 'SETTLED',
+		outcome = 'succeeded', input_tokens = 1, cache_read_tokens = 0, cache_write_tokens = 0, output_tokens = 1,
+		cost_amount = 0, committed_amount = 0 WHERE id = '`+a.CallID.String()+`'`)), sqlForbidden)
+	// The reservation released by hand.
+	wantState(t, e.f.ExecSystem("llm_gateway", gate(a.CallID, `UPDATE eacp.budget_reservations SET state = 'RELEASED',
+		settle_reason = 'forged' WHERE llm_call_id = '`+a.CallID.String()+`'`)), sqlForbidden)
+	// A second reservation for the same agent's call, made by hand.
+	wantState(t, e.f.ExecAgent(e.agent.Version, gate(forged, `INSERT INTO eacp.budget_reservations (tenant_id,
+		account_id, unit, llm_call_id, amount, expires_at) VALUES (eacp.current_tenant_id(), '`+e.account.String()+`',
+		'USD', '`+a.CallID.String()+`', 0.000001, now() + interval '1 hour')`)), sqlForbidden)
+	// The call is still ADMITTED and its reservation ACTIVE: llm_settle still works.
+	if s := e.settle(t, a.CallID, "succeeded", 200, 10, 0, 0, 5, true); s.Cost == nil {
+		t.Fatalf("settle after the forgeries = %+v", s)
+	}
+}
+
 func TestKillScopesBindLLMCalls(t *testing.T) {
 	for _, scope := range []string{"tenant", "team", "agent", "agent_version", "model"} {
 		t.Run(scope, func(t *testing.T) {

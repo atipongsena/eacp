@@ -52,7 +52,7 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
 - One row per request that authenticated as an agent. It records the agent and version, the model, the subject, stream, trace id, request bytes, the output cap, and the decision (id, bundle, version, verdict, input digest).
 - It also records the pinned `price_id`, the state (`DENIED` | `ADMITTED` | `SETTLED`), a denial code, the outcome, the provider status, the tokens (input, cache read, cache write, output), the cost, the committed amount, the gateway id and the deadline.
 - It **never** holds a prompt, a response, a header or a key.
-- Writes are allowed only while the transaction-local setting `eacp.llm_call` names the row (`llm_admit` and `llm_finish` set it).
+- `eacp_app` cannot write the ledger: `llm_admit`, `llm_settle` and `llm_sweep` are SECURITY DEFINER functions (search path pinned, every statement tenant-filtered), and the ledger, LLM reservation and gateway usage guards require `eacp.llm_ledger_context(call)`: the transaction-local gate `eacp.llm_call` names the row **and** the statement runs as the schema owner. The setting alone, which any transaction can set, opens nothing (`TestTheLedgerCannotBeWrittenBySettingItsGate`).
   - The agent inserts through `eacp.llm_admit` (`storage.SetAgent`).
   - The system actor `llm_gateway` settles once through `eacp.llm_settle`.
   - The system actor `llm_sweeper` settles `abandoned`, only after the deadline, through `eacp.llm_sweep`.

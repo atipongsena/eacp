@@ -235,9 +235,23 @@ ALTER TABLE eacp.llm_calls FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON eacp.llm_calls USING (tenant_id = eacp.current_tenant_id());
 -- The schema owner's read-only scan behind eacp.llm_sweep_tenants().
 CREATE POLICY owner_scan ON eacp.llm_calls FOR SELECT TO CURRENT_USER USING (true);
-REVOKE UPDATE ON eacp.llm_calls FROM eacp_app;
-GRANT UPDATE (state, outcome, provider_status, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens,
-              cost_amount, committed_amount, settled_at) ON eacp.llm_calls TO eacp_app;
+-- The application reads the ledger; only the SECURITY DEFINER functions
+-- llm_admit, llm_settle and llm_sweep write it.
+REVOKE INSERT, UPDATE, DELETE ON eacp.llm_calls FROM eacp_app;
+
+-- +goose StatementBegin
+-- Whether this statement runs inside llm_admit, llm_settle or llm_sweep
+-- for call p_call: the gate names the call and the statement runs as the
+-- schema owner (a SECURITY DEFINER function). The setting alone can be set
+-- by any transaction; the role cannot (ADR-031 §3).
+CREATE FUNCTION eacp.llm_ledger_context(p_call uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT current_setting('eacp.llm_call', true) IS NOT DISTINCT FROM p_call::text
+       AND current_user = pg_catalog.pg_get_userbyid(
+               (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'eacp.llm_calls'::pg_catalog.regclass))
+$$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 -- The ledger changes only through eacp.llm_admit, eacp.llm_settle and
@@ -250,7 +264,7 @@ CREATE FUNCTION eacp.llm_calls_guard() RETURNS trigger
 DECLARE
     comp text := eacp.current_system_actor();
 BEGIN
-    IF current_setting('eacp.llm_call', true) IS DISTINCT FROM NEW.id::text THEN
+    IF NOT eacp.llm_ledger_context(NEW.id) THEN
         RAISE EXCEPTION 'the ledger changes only through eacp.llm_admit, llm_settle and llm_sweep'
             USING ERRCODE = '42501';
     END IF;
@@ -376,8 +390,7 @@ BEGIN
         IF NEW.action_id IS NOT NULL OR NEW.contract_id IS NOT NULL THEN
             RAISE EXCEPTION 'a reservation is for an action or an LLM call' USING ERRCODE = '23514';
         END IF;
-        IF current_setting('eacp.llm_call', true) IS DISTINCT FROM NEW.llm_call_id::text
-           OR eacp.current_agent_version_id() IS NULL THEN
+        IF NOT eacp.llm_ledger_context(NEW.llm_call_id) OR eacp.current_agent_version_id() IS NULL THEN
             RAISE EXCEPTION 'an LLM call is reserved only by eacp.llm_admit' USING ERRCODE = '42501';
         END IF;
         SELECT * INTO call FROM eacp.llm_calls WHERE tenant_id = NEW.tenant_id AND id = NEW.llm_call_id;
@@ -407,7 +420,7 @@ BEGIN
                IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['state', 'committed_amount', 'settled_at', 'settle_reason']) THEN
                 RAISE EXCEPTION 'settling a reservation changes only its settlement' USING ERRCODE = '55000';
             END IF;
-            IF current_setting('eacp.llm_call', true) IS DISTINCT FROM OLD.llm_call_id::text
+            IF NOT eacp.llm_ledger_context(OLD.llm_call_id)
                OR eacp.current_system_actor() IS NULL
                OR eacp.current_system_actor() NOT IN ('llm_gateway', 'llm_sweeper')
                OR eacp.current_actor_id() IS NOT NULL OR eacp.current_agent_version_id() IS NOT NULL THEN
@@ -579,7 +592,7 @@ BEGIN
         -- Written by eacp.llm_settle for a succeeded call; every value comes
         -- from the call (ADR-031).
         IF eacp.current_system_actor() IS DISTINCT FROM 'llm_gateway' OR a IS NOT NULL OR ver IS NOT NULL
-           OR current_setting('eacp.llm_call', true) IS DISTINCT FROM NEW.llm_call_id::text THEN
+           OR NOT eacp.llm_ledger_context(NEW.llm_call_id) THEN
             RAISE EXCEPTION 'gateway usage is recorded by eacp.llm_settle' USING ERRCODE = '42501';
         END IF;
         SELECT * INTO call FROM eacp.llm_calls WHERE tenant_id = NEW.tenant_id AND id = NEW.llm_call_id;
@@ -802,7 +815,7 @@ $$;
 -- the tenant kill lock, the budget leaf, then the call, its reservation
 -- and the audit event, last. Returns {call_id, denial} or the admission.
 CREATE FUNCTION eacp.llm_admit(p jsonb) RETURNS jsonb
-    LANGUAGE plpgsql
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
     AS $$
 DECLARE
     tenant  uuid := eacp.current_tenant_id();
@@ -1010,7 +1023,7 @@ $$;
 CREATE FUNCTION eacp.llm_settle(p_call uuid, p_outcome text, p_status integer, p_input bigint,
                                 p_cache_read bigint, p_cache_write bigint, p_output bigint, p_known boolean)
     RETURNS jsonb
-    LANGUAGE plpgsql
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
     AS $$
 DECLARE
     c eacp.llm_calls%ROWTYPE;
@@ -1042,7 +1055,7 @@ $$;
 -- committing their full reservations. Replicas share it: a row another
 -- transaction holds is skipped (ADR-029).
 CREATE FUNCTION eacp.llm_sweep() RETURNS integer
-    LANGUAGE plpgsql
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
     AS $$
 DECLARE
     c eacp.llm_calls%ROWTYPE;
@@ -1074,6 +1087,16 @@ $$;
 -- +goose StatementEnd
 REVOKE ALL ON FUNCTION eacp.llm_sweep_tenants() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION eacp.llm_sweep_tenants() TO eacp_app;
+-- The ledger's writers run as the schema owner: every statement in them
+-- names the tenant, so RLS and these filters keep them tenant-local.
+REVOKE ALL ON FUNCTION eacp.llm_admit(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION eacp.llm_admit(jsonb) TO eacp_app;
+REVOKE ALL ON FUNCTION eacp.llm_settle(uuid, text, integer, bigint, bigint, bigint, bigint, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION eacp.llm_settle(uuid, text, integer, bigint, bigint, bigint, bigint, boolean) TO eacp_app;
+REVOKE ALL ON FUNCTION eacp.llm_sweep() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION eacp.llm_sweep() TO eacp_app;
+REVOKE ALL ON FUNCTION eacp.llm_finish(eacp.llm_calls, text, integer, bigint, bigint, bigint, bigint, boolean)
+    FROM PUBLIC;
 
 
 -- +goose Down
@@ -1417,6 +1440,7 @@ DROP FUNCTION eacp.llm_cost(eacp.model_prices, bigint, bigint, bigint, bigint);
 DROP FUNCTION eacp.llm_estimate(eacp.model_prices, bigint, bigint);
 DROP TABLE eacp.llm_calls;
 DROP FUNCTION eacp.llm_calls_guard();
+DROP FUNCTION eacp.llm_ledger_context(uuid);
 
 ALTER TABLE eacp.model_prices DROP COLUMN cache_write_per_mtok;
 

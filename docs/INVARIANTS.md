@@ -230,7 +230,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 
 - `internal/action` TestActionTransitionsAreJournaledWithActorKinds — transitions with actor kinds
 - `internal/registry` TestRawSQLChangesAreAuditedByTheDatabase — the database journals even raw SQL changes
-- `internal/llm` TestLedgerNeverChanges — an LLM call row cannot be edited, deleted or inserted outside `llm_admit` (ADR-031)
+- `internal/llm` TestLedgerNeverChanges — an LLM call row cannot be edited or deleted, nor inserted by hand (ADR-031)
+- `internal/llm` TestTheLedgerCannotBeWrittenBySettingItsGate — setting the ledger's gate by hand lets raw SQL as `eacp_app` write no call, settlement or LLM reservation: only the SECURITY DEFINER `llm_admit`, `llm_settle` and `llm_sweep` do
 - `internal/llm` TestAdmitDeniesInOrder — every denial is journaled `llm.denied` in its transaction
 - `internal/llm` TestAdmitReservesTheEstimate — an admission is journaled `llm.admitted`, last in its transaction
 - `internal/llm` TestSettleOutcomes — every settlement is journaled `llm.settled`

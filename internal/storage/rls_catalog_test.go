@@ -130,13 +130,18 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// SECURITY DEFINER functions run as the owner and so cross tenants. Each
 	// is reviewed: the journal chain append, and claim, count, outbox and
 	// finops-, release- and incident-evaluator and LLM-sweeper hints that return only ids and counts; the caller re-checks everything
-	// under RLS (the relay locks and publishes each row in its tenant).
+	// under RLS (the relay locks and publishes each row in its tenant). The
+	// LLM ledger's writers (ADR-031) run as the owner so that eacp_app cannot
+	// write the ledger itself; every statement in them names the tenant.
 	reviewedDefiners := []string{
 		"eacp.audit_chain_append()",
 		"eacp.claimable_actions(text[],jsonb,integer,jsonb)",
 		"eacp.finops_tenants()",
 		"eacp.global_queued_count()",
 		"eacp.incident_tenants()",
+		"eacp.llm_admit(jsonb)",
+		"eacp.llm_settle(uuid,text,integer,bigint,bigint,bigint,bigint,boolean)",
+		"eacp.llm_sweep()",
 		"eacp.llm_sweep_tenants()",
 		"eacp.mcp_scans_due(jsonb,integer)",
 		"eacp.outbox_pending(text[],integer)",
