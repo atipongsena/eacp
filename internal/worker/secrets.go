@@ -45,7 +45,8 @@ type loadConfig struct {
 	redact     *logging.SecretSet
 	now        func() time.Time
 	log        *slog.Logger
-	vault      *vaultClient // the file's Vault client, while loading
+	vault      *vaultClient  // the file's Vault client, while loading
+	spiffe     *spiffeClient // the file's Workload API client, while loading
 }
 
 // AllowPlainTokenURL lets an oauth2 token_url use http. The worker passes it
@@ -97,7 +98,8 @@ type secretEntry struct {
 	host   string
 	secret Secret         // a static credential, or
 	oauth  *oauthProvider // tokens minted just in time, or
-	vault  *vaultValue    // a static credential read from Vault
+	vault  *vaultValue    // a static credential read from Vault, or
+	spiffe *spiffeValue   // a JWT-SVID for the binding's audience
 }
 
 // SecretStore holds the worker's connector credentials, keyed by tenant and
@@ -117,9 +119,11 @@ const maxSecret = 4096
 // LoadSecrets reads the secrets file at path:
 //
 //	{"vault": {"address": "https://vault:8200", "auth": {"kubernetes" | "approle": {...}}, ...},  (optional)
+//	 "spiffe": {"endpoint": "unix:///spiffe-workload-api/spire-agent.sock", "spiffe_id": "spiffe://…"},  (optional)
 //	 "secrets": [{"tenant_id": "...", "secret_ref": "erp", "host": "erp.internal:8443",
 //	              "value": "..." | "value_file": "/run/secrets/erp" |
 //	              "value_vault": {"path": "eacp/erp", "key": "token"} |
+//	              "value_spiffe": {"audience": "erp-api"} |
 //	              "oauth2": {"token_url": "https://idp/token", "client_id": "...",
 //	                         "client_secret": "..." | "client_secret_file": "...",
 //	                         "scope": "...", "resource": "https://..."}}]}
@@ -136,15 +140,17 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 		return nil, fmt.Errorf("worker: read secrets file: %w", err)
 	}
 	var file struct {
-		Vault   *vaultEntry `json:"vault"`
+		Vault   *vaultEntry  `json:"vault"`
+		Spiffe  *spiffeEntry `json:"spiffe"`
 		Secrets []struct {
-			TenantID   string      `json:"tenant_id"`
-			Ref        string      `json:"secret_ref"`
-			Host       string      `json:"host"`
-			Value      *string     `json:"value"`
-			ValueFile  *string     `json:"value_file"`
-			ValueVault *vaultRef   `json:"value_vault"`
-			OAuth2     *oauthEntry `json:"oauth2"`
+			TenantID    string          `json:"tenant_id"`
+			Ref         string          `json:"secret_ref"`
+			Host        string          `json:"host"`
+			Value       *string         `json:"value"`
+			ValueFile   *string         `json:"value_file"`
+			ValueVault  *vaultRef       `json:"value_vault"`
+			ValueSPIFFE *spiffeAudience `json:"value_spiffe"`
+			OAuth2      *oauthEntry     `json:"oauth2"`
 		} `json:"secrets"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -161,6 +167,13 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			return nil, fmt.Errorf("worker: %w", err)
 		}
 		c.vault = v
+	}
+	if file.Spiffe != nil {
+		sc, err := newSpiffeClient(*file.Spiffe, c)
+		if err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
+		c.spiffe = sc
 	}
 	store := &SecretStore{m: map[secretKey]secretEntry{}, now: c.now}
 	for i, e := range file.Secrets {
@@ -179,13 +192,25 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			return nil, fmt.Errorf("worker: secret %d: duplicate tenant and secret_ref", i)
 		}
 		kinds := 0
-		for _, set := range []bool{e.Value != nil, e.ValueFile != nil, e.ValueVault != nil, e.OAuth2 != nil} {
+		for _, set := range []bool{e.Value != nil, e.ValueFile != nil, e.ValueVault != nil, e.ValueSPIFFE != nil,
+			e.OAuth2 != nil} {
 			if set {
 				kinds++
 			}
 		}
 		if kinds != 1 {
-			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file, value_vault and oauth2 is required", i)
+			return nil, fmt.Errorf("worker: secret %d: exactly one of value, value_file, value_vault, value_spiffe and oauth2 is required", i)
+		}
+		if e.ValueSPIFFE != nil {
+			if c.spiffe == nil {
+				return nil, fmt.Errorf("worker: secret %d: value_spiffe needs the file's spiffe object", i)
+			}
+			if err := e.ValueSPIFFE.validate(); err != nil {
+				return nil, fmt.Errorf("worker: secret %d: %w", i, err)
+			}
+			store.m[k] = secretEntry{host: e.Host, spiffe: &spiffeValue{client: c.spiffe, audience: e.ValueSPIFFE.Audience,
+				binding: Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, now: c.now, log: c.log}}
+			continue
 		}
 		if e.ValueVault != nil {
 			if c.vault == nil {
@@ -261,6 +286,9 @@ func (s *SecretStore) Credential(ctx context.Context, tenant uuid.UUID, ref, end
 	if e.vault != nil {
 		return e.vault.credential(ctx)
 	}
+	if e.spiffe != nil {
+		return Secret{}, ErrCredentialUnavailable
+	}
 	return e.secret, nil
 }
 
@@ -335,6 +363,7 @@ func (s *SecretStore) Values() []string {
 			out = append(out, e.oauth.live()...)
 		case e.vault != nil:
 			out = append(out, e.vault.live(s.now())...)
+		case e.spiffe != nil:
 		default:
 			out = append(out, e.secret.v)
 		}

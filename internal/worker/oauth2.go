@@ -50,6 +50,9 @@ type oauthEntry struct {
 	// A platform-issued JWT (RFC 7523), re-read at every mint: workload
 	// identity federation, with no client secret at all.
 	ClientAssertionFile *string `json:"client_assertion_file"`
+	// A JWT-SVID for this audience from the Workload API, fetched at each
+	// mint (ADR-019 §3d).
+	ClientAssertionSPIFFE *spiffeAudience `json:"client_assertion_spiffe"`
 	// An assertion the worker signs with its own key (private_key_jwt).
 	PrivateKeyJWT *privateKeyJWTEntry `json:"private_key_jwt"`
 	Scope         string              `json:"scope"`
@@ -73,6 +76,8 @@ type oauthProvider struct {
 	vault              *vaultClient     // with secretRef or pk: values read at each mint
 	secretRef          *vaultRef        // client_secret_vault
 	pk                 *vaultSigner     // private_key_jwt with a key or certificate in Vault
+	spiffe             *spiffeClient    // client_assertion_spiffe: an SVID for spiffeAudience at each mint
+	spiffeAudience     string
 	scope, resource    string
 	client             *http.Client
 	now                func() time.Time
@@ -110,13 +115,13 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	}
 	kinds := 0
 	for _, set := range []bool{e.ClientSecret != nil, e.ClientSecretFile != nil, e.ClientSecretVault != nil,
-		e.ClientAssertionFile != nil, e.PrivateKeyJWT != nil} {
+		e.ClientAssertionFile != nil, e.ClientAssertionSPIFFE != nil, e.PrivateKeyJWT != nil} {
 		if set {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return nil, bad("needs exactly one of client_secret, client_secret_file, client_secret_vault, client_assertion_file and private_key_jwt")
+		return nil, bad("needs exactly one of client_secret, client_secret_file, client_secret_vault, client_assertion_file, client_assertion_spiffe and private_key_jwt")
 	}
 	var secret, assertionFile string
 	var assertion Secret
@@ -124,7 +129,16 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	var signer *assertionSigner
 	var secretRef *vaultRef
 	var pk *vaultSigner
+	var sc *spiffeClient
 	switch {
+	case e.ClientAssertionSPIFFE != nil:
+		if c.spiffe == nil {
+			return nil, bad("client_assertion_spiffe needs the file's spiffe object")
+		}
+		if err := e.ClientAssertionSPIFFE.validate(); err != nil {
+			return nil, bad(err.Error())
+		}
+		sc = c.spiffe
 	case e.PrivateKeyJWT != nil && (e.PrivateKeyJWT.KeyVault != nil || e.PrivateKeyJWT.CertificateVault != nil):
 		var err error
 		if pk, err = newVaultSigner(*e.PrivateKeyJWT, c); err != nil {
@@ -161,7 +175,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 			return nil, bad("client_assertion_file must hold a compact JWS with a numeric exp (" + class + ")")
 		}
 	}
-	if assertionFile == "" && signer == nil && pk == nil && secretRef == nil && (secret == "" || len(secret) > maxSecret) {
+	if assertionFile == "" && signer == nil && pk == nil && secretRef == nil && sc == nil && (secret == "" || len(secret) > maxSecret) {
 		return nil, bad(fmt.Sprintf("client secret must be 1-%d bytes", maxSecret))
 	}
 	if e.Scope != "" && (len(e.Scope) > 1024 || !scopePattern.MatchString(e.Scope)) {
@@ -177,11 +191,14 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	p := &oauthProvider{
 		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
 		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp, signer: signer,
-		vault: c.vault, secretRef: secretRef, pk: pk,
+		vault: c.vault, secretRef: secretRef, pk: pk, spiffe: sc,
 		scope: e.Scope, resource: e.Resource, now: c.now, redact: c.redact, log: c.log,
 		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
 			// A redirect could carry the client secret or assertion to another host.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+	}
+	if sc != nil {
+		p.spiffeAudience = e.ClientAssertionSPIFFE.Audience
 	}
 	p.redactUntil(assertion, assertionExp)
 	return p, nil
