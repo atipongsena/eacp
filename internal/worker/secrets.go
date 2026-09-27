@@ -287,7 +287,7 @@ func (s *SecretStore) Credential(ctx context.Context, tenant uuid.UUID, ref, end
 		return e.vault.credential(ctx)
 	}
 	if e.spiffe != nil {
-		return Secret{}, ErrCredentialUnavailable
+		return e.spiffe.credential(ctx, validFor)
 	}
 	return e.secret, nil
 }
@@ -307,6 +307,7 @@ func (s *SecretStore) Available() []Binding {
 		switch {
 		case e.oauth != nil && !e.oauth.available(s.now()):
 		case e.vault != nil && !e.vault.available(s.now()):
+		case e.spiffe != nil && !e.spiffe.available(s.now()):
 		default:
 			out = append(out, b)
 		}
@@ -327,6 +328,8 @@ func (s *SecretStore) Rejected(tenant uuid.UUID, ref string, secret Secret) {
 		e.oauth.rejected(secret)
 	case ok && e.vault != nil:
 		e.vault.rejected(secret)
+	case ok && e.spiffe != nil:
+		e.spiffe.rejected(secret)
 	}
 }
 
@@ -364,6 +367,7 @@ func (s *SecretStore) Values() []string {
 		case e.vault != nil:
 			out = append(out, e.vault.live(s.now())...)
 		case e.spiffe != nil:
+			out = append(out, e.spiffe.live(s.now())...)
 		default:
 			out = append(out, e.secret.v)
 		}

@@ -207,11 +207,107 @@ func validSPIFFEEndpoint(raw string, allowTCP bool) error {
 }
 
 // spiffeValue is a static connector credential that is a JWT-SVID for the
-// binding's audience (value_spiffe).
+// binding's audience (value_spiffe). A failed fetch withholds the binding
+// with the mint back-off; an SVID is never sent for a call it could expire
+// during (ADR-019 §3d).
 type spiffeValue struct {
 	client   *spiffeClient
 	audience string
 	binding  Binding
 	now      func() time.Time
 	log      *slog.Logger
+
+	mu                      sync.Mutex
+	current, previous       Secret // previous: replaced or rejected, scrubbed until it expires
+	currentExp, previousExp time.Time
+	lifetime                time.Duration // remaining life of the last SVID fetched: a longer call cannot be served
+	backoff                 time.Duration
+	backoffUntil            time.Time
+}
+
+func (v *spiffeValue) credential(ctx context.Context, validFor time.Duration) (Secret, error) {
+	v.mu.Lock()
+	now := v.now()
+	switch {
+	case now.Before(v.backoffUntil):
+		v.mu.Unlock()
+		return Secret{}, ErrCredentialUnavailable
+	case v.current.v != "" && now.Add(validFor).Before(v.currentExp):
+		s := v.current
+		v.mu.Unlock()
+		return s, nil
+	case v.lifetime > 0 && validFor >= v.lifetime:
+		v.mu.Unlock()
+		return Secret{}, ErrCredentialTooShort
+	}
+	v.mu.Unlock()
+	started := v.now()
+	s, exp, class := v.client.svid(ctx, v.audience, validFor)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	now = v.now() // after the fetch: a fetch that failed slowly still backs off
+	if class == "" && exp.Before(now.Add(tokenRequestTimeout)) {
+		class = "spiffe_expiring" // e.g. the agent's cached copy while its server is unreachable
+	}
+	if class != "" {
+		if now.Before(v.backoffUntil) {
+			return Secret{}, ErrCredentialUnavailable // another caller's failure already set the back-off
+		}
+		v.backoff = min(max(2*v.backoff, minMintBackoff), maxMintBackoff)
+		v.backoffUntil = now.Add(v.backoff)
+		v.log.WarnContext(ctx, "spiffe credential unavailable", "tenant", v.binding.TenantID.String(),
+			"ref", v.binding.Ref, "audience", v.audience, "class", class, "retry_after", v.backoff)
+		return Secret{}, ErrCredentialUnavailable
+	}
+	v.backoff, v.backoffUntil = 0, time.Time{}
+	if s.v != v.current.v {
+		if v.current.v != "" {
+			v.previous, v.previousExp = v.current, v.currentExp
+		}
+		v.current, v.currentExp = s, exp
+	}
+	v.lifetime = exp.Sub(started)
+	if !now.Add(validFor).Before(exp) {
+		// Kept for shorter calls; this one cannot be served.
+		v.log.ErrorContext(ctx, "credential lifetime shorter than the call", "tenant", v.binding.TenantID.String(),
+			"ref", v.binding.Ref, "audience", v.audience, "lifetime", v.lifetime, "needed", validFor)
+		return Secret{}, ErrCredentialTooShort
+	}
+	return s, nil
+}
+
+func (v *spiffeValue) available(now time.Time) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return !now.Before(v.backoffUntil)
+}
+
+// rejected drops the current SVID when the target refused it, so the next
+// call fetches again (the agent may hand out the same one).
+func (v *spiffeValue) rejected(s Secret) {
+	v.mu.Lock()
+	if s.v == "" || s.v != v.current.v {
+		v.mu.Unlock()
+		return
+	}
+	v.previous, v.previousExp = v.current, v.currentExp
+	v.current, v.currentExp = Secret{}, time.Time{}
+	v.mu.Unlock()
+	// Not under v.mu: the audience lock may wait on a fetch, and Available
+	// and Values need v.mu.
+	v.client.drop(v.audience, s)
+}
+
+// live returns the SVIDs to scrub: each until it expires.
+func (v *spiffeValue) live(now time.Time) []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var out []string
+	if v.current.v != "" && now.Before(v.currentExp) {
+		out = append(out, v.current.v)
+	}
+	if v.previous.v != "" && now.Before(v.previousExp) {
+		out = append(out, v.previous.v)
+	}
+	return out
 }
