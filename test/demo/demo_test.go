@@ -668,6 +668,8 @@ type erpEntry struct {
 	SVIDSHA256 string `json:"svid_sha256"`
 	// A token exchange: the subject token's SHA-256, never the subject token.
 	SubjectSHA256 string `json:"subject_sha256"`
+	// AWS keys issued or signing a call: the access key id, never the secret key.
+	AWSAccessKeyID string `json:"aws_access_key_id"`
 }
 
 // erpAudit reads the Fake ERP audit with the ERP credential, as an auditor

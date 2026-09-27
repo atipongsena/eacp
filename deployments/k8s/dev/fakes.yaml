@@ -76,6 +76,20 @@ spec:
             - {name: EACP_FAKEERP_STS_SPIFFE_SUBJECT, value: "spiffe://eacp.test/ns/eacp/sa/eacp-worker"}
             - {name: EACP_FAKEERP_STS_SPIFFE_BUNDLE_FILE, value: /run/config/fakeerp-federation/spiffe-bundle.json}
             - {name: EACP_FAKEERP_IMPERSONATE_ACCOUNTS, value: eacp-erp@eacp-demo.iam.gserviceaccount.com}
+            # ADR-019 Rev 1.6: an AWS STS (AssumeRoleWithWebIdentity) for the
+            # worker's projected token and its JWT-SVID; the keys sign with SigV4
+            - {name: EACP_FAKEERP_AWS_ROLE_ARN, value: "arn:aws:iam::000000000000:role/eacp-erp"}
+            - {name: EACP_FAKEERP_AWS_REGION, value: us-east-1}
+            - {name: EACP_FAKEERP_AWS_SERVICE, value: execute-api}
+            - name: EACP_FAKEERP_AWS_K8S_ISSUER
+              valueFrom: {configMapKeyRef: {name: fakeerp-federation, key: issuer}}
+            - {name: EACP_FAKEERP_AWS_K8S_AUDIENCE, value: fakeerp}
+            - {name: EACP_FAKEERP_AWS_K8S_SUBJECT, value: "system:serviceaccount:eacp:eacp-worker"}
+            - {name: EACP_FAKEERP_AWS_K8S_JWKS_FILE, value: /run/config/fakeerp-federation/jwks.json}
+            - {name: EACP_FAKEERP_AWS_SPIFFE_ISSUER, value: "https://spire.eacp.test"}
+            - {name: EACP_FAKEERP_AWS_SPIFFE_AUDIENCE, value: sts.amazonaws.com}
+            - {name: EACP_FAKEERP_AWS_SPIFFE_SUBJECT, value: "spiffe://eacp.test/ns/eacp/sa/eacp-worker"}
+            - {name: EACP_FAKEERP_AWS_SPIFFE_BUNDLE_FILE, value: /run/config/fakeerp-federation/spiffe-bundle.json}
           ports: [{containerPort: 8090}]
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
