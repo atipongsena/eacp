@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 
 	"eacp/internal/connector/mcp"
 	"eacp/internal/connector/mcp/mcptest"
+	"eacp/internal/jwttest"
 	"eacp/internal/registry"
 	"eacp/internal/registry/registrytest"
 	"eacp/internal/storage"
@@ -248,5 +251,44 @@ func TestAScanWithoutACredentialIsNotRecorded(t *testing.T) {
 	runScan(t, sc, 0)
 	if idp.mints.Load() != 1 {
 		t.Fatalf("%d mints, want 1: the back-off withholds the server", idp.mints.Load())
+	}
+}
+
+// stsFor is a fake STS whose every answer is a fresh set of temporary keys.
+func stsFor(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprintf(w, `<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials>`+
+			`<AccessKeyId>ASIASCANNERTEST00001</AccessKeyId><SecretAccessKey>scan-secret</SecretAccessKey>`+
+			`<SessionToken>scan-session</SessionToken><Expiration>%s</Expiration></Credentials>`+
+			`</AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestAScanWithAnAWSCredentialIsRecordedUnsupported: MCP servers are never
+// signed; a server bound to AWS keys records a classified failure and is
+// never contacted.
+func TestAScanWithAnAWSCredentialIsRecordedUnsupported(t *testing.T) {
+	e := newScanEnv(t, scanGetPO)
+	var contacted atomic.Int32
+	e.server.SetHandler(func(w http.ResponseWriter, r *http.Request) { contacted.Add(1) })
+	secrets, err := worker.LoadSecrets(secretsFile(t, fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"sap-mcp","host":%q,
+		"aws":{"role_arn":"arn:aws:iam::123456789012:role/eacp","region":"us-east-1","service":"execute-api",
+		"sts_endpoint":%q,"subject_token":{"file":%q}}}]}`,
+		e.f.Tenant, strings.TrimPrefix(e.server.Server.URL, "http://"), stsFor(t), subjectFile(t, jwttest.New(t), time.Hour))),
+		worker.AllowPlainTokenURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.secrets = secrets
+	runScan(t, e.scanner(t, "scan-a"), 1)
+	var outcome, class string
+	e.row(t, `SELECT s.outcome, s.error_class FROM eacp.mcp_servers m JOIN eacp.mcp_scans s ON s.id = m.last_scan_id
+		WHERE m.connector_id = $1`, []any{e.connector}, &outcome, &class)
+	if outcome != "failed" || class != "unsupported_credential" || contacted.Load() != 0 {
+		t.Fatalf("scan %s %s, server contacted %d times", outcome, class, contacted.Load())
 	}
 }

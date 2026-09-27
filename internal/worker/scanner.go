@@ -132,9 +132,14 @@ func (s *Scanner) scan(ctx context.Context, l ScanLease) {
 		log.WarnContext(ctx, "credential unavailable; mcp scan not recorded")
 		return
 	}
-	if err != nil {
+	switch {
+	case err != nil:
 		err = &DiscoveryError{Class: "no_credential", Err: errors.New("no credential bound to this server")}
-	} else {
+	case secret.SignsRequests():
+		// MCP servers are never signed (ADR-019 §3f): the scan is a classified
+		// failure and the server is not contacted.
+		err = &DiscoveryError{Class: "unsupported_credential", Err: errors.New("an MCP server takes no AWS credential")}
+	default:
 		dctx, cancel := context.WithTimeout(ctx, s.o.Timeout)
 		d, err = s.o.Discoverer.Discover(dctx, l.Endpoint, secret)
 		cancel()

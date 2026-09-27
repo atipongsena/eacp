@@ -95,7 +95,7 @@ func (c *Client) Discover(ctx context.Context, endpoint string, secret worker.Se
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return worker.Discovery{}, fail("invalid_endpoint", "endpoint is not an http(s) URL without credentials")
 	}
-	if secret.Reveal() == "" {
+	if secret.Reveal() == "" || secret.SignsRequests() { // a Bearer only; AWS keys are never sent as one
 		return worker.Discovery{}, fail("no_credential", "no credential for the endpoint")
 	}
 	s := &session{c: c, endpoint: u.String(), secret: secret.Reveal(), budget: c.maxBytes}

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +18,8 @@ import (
 	"github.com/google/uuid"
 
 	"eacp/internal/connector"
+	"eacp/internal/fakeerp"
+	"eacp/internal/jwttest"
 	"eacp/internal/worker"
 )
 
@@ -236,5 +240,113 @@ func TestHTTPLookupDistinguishesFoundAbsentAndUnknown(t *testing.T) {
 				t.Fatalf("lookup = %+v, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+const (
+	awsSecretKey = "connector-aws-secret-canary"
+	awsSession   = "IQoJconnector//+session-canary=="
+	awsKeyID     = "ASIACONNECTORTEST001"
+)
+
+// awsCall is call with temporary AWS keys minted from a fake STS for the
+// endpoint (region us-east-1, service execute-api).
+func awsCall(t *testing.T, endpoint string) worker.Call {
+	t.Helper()
+	sts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprintf(w, `<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials>`+
+			`<AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken>`+
+			`<Expiration>%s</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`,
+			awsKeyID, awsSecretKey, awsSession, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(sts.Close)
+	now := time.Now()
+	subject := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(subject, []byte(jwttest.New(t).Sign(map[string]any{"sub": "worker", "aud": "sts",
+		"exp": now.Add(time.Hour).Unix()})), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tenant := uuid.New()
+	p := filepath.Join(t.TempDir(), "secrets.json")
+	body := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"erp","host":%q,"aws":{"role_arn":"arn:aws:iam::123456789012:role/eacp",
+		"region":"us-east-1","service":"execute-api","sts_endpoint":%q,"subject_token":{"file":%q}}}]}`,
+		tenant, strings.TrimPrefix(endpoint, "http://"), sts.URL, subject)
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := worker.LoadSecrets(p, worker.AllowPlainTokenURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := store.Credential(context.Background(), tenant, "erp", endpoint, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := call(t, endpoint, "native")
+	c.TenantID, c.Secret = tenant, secret
+	c.OperationKey = "eacp:" + tenant.String() + ":" + uuid.NewString()
+	return c
+}
+
+// verified reports the SigV4 verification of r against the keys awsCall mints.
+func verified(r *http.Request) error {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	_, err = fakeerp.VerifySigV4(r, body, "us-east-1", "execute-api", time.Now(), func(id string) (fakeerp.SigV4Key, bool) {
+		return fakeerp.SigV4Key{SecretKey: awsSecretKey, SessionToken: awsSession}, id == awsKeyID
+	})
+	return err
+}
+
+func TestExecuteSignsAnAWSCredential(t *testing.T) {
+	var signed []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := verified(r); err != nil {
+			t.Errorf("execute: %v", err)
+		}
+		auth := r.Header.Get("Authorization")
+		signed = strings.Split(strings.SplitN(strings.SplitN(auth, "SignedHeaders=", 2)[1], ",", 2)[0], ";")
+		_, _ = w.Write([]byte(`{"external_reference":"PO-7"}`))
+	}))
+	defer srv.Close()
+	if res := connector.NewHTTP().Execute(context.Background(), awsCall(t, srv.URL)); res.Outcome != worker.Succeeded {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, h := range []string{"content-type", "idempotency-key", "x-eacp-tenant-id", "x-amz-security-token"} {
+		if !slices.Contains(signed, h) {
+			t.Errorf("%s is not signed: %v", h, signed)
+		}
+	}
+}
+
+func TestLookupSignsAnAWSCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := verified(r); err != nil {
+			t.Errorf("lookup: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"external_reference":"PO-7"}`))
+	}))
+	defer srv.Close()
+	c := awsCall(t, srv.URL)
+	got := connector.NewHTTP().Lookup(context.Background(), worker.LookupCall{TenantID: c.TenantID, OperationKey: c.OperationKey,
+		Endpoint: c.Endpoint, Secret: c.Secret})
+	if got.Status != worker.LookupFound {
+		t.Fatalf("lookup = %+v", got)
+	}
+}
+
+func TestALookupReferenceWithTheSessionTokenIsRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"external_reference":"PO-` + awsSession + `"}`))
+	}))
+	defer srv.Close()
+	c := awsCall(t, srv.URL)
+	got := connector.NewHTTP().Lookup(context.Background(), worker.LookupCall{TenantID: c.TenantID, OperationKey: c.OperationKey,
+		Endpoint: c.Endpoint, Secret: c.Secret})
+	if got.Status != worker.LookupUnknown {
+		t.Fatalf("a reference echoing the session token: %+v", got)
 	}
 }

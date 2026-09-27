@@ -167,7 +167,7 @@ func (r *Reconciler) reconcile(ctx context.Context, l Lease) {
 	} else {
 		log.WarnContext(ctx, "reconciler cannot serve this connector", "protocol", job.Protocol)
 	}
-	res = scrubLookup(res, append(r.o.Secrets.Values(), secret.Reveal())) // the value sent, even if rotated
+	res = scrubLookup(res, append(r.o.Secrets.Values(), secret.values()...)) // the value sent, even if rotated
 
 	v := decide(job.Facts, res)
 	// The database accepts a next retry or reconciliation within the hour.

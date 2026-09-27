@@ -65,15 +65,17 @@ func validOperationKey(key string, tenant uuid.UUID) bool {
 	return err == nil && action != uuid.Nil
 }
 
-func (h *HTTP) request(ctx context.Context, method, endpoint, tenant, secret string, body []byte) (*http.Response, error) {
+func (h *HTTP) request(ctx context.Context, method, endpoint, tenant string, secret worker.Secret, body []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+secret)
 	req.Header.Set("X-EACP-Tenant-ID", tenant)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := secret.Authorize(req, body); err != nil { // last: every header above is signed
+		return nil, err
 	}
 	return h.client.Do(req)
 }
@@ -125,11 +127,15 @@ func (h *HTTP) Execute(ctx context.Context, c worker.Call) worker.Result {
 	// reused connection. The target may have applied the first send before
 	// losing its response, so only the worker may decide on another attempt.
 	req.GetBody = nil
-	req.Header.Set("Authorization", "Bearer "+c.Secret.Reveal())
 	req.Header.Set("X-EACP-Tenant-ID", c.TenantID.String())
 	req.Header.Set("Content-Type", "application/json")
 	if c.Contract.IdempotencyMode == "native" {
 		req.Header.Set(c.Contract.IdempotencyKeyField, c.OperationKey)
+	}
+	// Last, so a SigV4 credential signs every header above (ADR-019 §3f).
+	// Nothing has been sent when signing fails.
+	if err := c.Secret.Authorize(req, b); err != nil {
+		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "credential_signing"}
 	}
 	r, err := h.client.Do(req)
 	if err != nil {
@@ -168,7 +174,7 @@ func (h *HTTP) Lookup(ctx context.Context, c worker.LookupCall) worker.LookupRes
 	if !ok {
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}
-	r, err := h.request(ctx, http.MethodGet, target, c.TenantID.String(), c.Secret.Reveal(), nil)
+	r, err := h.request(ctx, http.MethodGet, target, c.TenantID.String(), c.Secret, nil)
 	if err != nil {
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}
@@ -197,7 +203,7 @@ func (h *HTTP) Lookup(ctx context.Context, c worker.LookupCall) worker.LookupRes
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}
 	if strings.TrimSpace(data.ExternalReference) == "" ||
-		len(data.ExternalReference) > 512 || strings.Contains(data.ExternalReference, c.Secret.Reveal()) {
+		len(data.ExternalReference) > 512 || c.Secret.Contains(data.ExternalReference) {
 		return worker.LookupResult{Status: worker.LookupUnknown}
 	}
 	return worker.LookupResult{Status: worker.LookupFound, ExternalReference: data.ExternalReference}

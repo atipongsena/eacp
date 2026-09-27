@@ -17,6 +17,7 @@ import (
 
 	"eacp/internal/connector/mcp"
 	"eacp/internal/connector/mcp/mcptest"
+	"eacp/internal/jwttest"
 	"eacp/internal/worker"
 )
 
@@ -353,4 +354,43 @@ func TestUnacceptableToolsAreRejected(t *testing.T) {
 			t.Fatalf("tools %+v, rejected %+v, err %v", d.Tools, d.Rejected, err)
 		}
 	})
+}
+
+// TestDiscoverRefusesAnAWSCredential: temporary AWS keys sign requests; the
+// MCP client never sends one as a Bearer.
+func TestDiscoverRefusesAnAWSCredential(t *testing.T) {
+	var contacted atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { contacted.Add(1) }))
+	defer srv.Close()
+	sts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials>`+
+			`<AccessKeyId>ASIAMCPCLIENTTEST001</AccessKeyId><SecretAccessKey>mcp-secret</SecretAccessKey>`+
+			`<SessionToken>mcp-session</SessionToken><Expiration>%s</Expiration></Credentials>`+
+			`</AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	defer sts.Close()
+	subject := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(subject, []byte(jwttest.New(t).Sign(map[string]any{"sub": "w", "exp": time.Now().Add(time.Hour).Unix()})), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tenant := uuid.New()
+	p := filepath.Join(t.TempDir(), "secrets.json")
+	body := fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"mcp","host":%q,"aws":{"role_arn":"arn:aws:iam::123456789012:role/eacp",
+		"region":"us-east-1","service":"execute-api","sts_endpoint":%q,"subject_token":{"file":%q}}}]}`,
+		tenant, strings.TrimPrefix(srv.URL, "http://"), sts.URL, subject)
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := worker.LoadSecrets(p, worker.AllowPlainTokenURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := store.Credential(context.Background(), tenant, "mcp", srv.URL+"/mcp", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mcp.New().Discover(context.Background(), srv.URL+"/mcp", secret)
+	if worker.DiscoveryClass(err) != "no_credential" || contacted.Load() != 0 {
+		t.Fatalf("class %q, contacted %d", worker.DiscoveryClass(err), contacted.Load())
+	}
 }

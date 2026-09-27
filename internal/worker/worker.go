@@ -409,7 +409,7 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	cancel()
 	stop()
 	// Scrub the value that was sent too: the store may have rotated it away.
-	res = classify(scrub(res, append(w.o.Secrets.Values(), secret.Reveal())), job.Contract)
+	res = classify(scrub(res, append(w.o.Secrets.Values(), secret.values()...)), job.Contract)
 	if res.ErrorClass == "unauthorized" {
 		// The target refused the credential: a minted token is dropped so
 		// the next attempt mints another. The outcome stays as classified.
