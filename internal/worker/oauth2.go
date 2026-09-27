@@ -57,6 +57,13 @@ type oauthEntry struct {
 	PrivateKeyJWT *privateKeyJWTEntry `json:"private_key_jwt"`
 	Scope         string              `json:"scope"`
 	Resource      string              `json:"resource"`
+	// Token exchange (RFC 8693, ADR-019 §3e): absent or client_credentials,
+	// or token_exchange with a subject token and optional impersonation.
+	Grant            string             `json:"grant"`
+	SubjectToken     *subjectTokenEntry `json:"subject_token"`
+	SubjectTokenType string             `json:"subject_token_type"`
+	Audience         string             `json:"audience"`
+	Impersonate      *impersonateEntry  `json:"impersonate"`
 }
 
 type heldToken struct {
@@ -79,6 +86,8 @@ type oauthProvider struct {
 	spiffe             *spiffeClient    // client_assertion_spiffe: an SVID for spiffeAudience at each mint
 	spiffeAudience     string
 	scope, resource    string
+	exchange           *exchangeConfig // token_exchange; nil for client credentials
+	publicClient       bool            // token_exchange with client_id alone: sent in the form
 	client             *http.Client
 	now                func() time.Time
 	redact             *logging.SecretSet
@@ -110,7 +119,11 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	if u.Scheme != "https" && !(u.Scheme == "http" && c.allowPlain) {
 		return nil, bad("token_url must be https (http only in development or test)")
 	}
-	if !clientIDPattern.MatchString(e.ClientID) {
+	x, err := validateExchange(e, c)
+	if err != nil {
+		return nil, bad(err.Error())
+	}
+	if !clientIDPattern.MatchString(e.ClientID) && !(x != nil && e.ClientID == "") {
 		return nil, bad("client_id must be 1-256 printable characters without spaces or ':'")
 	}
 	kinds := 0
@@ -120,7 +133,11 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 			kinds++
 		}
 	}
-	if kinds != 1 {
+	switch {
+	case x != nil && kinds == 0: // no client authentication, or a public client
+	case x != nil && e.ClientID == "":
+		return nil, bad("client authentication needs a client_id")
+	case kinds != 1:
 		return nil, bad("needs exactly one of client_secret, client_secret_file, client_secret_vault, client_assertion_file, client_assertion_spiffe and private_key_jwt")
 	}
 	var secret, assertionFile string
@@ -131,6 +148,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 	var pk *vaultSigner
 	var sc *spiffeClient
 	switch {
+	case kinds == 0: // token_exchange without client authentication
 	case e.ClientAssertionSPIFFE != nil:
 		if c.spiffe == nil {
 			return nil, bad("client_assertion_spiffe needs the file's spiffe object")
@@ -175,7 +193,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 			return nil, bad("client_assertion_file must hold a compact JWS with a numeric exp (" + class + ")")
 		}
 	}
-	if assertionFile == "" && signer == nil && pk == nil && secretRef == nil && sc == nil && (secret == "" || len(secret) > maxSecret) {
+	if kinds > 0 && assertionFile == "" && signer == nil && pk == nil && secretRef == nil && sc == nil && (secret == "" || len(secret) > maxSecret) {
 		return nil, bad(fmt.Sprintf("client secret must be 1-%d bytes", maxSecret))
 	}
 	if e.Scope != "" && (len(e.Scope) > 1024 || !scopePattern.MatchString(e.Scope)) {
@@ -192,7 +210,7 @@ func newOAuthProvider(i int, e oauthEntry, b Binding, c loadConfig) (*oauthProvi
 		binding: b, tokenURL: u.String(), clientID: e.ClientID, clientSecret: Secret{secret},
 		assertionFile: assertionFile, assertion: assertion, assertionExp: assertionExp, signer: signer,
 		vault: c.vault, secretRef: secretRef, pk: pk, spiffe: sc,
-		scope: e.Scope, resource: e.Resource, now: c.now, redact: c.redact, log: c.log,
+		scope: e.Scope, resource: e.Resource, exchange: x, publicClient: x != nil && kinds == 0 && e.ClientID != "", now: c.now, redact: c.redact, log: c.log,
 		client: &http.Client{Timeout: tokenRequestTimeout, Transport: transport,
 			// A redirect could carry the client secret or assertion to another host.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
@@ -294,6 +312,9 @@ func (p *oauthProvider) redactUntil(tok Secret, expiry time.Time) {
 // usable lifetime, or a failure class, never a response body or secret. Both
 // expiries are measured from before the request.
 func (p *oauthProvider) request(ctx context.Context) (Secret, time.Time, time.Time, time.Duration, string) {
+	if p.exchange != nil {
+		return Secret{}, time.Time{}, time.Time{}, 0, "exchange_unimplemented" // fail closed until the exchange lands
+	}
 	form := url.Values{"grant_type": {"client_credentials"}}
 	if p.scope != "" {
 		form.Set("scope", p.scope)
