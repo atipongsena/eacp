@@ -601,7 +601,7 @@ BEGIN
                         USING ERRCODE = '23514';
                 END IF;
                 IF EXISTS (SELECT 1 FROM unnest(NEW.no_effect_errors) e
-                            WHERE e !~ '^(a2a_rejected|connection_refused_before_send|unauthorized|a2a_rpc_[0-9]{1,6})$') THEN
+                            WHERE e !~ '^(a2a_rejected|connection_refused_before_send|unauthorized|invalid_payload|a2a_rpc_[0-9]{1,6})$') THEN
                     RAISE EXCEPTION 'an A2A contract certifies as no-effect only what the connector proves'
                         USING ERRCODE = '23514';
                 END IF;

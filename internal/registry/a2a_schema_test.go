@@ -208,7 +208,7 @@ func TestA2AContractRules(t *testing.T) {
 		wantState(t, err, sqlCheck)
 	}
 	f.ID(t, "erin", a2aWriteContractSQL, tool, def,
-		[]string{"a2a_rejected", "connection_refused_before_send", "unauthorized", "a2a_rpc_32001"})
+		[]string{"a2a_rejected", "connection_refused_before_send", "unauthorized", "invalid_payload", "a2a_rpc_32001"})
 }
 
 func TestA2AFingerprintIsV2(t *testing.T) {
