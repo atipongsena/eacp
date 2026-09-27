@@ -42,6 +42,7 @@ type LoadOption func(*loadConfig)
 
 type loadConfig struct {
 	allowPlain bool
+	noSigning  bool
 	redact     *logging.SecretSet
 	now        func() time.Time
 	log        *slog.Logger
@@ -52,6 +53,11 @@ type loadConfig struct {
 // AllowPlainTokenURL lets an oauth2 token_url use http. The worker passes it
 // only in development and test.
 func AllowPlainTokenURL() LoadOption { return func(c *loadConfig) { c.allowPlain = true } }
+
+// RefuseSigningCredentials rejects a file with an aws entry: a service that
+// only sends Bearer or API-key credentials (the LLM gateway, ADR-031) cannot
+// sign requests.
+func RefuseSigningCredentials() LoadOption { return func(c *loadConfig) { c.noSigning = true } }
 
 // WithRedaction adds every client secret and minted token to set.
 func WithRedaction(set *logging.SecretSet) LoadOption { return func(c *loadConfig) { c.redact = set } }
@@ -244,6 +250,9 @@ func LoadSecrets(path string, opts ...LoadOption) (*SecretStore, error) {
 			continue
 		}
 		if e.AWS != nil {
+			if c.noSigning {
+				return nil, fmt.Errorf("worker: secret %d: aws credentials sign requests and are not accepted here", i)
+			}
 			p, err := newAWSProvider(i, *e.AWS, Binding{TenantID: tenant, Ref: e.Ref, Host: e.Host}, c)
 			if err != nil {
 				return nil, err

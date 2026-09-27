@@ -357,3 +357,18 @@ func (s *Store) Get(ctx context.Context, tenant, id uuid.UUID) (Call, error) {
 	}
 	return c, nil
 }
+
+// AgentRisk is the agent's risk class, for the PDP request.
+func (s *Store) AgentRisk(ctx context.Context, tenant, agent uuid.UUID) (string, error) {
+	var risk string
+	err := storage.InTenantTx(ctx, s.pool, tenant.String(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT risk_class FROM eacp.agents WHERE id = $1`, agent).Scan(&risk)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", &registry.Error{Kind: registry.ErrNotFound, Msg: "no such agent"}
+	}
+	if err != nil {
+		return "", fmt.Errorf("llm: agent risk: %w", err)
+	}
+	return risk, nil
+}

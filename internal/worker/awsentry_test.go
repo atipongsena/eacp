@@ -112,3 +112,22 @@ func TestInvalidAWSEntriesRejectTheWholeFile(t *testing.T) {
 		t.Fatalf("aws beside value: %v", err)
 	}
 }
+
+// The LLM gateway loads its provider keys with RefuseSigningCredentials: an
+// aws entry fails the whole file (ADR-031).
+func TestSigningCredentialsCanBeRefusedAtLoad(t *testing.T) {
+	body := fmt.Sprintf(`"role_arn":"arn:aws:iam::123456789012:role/eacp","region":"eu-west-1","service":"execute-api",`+
+		`"subject_token":{"file":%q}`, awsSubject(t))
+	path := awsFile(t, "", body)
+	if _, err := LoadSecrets(path); err != nil {
+		t.Fatalf("an aws entry does not load by default: %v", err)
+	}
+	if _, err := LoadSecrets(path, RefuseSigningCredentials()); err == nil || !strings.Contains(err.Error(), "aws") {
+		t.Fatalf("an aws entry loaded: %v", err)
+	}
+	static := writeFile(t, "static.json", fmt.Sprintf(`{"secrets":[{"tenant_id":%q,"secret_ref":"llm",`+
+		`"host":"api.anthropic.com:443","value":"sk-test"}]}`, awsTenant))
+	if _, err := LoadSecrets(static, RefuseSigningCredentials()); err != nil {
+		t.Fatal(err)
+	}
+}

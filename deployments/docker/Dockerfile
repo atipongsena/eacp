@@ -6,6 +6,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ \
       ./cmd/controlplane-api ./cmd/execution-worker ./cmd/fakeerp ./cmd/fakemcp ./cmd/fakea2a ./cmd/eacpctl \
+      ./cmd/llm-gateway ./cmd/fakellm \
     && mkdir -p /pki /client-key /client-jwks
 
 FROM gcr.io/distroless/static-debian12:nonroot

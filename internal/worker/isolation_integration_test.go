@@ -22,6 +22,7 @@ import (
 	"eacp/internal/fleet"
 	"eacp/internal/identity"
 	"eacp/internal/incident"
+	"eacp/internal/llm"
 	"eacp/internal/messaging"
 	"eacp/internal/registry"
 	"eacp/internal/release"
@@ -221,6 +222,18 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	}
 	if _, err := inc.Note(ctx, otto, triage.ID, "looking into it"); err != nil {
 		t.Fatal(err)
+	}
+
+	// Phase 25b: a declared model and a gateway call the ledger refused
+	// (the flow's allowlist names no models, ADR-031).
+	v.f.ID(t, "erin", `INSERT INTO eacp.llm_models (tenant_id, name, provider, base_url, upstream_model, secret_ref,
+		max_output_tokens) VALUES (eacp.current_tenant_id(), 'sonnet', 'anthropic', 'https://llm.invalid', 'up-1', 'llm', 1000)
+		RETURNING id`)
+	if adm, err := llm.New(v.f.App).Admit(ctx, v.f.Tenant, llm.AdmitRequest{AgentVersionID: v.agent.Version,
+		ModelName: "sonnet", Provider: "anthropic", GatewayID: "gw-a", RequestBytes: 10,
+		Decision: llm.Decision{ID: uuid.New(), BundleID: uuid.New(), Version: 1, Verdict: "allow"}}); err != nil ||
+		adm.Denial != "model_not_in_allowlist" {
+		t.Fatalf("llm admit = %+v, %v", adm, err)
 	}
 
 	// Registry records the action flow does not touch: a group with a member

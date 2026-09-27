@@ -23,6 +23,11 @@ type Options struct {
 	// connector credentials (ADR-001 §3). Any other service refuses to
 	// start when EACP_CONNECTOR_SECRETS_FILE is set.
 	AllowConnectorSecrets bool
+	// AllowProviderSecrets marks the LLM gateway: only it may hold LLM
+	// provider credentials (ADR-031). It requires EACP_LLM_SECRETS_FILE and
+	// refuses connector secrets; any other service refuses to start when
+	// EACP_LLM_SECRETS_FILE is set.
+	AllowProviderSecrets bool
 }
 
 // Config is the process configuration shared by EACP services.
@@ -110,6 +115,16 @@ type Config struct {
 	// listed and how long one discovery may take.
 	MCPScanInterval time.Duration
 	MCPScanTimeout  time.Duration
+
+	// LLM gateway (AllowProviderSecrets only, ADR-031): the provider
+	// credentials, how often a running call re-checks the kill epoch, how
+	// often overdue calls are abandoned, the request body bound and this
+	// replica's id (default the host name at startup).
+	LLMSecretsFile     string
+	LLMKillPoll        time.Duration
+	LLMSweepInterval   time.Duration
+	LLMMaxRequestBytes int64
+	LLMID              string
 }
 
 var (
@@ -298,6 +313,35 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 		errs = append(errs, errors.New("EACP_CONNECTOR_SECRETS_FILE: only the execution worker may hold connector credentials (ADR-001 §3)"))
 	}
 
+	if opts.AllowProviderSecrets {
+		if opts.AllowConnectorSecrets {
+			errs = append(errs, errors.New("a service holds connector or provider credentials, never both (ADR-031)"))
+		}
+		cfg.LLMSecretsFile = get("EACP_LLM_SECRETS_FILE", "")
+		if cfg.LLMSecretsFile == "" {
+			errs = append(errs, errors.New("EACP_LLM_SECRETS_FILE: required by the LLM gateway"))
+		}
+		cfg.LLMKillPoll = duration("EACP_LLM_KILL_POLL", "2s", 30*time.Second)
+		if cfg.LLMKillPoll > 0 && cfg.LLMKillPoll < 500*time.Millisecond {
+			errs = append(errs, errors.New("EACP_LLM_KILL_POLL: must be at least 500ms"))
+		}
+		cfg.LLMSweepInterval = duration("EACP_LLM_SWEEP_INTERVAL", "30s", time.Hour)
+		if cfg.LLMSweepInterval > 0 && cfg.LLMSweepInterval < 5*time.Second {
+			errs = append(errs, errors.New("EACP_LLM_SWEEP_INTERVAL: must be at least 5s"))
+		}
+		n, err := strconv.ParseInt(get("EACP_LLM_MAX_REQUEST_BYTES", "4194304"), 10, 64)
+		if err != nil || n < 1 || n > 32<<20 {
+			errs = append(errs, errors.New("EACP_LLM_MAX_REQUEST_BYTES: must be an integer in [1, 33554432]"))
+		}
+		cfg.LLMMaxRequestBytes = n
+		cfg.LLMID = get("EACP_LLM_ID", "")
+		if cfg.LLMID != "" && !workerID.MatchString(cfg.LLMID) {
+			errs = append(errs, errors.New("EACP_LLM_ID: 1-128 characters of [A-Za-z0-9._:-]"))
+		}
+	} else if get("EACP_LLM_SECRETS_FILE", "") != "" {
+		errs = append(errs, errors.New("EACP_LLM_SECRETS_FILE: only the LLM gateway may hold provider credentials (ADR-031)"))
+	}
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
@@ -344,6 +388,11 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("mcp_scan_interval", c.MCPScanInterval),
 		slog.Duration("mcp_scan_timeout", c.MCPScanTimeout),
 		slog.String("connector_secrets_file", c.ConnectorSecretsFile),
+		slog.String("llm_secrets_file", c.LLMSecretsFile),
+		slog.Duration("llm_kill_poll", c.LLMKillPoll),
+		slog.Duration("llm_sweep_interval", c.LLMSweepInterval),
+		slog.Int64("llm_max_request_bytes", c.LLMMaxRequestBytes),
+		slog.String("llm_id", c.LLMID),
 	)
 }
 

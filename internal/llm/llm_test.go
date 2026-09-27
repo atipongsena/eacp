@@ -204,3 +204,17 @@ func TestStoreListFiltersAndTenantIsolation(t *testing.T) {
 		t.Fatalf("cross-tenant get: %v", err)
 	}
 }
+
+func TestStoreAgentRisk(t *testing.T) {
+	e := newEnv(t)
+	s := llm.New(e.f.App)
+	risk, err := s.AgentRisk(context.Background(), e.f.Tenant, e.agent.Agent)
+	if err != nil || risk != "high" {
+		t.Fatalf("risk %q, %v", risk, err)
+	}
+	var re *registry.Error
+	if _, err := s.AgentRisk(context.Background(), uuid.MustParse(pgtest.TenantB), e.agent.Agent); !errors.As(err, &re) ||
+		re.Kind != registry.ErrNotFound {
+		t.Fatalf("cross-tenant risk: %v", err)
+	}
+}

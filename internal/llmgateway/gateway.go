@@ -605,3 +605,28 @@ func traceID(h string) string {
 	}
 	return m[1]
 }
+
+// Sweeper abandons overdue calls (llm.Store).
+type Sweeper interface {
+	SweepAll(ctx context.Context) (int, error)
+}
+
+// RunSweeper abandons overdue admitted calls every interval until ctx ends.
+// Replicas may all run it: each call is settled once (ADR-029).
+func RunSweeper(ctx context.Context, interval time.Duration, s Sweeper, log *slog.Logger) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		n, err := s.SweepAll(ctx)
+		if err != nil && ctx.Err() == nil {
+			log.ErrorContext(ctx, "llm sweep failed", "err", err)
+		} else if n > 0 {
+			log.InfoContext(ctx, "llm calls abandoned", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
