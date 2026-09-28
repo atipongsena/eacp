@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "git_sha": "abc1234",
+  "dirty": true,
+  "pdp": "microsoft-agt",
+  "started_at": "2026-09-28T11:30:00Z",
+  "machine": {"host_cpu": "Test CPU", "host_cores": 24, "host_mem_bytes": 34359738368, "docker_cpus": 8,
+    "docker_mem_bytes": 8589934592, "os": "windows/amd64", "go": "go1.27.0", "docker": "28.0.0", "postgres": "18.0"},
+  "overrides": [{"name": "EACP_WORKER_CONCURRENCY", "value": "32", "default": "4"}],
+  "flags": {"quick": "false", "erp_delay_ms": "0"},
+  "setup": [{"agents": 100, "seconds": 13}],
+  "levels": [
+    {"agents": 100, "steps": [
+      {"offered_per_s": 25, "requests": 1500, "errors": 0, "throttled": 0, "duplicate_keys": 0,
+        "admission_per_s": 25, "completed_per_s": 24.9,
+        "admission": {"count": 1500, "p50_ms": 20.5, "p95_ms": 31, "p99_ms": 44, "max_ms": 70},
+        "idempotency": {"count": 75, "p50_ms": 3, "p95_ms": 4, "p99_ms": 5, "max_ms": 6},
+        "governance": {"count": 1425, "p50_ms": 15, "p95_ms": 22, "p99_ms": 30, "max_ms": 50},
+        "queue_wait": {"count": 1425, "p50_ms": 10, "p95_ms": 40, "p99_ms": 90, "max_ms": 120},
+        "lease": {"count": 1425, "p50_ms": 2, "p95_ms": 3, "p99_ms": 5, "max_ms": 8},
+        "external": {"count": 1425, "p50_ms": 3, "p95_ms": 5, "p99_ms": 7, "max_ms": 9},
+        "overhead": {"count": 1425, "p50_ms": 20, "p95_ms": 55, "p99_ms": 110, "max_ms": 140},
+        "end_to_end": {"count": 1425, "p50_ms": 38, "p95_ms": 82, "p99_ms": 147, "max_ms": 199},
+        "llm_client": {"count": 0, "p50_ms": 0, "p95_ms": 0, "p99_ms": 0, "max_ms": 0},
+        "llm_ledger": {"count": 0, "p50_ms": 0, "p95_ms": 0, "p99_ms": 0, "max_ms": 0},
+        "terminal": {"SUCCEEDED": 1425}, "open": 0, "budget_reserve_mean_ms": 0.43,
+        "containers": {
+          "controlplane-api": {"mean_cpu_percent": 30, "max_cpu_percent": 50, "max_mem_bytes": 73400320},
+          "agt-pdp": {"mean_cpu_percent": 90, "max_cpu_percent": 101.5, "max_mem_bytes": 157286400}
+        },
+        "db": {"values": {"commits_per_s": 300, "cache_hit_ratio": 0.999, "max_active": 5, "max_lock_waits": 1}},
+        "nats": {"values": {"in_msgs_per_s": 75, "out_msgs_per_s": 150, "in_bytes_per_s": 9000, "out_bytes_per_s": 18000}},
+        "incomplete": false}
+    ]}
+  ],
+  "max_sustainable": {"100": 25}
+}
