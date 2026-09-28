@@ -4423,6 +4423,8 @@ Issue templates
 Release process
 ```
 
+> **Status (2026-09-28): delivered.** Every item above is in the repository and `test/opensource` keeps it there: the README and its Thai translation (with console screenshots taken from a running stack by `scripts/screenshots.sh`), [ARCHITECTURE.md](ARCHITECTURE.md), the ADRs, the [threat model](security/THREAT_MODEL.md), Docker Compose, three runnable [examples](../examples/README.md) run nightly, tiered CI in GitHub Actions, the [benchmarks](BENCHMARKS.md), the contributor guide, the Apache-2.0 license with NOTICE and THIRD_PARTY_NOTICES.md, issue and pull request templates, and the release process ([RELEASING.md](RELEASING.md), a tag-triggered workflow and CHANGELOG.md). User and contributor documents come in English and Thai (`X.md` and `X.th.md`) with matching outlines. The repository is ready to push; creating the GitHub repository is the owner's step.
+
 ---
 
 # 113. Enterprise-Ready Direction

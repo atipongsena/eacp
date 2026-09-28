@@ -11,7 +11,8 @@ import (
 
 // MASTER_PLAN §105: a published figure exists only with a raw result behind
 // it. docs/BENCHMARKS.md's generated block is exactly the report of the
-// committed baselines, and the README quotes only figures from it.
+// committed baselines, and the README (both languages) quotes only figures
+// from it.
 
 func baselineReport(t *testing.T) string {
 	t.Helper()
@@ -89,20 +90,22 @@ func inTables(tables, n string) bool {
 var performanceFigure = regexp.MustCompile(`(\d[\d,.]*\d|\d)\s*(?:[A-Za-z]*/s|ms|rps)\b`)
 
 func TestReadmeNumbersComeFromTheBaseline(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	tables := resultTables(t)
-	found := 0
-	for _, m := range performanceFigure.FindAllStringSubmatch(string(raw), -1) {
-		found++
-		if n := strings.ReplaceAll(m[1], ",", ""); !inTables(tables, n) {
-			t.Errorf("README quotes %q, but %s is in no result table of docs/BENCHMARKS.md", m[0], n)
+	for _, name := range []string{"README.md", "README.th.md"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if found == 0 {
-		t.Fatal("the README quotes no benchmark figure: the guard would check nothing")
+		found := 0
+		for _, m := range performanceFigure.FindAllStringSubmatch(string(raw), -1) {
+			found++
+			if n := strings.ReplaceAll(m[1], ",", ""); !inTables(tables, n) {
+				t.Errorf("%s quotes %q, but %s is in no result table of docs/BENCHMARKS.md", name, m[0], n)
+			}
+		}
+		if found == 0 {
+			t.Fatalf("%s quotes no benchmark figure: the guard would check nothing", name)
+		}
 	}
 }
 
