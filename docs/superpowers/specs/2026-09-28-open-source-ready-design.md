@@ -322,4 +322,43 @@ must also be result-table cells.
 
 ## 7. Rulings made during planning and implementation
 
-(None yet.)
+Each ruling names what was decided, why, and what it costs if wrong.
+
+1. **go.mod is parsed line by line** by the notices guard, not with `golang.org/x/mod`, which is not a direct
+   dependency. Cost if wrong: an unusual `go.mod` layout goes unchecked (the guard fails on an empty list).
+2. **THIRD_PARTY_NOTICES records multi-licensed modules** as read from each LICENSE (for example the MCP Go SDK,
+   yaml v3/v4, klauspost/compress, OpenTelemetry), and reproduces the NOTICE files of aws-sdk-go-v2, smithy-go, grpc
+   and yaml (Apache-2.0 §4(d)). Vault (BUSL-1.1) and busybox (GPL-2.0) appear in the development compose only. Cost if
+   wrong: an attribution gap.
+3. **The link guard checks files and images, not `#heading` anchors:** GitHub's slugs for Thai headings are not
+   specified. Cost if wrong: a broken in-page anchor goes unnoticed.
+4. **Thai samples in the guard's own test are `\u` escapes**, since the Thai-only check scans `.go` files too.
+5. **Example 03 deploys as the registry editor and approves as the registry approver,** not as the two admins the
+   plan named: least privilege shows the real roles, and ADR-026 allows it.
+6. **Example 02 needs Python 3.10 or later** (the minimum of the pinned `anthropic` SDK), not 3.12.
+7. **The bundle's read-only tool is `get_balance`,** not `post_entry`: a read-only "post" misleads.
+8. **Examples setup also creates `erp.create_po_eventual`** (a best-effort contract) and writes each tool's id to
+   `.env`, for the unknown-outcome screenshot and the blast-radius view.
+9. **Every CI script that starts compose first runs `prepare_fakeerp_token.py`,** whose git-ignored outputs compose
+   needs; the plan's scripts left it out and would fail on a fresh runner.
+10. **The screenshot tool takes shots as `NAME:KEY_ENV:#route`,** naming the key's environment variable per shot
+    (never a value), because the approvals view needs the approver's key. The browser is started on the tab's context,
+    because chromedp ties the browser to the context of the first `Run`.
+11. **The approvals shot is a request's detail** (the enforced payload with Approve and Deny) and **the evidence shot
+    is a full-page capture**, so the images show what the README describes.
+12. **The unknown-outcome scenario waits for the default ten reconciler lookups** (four to nine minutes) instead of a
+    compose override that changes the worker; `screenshots.sh` submits it first and runs the examples meanwhile.
+13. **The module rename restored eleven non-import strings** it had rewritten (Vault KV paths in worker tests and the
+    Vault demo, a doc comment, the tracer name `eacp/messaging`), in their own commit.
+14. **Two compose security tests take the credential count from the mounted manifest** (still an exact match): the
+    benchmark had added a tenant to both development manifests without updating the pinned counts.
+15. **The release image is the Dockerfile's `release` stage** (controlplane-api, execution-worker, llm-gateway,
+    eacpctl): the compose image holds the fake services, which SECURITY.md says are not shipped. A final-review
+    finding, guarded by `TestReleaseImageShipsNoFakeService`.
+16. **Examples setup signs in with every key in `.env`, issues 90-day keys** (as long as the admins'), and prints how
+    to start over when a step fails or a key is rejected. A final-review finding.
+
+Deferred minors from the final review are in the final report: the example 01 budget after about 40 runs, the LLM
+benchmark row's wording, trimmed quick-start output, the clipped evidence JSON box, one misplaced test citation in
+FEATURES, `.dockerignore` entries, notices inside the images, CHANGELOG links and date, CI for `tools/screenshots`,
+and a check that a release tag is on `main`.
