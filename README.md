@@ -302,6 +302,15 @@ Every call is decided in PostgreSQL before it is sent: the model must be on the 
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
 
+## Benchmarks
+
+`scripts/bench.sh` measures the whole stack under open-loop load on an isolated compose stack (MASTER_PLAN §104).
+The first run, on one development machine, is in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), with every table
+generated from committed raw results. In summary: with the local PDP and with the AGT sidecar, 100 to 10000
+registered agents sustained 25 actions/s, and the execution worker's claim loop is the bottleneck between 25 and
+50 actions/s; the LLM gateway sustained 200 calls/s against a fake provider. The figures are not a production
+capacity claim.
+
 ## Quick start
 
 ```bash

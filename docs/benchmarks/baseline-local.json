@@ -1,0 +1,2118 @@
+{
+  "schema": 1,
+  "git_sha": "c5d42f5",
+  "dirty": true,
+  "pdp": "local",
+  "started_at": "2026-09-28T11:54:40.4652933Z",
+  "machine": {
+    "host_cpu": "AMD Ryzen 9 5900X 12-Core Processor",
+    "host_cores": 24,
+    "host_mem_bytes": 34266050560,
+    "docker_cpus": 8,
+    "docker_mem_bytes": 8328019968,
+    "os": "windows/amd64",
+    "go": "go1.27.0",
+    "docker": "29.8.0",
+    "postgres": "18.6"
+  },
+  "overrides": [
+    {
+      "name": "EACP_WORKER_CONCURRENCY",
+      "value": "32",
+      "default": "4"
+    },
+    {
+      "name": "EACP_ACTION_MAX_QUEUED_PER_TENANT",
+      "value": "100000",
+      "default": "1000"
+    },
+    {
+      "name": "EACP_ACTION_MAX_QUEUED_GLOBAL",
+      "value": "100000",
+      "default": "10000"
+    },
+    {
+      "name": "EACP_ACTION_MAX_PENDING_PER_TENANT",
+      "value": "100000",
+      "default": "1000"
+    },
+    {
+      "name": "track_functions",
+      "value": "pl",
+      "default": "none"
+    },
+    {
+      "name": "EACP_GOVERNANCE_PROVIDER",
+      "value": "local",
+      "default": "microsoft-agt (compose)"
+    }
+  ],
+  "flags": {
+    "erp_delay_ms": "0",
+    "quick": "false"
+  },
+  "setup": [
+    {
+      "agents": 100,
+      "seconds": 1.3311413
+    },
+    {
+      "agents": 1000,
+      "seconds": 11.9517822
+    },
+    {
+      "agents": 5000,
+      "seconds": 52.4618617
+    },
+    {
+      "agents": 10000,
+      "seconds": 64.3531422
+    }
+  ],
+  "levels": [
+    {
+      "agents": 100,
+      "steps": [
+        {
+          "offered_per_s": 25,
+          "requests": 1500,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 23.75,
+          "completed_per_s": 23.764795981143017,
+          "admission": {
+            "count": 1425,
+            "p50_ms": 37.5657,
+            "p95_ms": 48.4038,
+            "p99_ms": 61.3947,
+            "max_ms": 133.8893
+          },
+          "idempotency": {
+            "count": 75,
+            "p50_ms": 3.7676,
+            "p95_ms": 4.975,
+            "p99_ms": 5.6603,
+            "max_ms": 5.6603
+          },
+          "governance": {
+            "count": 1425,
+            "p50_ms": 12.717,
+            "p95_ms": 15.999,
+            "p99_ms": 19.119,
+            "max_ms": 46.311
+          },
+          "queue_wait": {
+            "count": 1425,
+            "p50_ms": 42.005,
+            "p95_ms": 190.463,
+            "p99_ms": 227.345,
+            "max_ms": 253.12
+          },
+          "lease": {
+            "count": 1425,
+            "p50_ms": 11.277,
+            "p95_ms": 45.548,
+            "p99_ms": 56.825,
+            "max_ms": 95.143
+          },
+          "external": {
+            "count": 1425,
+            "p50_ms": 14.807,
+            "p95_ms": 37.605,
+            "p99_ms": 48.069,
+            "max_ms": 66.097
+          },
+          "overhead": {
+            "count": 1425,
+            "p50_ms": 90.387,
+            "p95_ms": 264.27,
+            "p99_ms": 309.908,
+            "max_ms": 344.271
+          },
+          "end_to_end": {
+            "count": 1425,
+            "p50_ms": 120.968,
+            "p95_ms": 302.32,
+            "p99_ms": 344.108,
+            "max_ms": 415.397
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 1425
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 2.7582622950819675,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3113222
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.010714285714285716,
+              "max_cpu_percent": 0.02,
+              "max_mem_bytes": 27860664
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 37.3925,
+              "max_cpu_percent": 45.08,
+              "max_mem_bytes": 16074670
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 8.996176878341945,
+              "max_cpu_percent": 17.54800035431773,
+              "max_mem_bytes": 19730432
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 17.798571428571428,
+              "max_cpu_percent": 25.65,
+              "max_mem_bytes": 17133731
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0.0007142857142857143,
+              "max_cpu_percent": 0.02,
+              "max_mem_bytes": 9916383
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 2.1139285714285716,
+              "max_cpu_percent": 3.03,
+              "max_mem_bytes": 12289310
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7638876
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7655653
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.005,
+              "max_cpu_percent": 0.13,
+              "max_mem_bytes": 8130658
+            },
+            "nats": {
+              "mean_cpu_percent": 8.571428571428573,
+              "max_cpu_percent": 11.15,
+              "max_mem_bytes": 23068672
+            },
+            "postgres": {
+              "mean_cpu_percent": 117.5367857142857,
+              "max_cpu_percent": 162.23,
+              "max_mem_bytes": 328414003
+            },
+            "vault": {
+              "mean_cpu_percent": 9.991785714285713,
+              "max_cpu_percent": 12.03,
+              "max_mem_bytes": 36563845
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.9999886551662138,
+              "commits_per_s": 450.9219824457822,
+              "max_active": 7,
+              "max_lock_waits": 5
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 41213.4273110189,
+              "in_msgs_per_s": 191.24840370840798,
+              "out_bytes_per_s": 10138.71813497896,
+              "out_msgs_per_s": 189.7650556998471
+            }
+          },
+          "incomplete": false
+        },
+        {
+          "offered_per_s": 50,
+          "requests": 3000,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 47.5,
+          "completed_per_s": 11.999182455702018,
+          "admission": {
+            "count": 2850,
+            "p50_ms": 44.1647,
+            "p95_ms": 57.5398,
+            "p99_ms": 67.5544,
+            "max_ms": 95.1072
+          },
+          "idempotency": {
+            "count": 150,
+            "p50_ms": 3.8623,
+            "p95_ms": 4.8882,
+            "p99_ms": 5.3937,
+            "max_ms": 7.8234
+          },
+          "governance": {
+            "count": 2850,
+            "p50_ms": 13.69,
+            "p95_ms": 19.82,
+            "p99_ms": 23.215,
+            "max_ms": 44.294
+          },
+          "queue_wait": {
+            "count": 2850,
+            "p50_ms": 161706.044,
+            "p95_ms": 236250.145,
+            "p99_ms": 240718.114,
+            "max_ms": 249092.783
+          },
+          "lease": {
+            "count": 2850,
+            "p50_ms": 555.647,
+            "p95_ms": 2028.923,
+            "p99_ms": 2512.752,
+            "max_ms": 3052.474
+          },
+          "external": {
+            "count": 2850,
+            "p50_ms": 77.54,
+            "p95_ms": 127.786,
+            "p99_ms": 151.43,
+            "max_ms": 198.401
+          },
+          "overhead": {
+            "count": 2850,
+            "p50_ms": 162729.903,
+            "p95_ms": 236532.105,
+            "p99_ms": 241095.814,
+            "max_ms": 249232.472
+          },
+          "end_to_end": {
+            "count": 2850,
+            "p50_ms": 162818.623,
+            "p95_ms": 236602.369,
+            "p99_ms": 241178.736,
+            "max_ms": 249312.924
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 2850
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 2.5461490571685124,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3113222
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.01035714285714286,
+              "max_cpu_percent": 0.02,
+              "max_mem_bytes": 27860664
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 63.979285714285716,
+              "max_cpu_percent": 69.63,
+              "max_mem_bytes": 16924016
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 9.648131606239236,
+              "max_cpu_percent": 15.77963146365972,
+              "max_mem_bytes": 20000768
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 12.082499999999998,
+              "max_cpu_percent": 22.91,
+              "max_mem_bytes": 18633195
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9916383
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 0.9035714285714288,
+              "max_cpu_percent": 2.26,
+              "max_mem_bytes": 16368271
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0.0007142857142857143,
+              "max_cpu_percent": 0.02,
+              "max_mem_bytes": 7638876
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0.00035714285714285714,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 7655653
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.0017857142857142859,
+              "max_cpu_percent": 0.05,
+              "max_mem_bytes": 8130658
+            },
+            "nats": {
+              "mean_cpu_percent": 9.687142857142856,
+              "max_cpu_percent": 13.45,
+              "max_mem_bytes": 40653291
+            },
+            "postgres": {
+              "mean_cpu_percent": 258.68535714285713,
+              "max_cpu_percent": 303.8,
+              "max_mem_bytes": 396676300
+            },
+            "vault": {
+              "mean_cpu_percent": 10.542857142857144,
+              "max_cpu_percent": 12.46,
+              "max_mem_bytes": 37706792
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.9999999237544586,
+              "commits_per_s": 578.8487780753638,
+              "max_active": 11,
+              "max_lock_waits": 7
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 54996.45679912009,
+              "in_msgs_per_s": 276.2628883707824,
+              "out_bytes_per_s": 16760.15549965396,
+              "out_msgs_per_s": 273.15881097335784
+            }
+          },
+          "saturated": [
+            "throughput",
+            "p99"
+          ],
+          "incomplete": false
+        }
+      ]
+    },
+    {
+      "agents": 1000,
+      "steps": [
+        {
+          "offered_per_s": 25,
+          "requests": 1500,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 23.75,
+          "completed_per_s": 23.69817089617633,
+          "admission": {
+            "count": 1425,
+            "p50_ms": 46.4086,
+            "p95_ms": 58.3952,
+            "p99_ms": 68.1779,
+            "max_ms": 86.557
+          },
+          "idempotency": {
+            "count": 75,
+            "p50_ms": 3.8961,
+            "p95_ms": 4.9673,
+            "p99_ms": 6.8009,
+            "max_ms": 6.8009
+          },
+          "governance": {
+            "count": 1425,
+            "p50_ms": 12.758,
+            "p95_ms": 15.511,
+            "p99_ms": 17.957,
+            "max_ms": 47.732
+          },
+          "queue_wait": {
+            "count": 1425,
+            "p50_ms": 39.775,
+            "p95_ms": 178.469,
+            "p99_ms": 225.216,
+            "max_ms": 294.385
+          },
+          "lease": {
+            "count": 1425,
+            "p50_ms": 10.776,
+            "p95_ms": 43.002,
+            "p99_ms": 58.914,
+            "max_ms": 88.324
+          },
+          "external": {
+            "count": 1425,
+            "p50_ms": 14.433,
+            "p95_ms": 34.535,
+            "p99_ms": 44.839,
+            "max_ms": 90.706
+          },
+          "overhead": {
+            "count": 1425,
+            "p50_ms": 84.801,
+            "p95_ms": 258.317,
+            "p99_ms": 304.026,
+            "max_ms": 437.371
+          },
+          "end_to_end": {
+            "count": 1425,
+            "p50_ms": 116.115,
+            "p95_ms": 293.2,
+            "p99_ms": 341.291,
+            "max_ms": 522.376
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 1425
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 3.0745754088431263,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3104833
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.01142857142857143,
+              "max_cpu_percent": 0.03,
+              "max_mem_bytes": 27860664
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 36.78749999999999,
+              "max_cpu_percent": 40.05,
+              "max_mem_bytes": 18213765
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 8.86859723729357,
+              "max_cpu_percent": 17.04348344204752,
+              "max_mem_bytes": 32854016
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 17.94535714285714,
+              "max_cpu_percent": 22.97,
+              "max_mem_bytes": 18423480
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9875488
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 2.0660714285714286,
+              "max_cpu_percent": 2.7,
+              "max_mem_bytes": 23037214
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7606370
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0.00035714285714285714,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 7638876
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.005,
+              "max_cpu_percent": 0.14,
+              "max_mem_bytes": 7688159
+            },
+            "nats": {
+              "mean_cpu_percent": 8.881428571428573,
+              "max_cpu_percent": 12.07,
+              "max_mem_bytes": 44207964
+            },
+            "postgres": {
+              "mean_cpu_percent": 135.87892857142862,
+              "max_cpu_percent": 185.23,
+              "max_mem_bytes": 436312473
+            },
+            "vault": {
+              "mean_cpu_percent": 3.0946428571428575,
+              "max_cpu_percent": 11.12,
+              "max_mem_bytes": 37885050
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 1,
+              "commits_per_s": 446.8494775958798,
+              "max_active": 10,
+              "max_lock_waits": 7
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 41186.720383368265,
+              "in_msgs_per_s": 191.10483540014872,
+              "out_bytes_per_s": 10287.32480140593,
+              "out_msgs_per_s": 189.6397040743606
+            }
+          },
+          "incomplete": false
+        },
+        {
+          "offered_per_s": 50,
+          "requests": 3000,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 47.5,
+          "completed_per_s": 10.665705686584305,
+          "admission": {
+            "count": 2850,
+            "p50_ms": 53.8212,
+            "p95_ms": 68.3216,
+            "p99_ms": 78.842,
+            "max_ms": 147.4754
+          },
+          "idempotency": {
+            "count": 150,
+            "p50_ms": 3.9025,
+            "p95_ms": 4.9367,
+            "p99_ms": 5.7388,
+            "max_ms": 5.9703
+          },
+          "governance": {
+            "count": 2850,
+            "p50_ms": 13.979,
+            "p95_ms": 19.916,
+            "p99_ms": 23.61,
+            "max_ms": 46.486
+          },
+          "queue_wait": {
+            "count": 2850,
+            "p50_ms": 184175.226,
+            "p95_ms": 272223.796,
+            "p99_ms": 287673.767,
+            "max_ms": 304055.85
+          },
+          "lease": {
+            "count": 2850,
+            "p50_ms": 563.585,
+            "p95_ms": 2062.528,
+            "p99_ms": 2628.732,
+            "max_ms": 3069.814
+          },
+          "external": {
+            "count": 2850,
+            "p50_ms": 76.802,
+            "p95_ms": 125.658,
+            "p99_ms": 151.733,
+            "max_ms": 276.469
+          },
+          "overhead": {
+            "count": 2850,
+            "p50_ms": 185320.254,
+            "p95_ms": 272470.984,
+            "p99_ms": 287820.678,
+            "max_ms": 304197.099
+          },
+          "end_to_end": {
+            "count": 2850,
+            "p50_ms": 185401.331,
+            "p95_ms": 272561.007,
+            "p99_ms": 287915.669,
+            "max_ms": 304296.802
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 2850
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 3.1771378483667965,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3096444
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.010357142857142862,
+              "max_cpu_percent": 0.02,
+              "max_mem_bytes": 27850178
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 64.20321428571428,
+              "max_cpu_percent": 66.83,
+              "max_mem_bytes": 18129879
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 9.43579741552355,
+              "max_cpu_percent": 18.519215439100122,
+              "max_mem_bytes": 32854016
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 10.103571428571428,
+              "max_cpu_percent": 19.06,
+              "max_mem_bytes": 19136512
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9871294
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 0.6146428571428572,
+              "max_cpu_percent": 1.85,
+              "max_mem_bytes": 28909240
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0.00035714285714285714,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 7573864
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7733248
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.0017857142857142859,
+              "max_cpu_percent": 0.05,
+              "max_mem_bytes": 7618953
+            },
+            "nats": {
+              "mean_cpu_percent": 9.517857142857142,
+              "max_cpu_percent": 12.63,
+              "max_mem_bytes": 45665484
+            },
+            "postgres": {
+              "mean_cpu_percent": 300.35249999999996,
+              "max_cpu_percent": 352.53,
+              "max_mem_bytes": 463365734
+            },
+            "vault": {
+              "mean_cpu_percent": 9.084642857142857,
+              "max_cpu_percent": 12.63,
+              "max_mem_bytes": 37811650
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.9999800326416244,
+              "commits_per_s": 574.7203218254521,
+              "max_active": 11,
+              "max_lock_waits": 7
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 54057.84332364315,
+              "in_msgs_per_s": 272.7156075206011,
+              "out_bytes_per_s": 16642.190057064614,
+              "out_msgs_per_s": 269.61048959070627
+            }
+          },
+          "saturated": [
+            "throughput",
+            "p99"
+          ],
+          "incomplete": false
+        }
+      ]
+    },
+    {
+      "agents": 5000,
+      "steps": [
+        {
+          "offered_per_s": 25,
+          "requests": 1500,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 23.75,
+          "completed_per_s": 23.73075142757801,
+          "admission": {
+            "count": 1425,
+            "p50_ms": 54.233,
+            "p95_ms": 63.8812,
+            "p99_ms": 72.0612,
+            "max_ms": 101.0747
+          },
+          "idempotency": {
+            "count": 75,
+            "p50_ms": 3.8671,
+            "p95_ms": 5.0159,
+            "p99_ms": 5.7809,
+            "max_ms": 5.7809
+          },
+          "governance": {
+            "count": 1425,
+            "p50_ms": 12.785,
+            "p95_ms": 15.014,
+            "p99_ms": 17.466,
+            "max_ms": 20.19
+          },
+          "queue_wait": {
+            "count": 1425,
+            "p50_ms": 39.532,
+            "p95_ms": 177.823,
+            "p99_ms": 222.442,
+            "max_ms": 259.102
+          },
+          "lease": {
+            "count": 1425,
+            "p50_ms": 10.902,
+            "p95_ms": 43.23,
+            "p99_ms": 55.852,
+            "max_ms": 73.218
+          },
+          "external": {
+            "count": 1425,
+            "p50_ms": 14.688,
+            "p95_ms": 35.102,
+            "p99_ms": 42.845,
+            "max_ms": 63.688
+          },
+          "overhead": {
+            "count": 1425,
+            "p50_ms": 85.145,
+            "p95_ms": 251.083,
+            "p99_ms": 299.195,
+            "max_ms": 344.232
+          },
+          "end_to_end": {
+            "count": 1425,
+            "p50_ms": 115.039,
+            "p95_ms": 286.207,
+            "p99_ms": 341.66,
+            "max_ms": 408.055
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 1425
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 2.668140776699028,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3096444
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.010000000000000004,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 27850178
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 37.13678571428572,
+              "max_cpu_percent": 42.05,
+              "max_mem_bytes": 18591252
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 8.335474893559999,
+              "max_cpu_percent": 19.31746621586813,
+              "max_mem_bytes": 32862208
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 17.540714285714284,
+              "max_cpu_percent": 19.92,
+              "max_mem_bytes": 19073597
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9871294
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 2.0303571428571425,
+              "max_cpu_percent": 2.51,
+              "max_mem_bytes": 35808870
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0.0014285714285714286,
+              "max_cpu_percent": 0.04,
+              "max_mem_bytes": 7716470
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0.00035714285714285714,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 7733248
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7634681
+            },
+            "nats": {
+              "mean_cpu_percent": 8.451785714285714,
+              "max_cpu_percent": 11.73,
+              "max_mem_bytes": 38608568
+            },
+            "postgres": {
+              "mean_cpu_percent": 157.29678571428576,
+              "max_cpu_percent": 237.59,
+              "max_mem_bytes": 499227033
+            },
+            "vault": {
+              "mean_cpu_percent": 9.932500000000001,
+              "max_cpu_percent": 12.64,
+              "max_mem_bytes": 38755368
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.9983005127462266,
+              "commits_per_s": 448.6499630127089,
+              "max_active": 10,
+              "max_lock_waits": 7
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 41204.69690359013,
+              "in_msgs_per_s": 191.17747713925547,
+              "out_bytes_per_s": 10313.338418946292,
+              "out_msgs_per_s": 189.71139219186855
+            }
+          },
+          "incomplete": false
+        },
+        {
+          "offered_per_s": 50,
+          "requests": 3000,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 47.5,
+          "completed_per_s": 10.665954358681413,
+          "admission": {
+            "count": 2850,
+            "p50_ms": 59.3167,
+            "p95_ms": 75.0269,
+            "p99_ms": 83.1835,
+            "max_ms": 97.7117
+          },
+          "idempotency": {
+            "count": 150,
+            "p50_ms": 3.8057,
+            "p95_ms": 5.4433,
+            "p99_ms": 6.3934,
+            "max_ms": 7.7533
+          },
+          "governance": {
+            "count": 2850,
+            "p50_ms": 13.522,
+            "p95_ms": 19.208,
+            "p99_ms": 22.474,
+            "max_ms": 34.002
+          },
+          "queue_wait": {
+            "count": 2850,
+            "p50_ms": 179178.113,
+            "p95_ms": 290828.92,
+            "p99_ms": 306725.183,
+            "max_ms": 319288.749
+          },
+          "lease": {
+            "count": 2850,
+            "p50_ms": 585.033,
+            "p95_ms": 2229.955,
+            "p99_ms": 2790.992,
+            "max_ms": 3350.824
+          },
+          "external": {
+            "count": 2850,
+            "p50_ms": 78.968,
+            "p95_ms": 124.157,
+            "p99_ms": 151.56,
+            "max_ms": 179.42
+          },
+          "overhead": {
+            "count": 2850,
+            "p50_ms": 180413.534,
+            "p95_ms": 291073.892,
+            "p99_ms": 307017.447,
+            "max_ms": 319479.418
+          },
+          "end_to_end": {
+            "count": 2850,
+            "p50_ms": 180495.656,
+            "p95_ms": 291158.451,
+            "p99_ms": 307106.594,
+            "max_ms": 319554.102
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 2850
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 3.0330874251497013,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3092250
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.010000000000000004,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 27839692
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 59.6042857142857,
+              "max_cpu_percent": 62.97,
+              "max_mem_bytes": 19513999
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 8.866194684437376,
+              "max_cpu_percent": 17.03645128339862,
+              "max_mem_bytes": 32862208
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 10.427499999999998,
+              "max_cpu_percent": 16.63,
+              "max_mem_bytes": 20279459
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9871294
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 0.6364285714285715,
+              "max_cpu_percent": 1.51,
+              "max_mem_bytes": 35672555
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7712276
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7733248
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.002857142857142857,
+              "max_cpu_percent": 0.08,
+              "max_mem_bytes": 7700742
+            },
+            "nats": {
+              "mean_cpu_percent": 8.649285714285712,
+              "max_cpu_percent": 13.71,
+              "max_mem_bytes": 37696307
+            },
+            "postgres": {
+              "mean_cpu_percent": 338.05821428571426,
+              "max_cpu_percent": 400.44,
+              "max_mem_bytes": 553962700
+            },
+            "vault": {
+              "mean_cpu_percent": 10.078928571428573,
+              "max_cpu_percent": 12.36,
+              "max_mem_bytes": 38786826
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.999839284308065,
+              "commits_per_s": 572.2128910527962,
+              "max_active": 11,
+              "max_lock_waits": 7
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 53889.725244626694,
+              "in_msgs_per_s": 271.9223257051351,
+              "out_bytes_per_s": 16651.11875427179,
+              "out_msgs_per_s": 268.8511217726786
+            }
+          },
+          "saturated": [
+            "throughput",
+            "p99"
+          ],
+          "incomplete": false
+        }
+      ]
+    },
+    {
+      "agents": 10000,
+      "steps": [
+        {
+          "offered_per_s": 25,
+          "requests": 1500,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 23.75,
+          "completed_per_s": 23.630564225048897,
+          "admission": {
+            "count": 1425,
+            "p50_ms": 61.9687,
+            "p95_ms": 74.8923,
+            "p99_ms": 88.4984,
+            "max_ms": 115.8054
+          },
+          "idempotency": {
+            "count": 75,
+            "p50_ms": 4.005,
+            "p95_ms": 5.253,
+            "p99_ms": 5.775,
+            "max_ms": 5.775
+          },
+          "governance": {
+            "count": 1425,
+            "p50_ms": 12.833,
+            "p95_ms": 15.539,
+            "p99_ms": 18.605,
+            "max_ms": 29.829
+          },
+          "queue_wait": {
+            "count": 1425,
+            "p50_ms": 42.307,
+            "p95_ms": 189.423,
+            "p99_ms": 227.373,
+            "max_ms": 251.259
+          },
+          "lease": {
+            "count": 1425,
+            "p50_ms": 11.162,
+            "p95_ms": 46.401,
+            "p99_ms": 63.255,
+            "max_ms": 74.791
+          },
+          "external": {
+            "count": 1425,
+            "p50_ms": 15.001,
+            "p95_ms": 37.119,
+            "p99_ms": 45.285,
+            "max_ms": 57.867
+          },
+          "overhead": {
+            "count": 1425,
+            "p50_ms": 89.874,
+            "p95_ms": 265.478,
+            "p99_ms": 309.674,
+            "max_ms": 344.065
+          },
+          "end_to_end": {
+            "count": 1425,
+            "p50_ms": 120.833,
+            "p95_ms": 304.978,
+            "p99_ms": 351.449,
+            "max_ms": 390.437
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 1425
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 2.6975673369896396,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3088056
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.010000000000000004,
+              "max_cpu_percent": 0.01,
+              "max_mem_bytes": 27839692
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 37.57535714285715,
+              "max_cpu_percent": 40.13,
+              "max_mem_bytes": 22145925
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 7.688431599800738,
+              "max_cpu_percent": 26.08260593336002,
+              "max_mem_bytes": 32886784
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 17.07535714285714,
+              "max_cpu_percent": 21.05,
+              "max_mem_bytes": 22292725
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9871294
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 2.1010714285714287,
+              "max_cpu_percent": 3.39,
+              "max_mem_bytes": 41848668
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7688159
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7733248
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.0017857142857142859,
+              "max_cpu_percent": 0.05,
+              "max_mem_bytes": 7623147
+            },
+            "nats": {
+              "mean_cpu_percent": 7.664999999999999,
+              "max_cpu_percent": 12.07,
+              "max_mem_bytes": 46797946
+            },
+            "postgres": {
+              "mean_cpu_percent": 175.65500000000003,
+              "max_cpu_percent": 238.13,
+              "max_mem_bytes": 668991488
+            },
+            "vault": {
+              "mean_cpu_percent": 10.338571428571427,
+              "max_cpu_percent": 13.95,
+              "max_mem_bytes": 38744883
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.9969778462682426,
+              "commits_per_s": 450.6222650287421,
+              "max_active": 7,
+              "max_lock_waits": 4
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 41193.199949944494,
+              "in_msgs_per_s": 191.19571706154764,
+              "out_bytes_per_s": 10316.452897356738,
+              "out_msgs_per_s": 189.67938477050436
+            }
+          },
+          "incomplete": false
+        },
+        {
+          "offered_per_s": 50,
+          "requests": 3000,
+          "errors": 0,
+          "throttled": 0,
+          "duplicate_keys": 0,
+          "admission_per_s": 47.5,
+          "completed_per_s": 9.832678476946768,
+          "admission": {
+            "count": 2850,
+            "p50_ms": 68.2704,
+            "p95_ms": 90.3068,
+            "p99_ms": 114.7855,
+            "max_ms": 181.5109
+          },
+          "idempotency": {
+            "count": 150,
+            "p50_ms": 4.0438,
+            "p95_ms": 5.2612,
+            "p99_ms": 7.8356,
+            "max_ms": 8.0106
+          },
+          "governance": {
+            "count": 2850,
+            "p50_ms": 13.934,
+            "p95_ms": 20.495,
+            "p99_ms": 26.841,
+            "max_ms": 61.607
+          },
+          "queue_wait": {
+            "count": 2850,
+            "p50_ms": 186914.11,
+            "p95_ms": 310320.618,
+            "p99_ms": 323609.502,
+            "max_ms": 338830.614
+          },
+          "lease": {
+            "count": 2850,
+            "p50_ms": 622.667,
+            "p95_ms": 2256.604,
+            "p99_ms": 2767.644,
+            "max_ms": 3121.075
+          },
+          "external": {
+            "count": 2850,
+            "p50_ms": 77.493,
+            "p95_ms": 134.152,
+            "p99_ms": 204.905,
+            "max_ms": 333.288
+          },
+          "overhead": {
+            "count": 2850,
+            "p50_ms": 188576.757,
+            "p95_ms": 310634.348,
+            "p99_ms": 323975.044,
+            "max_ms": 339127.869
+          },
+          "end_to_end": {
+            "count": 2850,
+            "p50_ms": 188663.331,
+            "p95_ms": 310712.09,
+            "p99_ms": 324068.872,
+            "max_ms": 339201.313
+          },
+          "llm_client": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "llm_ledger": {
+            "count": 0,
+            "p50_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+            "max_ms": 0
+          },
+          "terminal": {
+            "SUCCEEDED": 2850
+          },
+          "open": 0,
+          "budget_reserve_mean_ms": 3.368930982969823,
+          "containers": {
+            "agent": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 3080716
+            },
+            "agt-pdp": {
+              "mean_cpu_percent": 0.01071428571428572,
+              "max_cpu_percent": 0.02,
+              "max_mem_bytes": 27829207
+            },
+            "controlplane-api": {
+              "mean_cpu_percent": 59.885,
+              "max_cpu_percent": 63.44,
+              "max_mem_bytes": 24861736
+            },
+            "eacp-bench": {
+              "mean_cpu_percent": 9.019678203993164,
+              "max_cpu_percent": 22.56129097600352,
+              "max_mem_bytes": 32886784
+            },
+            "execution-worker": {
+              "mean_cpu_percent": 10.352500000000001,
+              "max_cpu_percent": 19.16,
+              "max_mem_bytes": 26151485
+            },
+            "fakea2a": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 9871294
+            },
+            "fakeerp": {
+              "mean_cpu_percent": 0.755357142857143,
+              "max_cpu_percent": 2.03,
+              "max_mem_bytes": 43673190
+            },
+            "fakellm": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7638876
+            },
+            "fakemcp": {
+              "mean_cpu_percent": 0,
+              "max_cpu_percent": 0,
+              "max_mem_bytes": 7733248
+            },
+            "llm-gateway": {
+              "mean_cpu_percent": 0.009285714285714286,
+              "max_cpu_percent": 0.21,
+              "max_mem_bytes": 7623147
+            },
+            "nats": {
+              "mean_cpu_percent": 8.703571428571427,
+              "max_cpu_percent": 13.04,
+              "max_mem_bytes": 49545216
+            },
+            "postgres": {
+              "mean_cpu_percent": 372.80035714285714,
+              "max_cpu_percent": 447.6,
+              "max_mem_bytes": 672661504
+            },
+            "vault": {
+              "mean_cpu_percent": 8.399642857142856,
+              "max_cpu_percent": 11.72,
+              "max_mem_bytes": 38807797
+            }
+          },
+          "db": {
+            "values": {
+              "cache_hit_ratio": 0.999517198323731,
+              "commits_per_s": 567.7455308506044,
+              "max_active": 12,
+              "max_lock_waits": 7
+            }
+          },
+          "nats": {
+            "values": {
+              "in_bytes_per_s": 53483.403527627765,
+              "in_msgs_per_s": 270.3715012700185,
+              "out_bytes_per_s": 16783.825581644578,
+              "out_msgs_per_s": 267.406069678484
+            }
+          },
+          "saturated": [
+            "throughput",
+            "p99"
+          ],
+          "incomplete": false
+        }
+      ]
+    }
+  ],
+  "llm": [
+    {
+      "offered_per_s": 25,
+      "requests": 1500,
+      "errors": 0,
+      "throttled": 0,
+      "duplicate_keys": 0,
+      "admission_per_s": 25,
+      "completed_per_s": 25,
+      "admission": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "idempotency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "governance": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "queue_wait": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "lease": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "external": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "overhead": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "end_to_end": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "llm_client": {
+        "count": 1500,
+        "p50_ms": 15.4746,
+        "p95_ms": 18.7171,
+        "p99_ms": 22.4983,
+        "max_ms": 27.4054
+      },
+      "llm_ledger": {
+        "count": 1500,
+        "p50_ms": 6.748,
+        "p95_ms": 8.379,
+        "p99_ms": 10.273,
+        "max_ms": 17.831
+      },
+      "open": 0,
+      "containers": {
+        "agent": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 3059744
+        },
+        "agt-pdp": {
+          "mean_cpu_percent": 0.010000000000000004,
+          "max_cpu_percent": 0.01,
+          "max_mem_bytes": 27808235
+        },
+        "controlplane-api": {
+          "mean_cpu_percent": 0.3171428571428571,
+          "max_cpu_percent": 0.55,
+          "max_mem_bytes": 24788336
+        },
+        "eacp-bench": {
+          "mean_cpu_percent": 8.167900229903818,
+          "max_cpu_percent": 30.50553266109663,
+          "max_mem_bytes": 32886784
+        },
+        "execution-worker": {
+          "mean_cpu_percent": 0.20142857142857143,
+          "max_cpu_percent": 0.54,
+          "max_mem_bytes": 26193428
+        },
+        "fakea2a": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 9871294
+        },
+        "fakeerp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 47741665
+        },
+        "fakellm": {
+          "mean_cpu_percent": 1.9121428571428571,
+          "max_cpu_percent": 2.14,
+          "max_mem_bytes": 20887633
+        },
+        "fakemcp": {
+          "mean_cpu_percent": 0.00035714285714285714,
+          "max_cpu_percent": 0.01,
+          "max_mem_bytes": 7733248
+        },
+        "llm-gateway": {
+          "mean_cpu_percent": 14.570357142857144,
+          "max_cpu_percent": 15.58,
+          "max_mem_bytes": 12027166
+        },
+        "nats": {
+          "mean_cpu_percent": 3.148928571428571,
+          "max_cpu_percent": 5.53,
+          "max_mem_bytes": 35745955
+        },
+        "postgres": {
+          "mean_cpu_percent": 23.752499999999998,
+          "max_cpu_percent": 30.29,
+          "max_mem_bytes": 753506713
+        },
+        "vault": {
+          "mean_cpu_percent": 0.41571428571428576,
+          "max_cpu_percent": 0.71,
+          "max_mem_bytes": 38891683
+        }
+      },
+      "db": {
+        "values": {
+          "cache_hit_ratio": 0.9953122361803367,
+          "commits_per_s": 187.24826232078308,
+          "max_active": 2,
+          "max_lock_waits": 0
+        }
+      },
+      "nats": {
+        "values": {
+          "in_bytes_per_s": 7.399600078695868,
+          "in_msgs_per_s": 0.2242303054150263,
+          "out_bytes_per_s": 18.38688504403216,
+          "out_msgs_per_s": 0.2242303054150263
+        }
+      },
+      "incomplete": false
+    },
+    {
+      "offered_per_s": 50,
+      "requests": 3000,
+      "errors": 0,
+      "throttled": 0,
+      "duplicate_keys": 0,
+      "admission_per_s": 50,
+      "completed_per_s": 50,
+      "admission": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "idempotency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "governance": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "queue_wait": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "lease": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "external": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "overhead": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "end_to_end": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "llm_client": {
+        "count": 3000,
+        "p50_ms": 15.4055,
+        "p95_ms": 18.482,
+        "p99_ms": 20.8047,
+        "max_ms": 25.9738
+      },
+      "llm_ledger": {
+        "count": 3000,
+        "p50_ms": 6.818,
+        "p95_ms": 8.436,
+        "p99_ms": 10.005,
+        "max_ms": 15.366
+      },
+      "open": 0,
+      "containers": {
+        "agent": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 3059744
+        },
+        "agt-pdp": {
+          "mean_cpu_percent": 0.010000000000000004,
+          "max_cpu_percent": 0.01,
+          "max_mem_bytes": 27808235
+        },
+        "controlplane-api": {
+          "mean_cpu_percent": 0.30964285714285705,
+          "max_cpu_percent": 0.63,
+          "max_mem_bytes": 24798822
+        },
+        "eacp-bench": {
+          "mean_cpu_percent": 9.375224707800111,
+          "max_cpu_percent": 26.761247216525618,
+          "max_mem_bytes": 32886784
+        },
+        "execution-worker": {
+          "mean_cpu_percent": 0.19,
+          "max_cpu_percent": 0.28,
+          "max_mem_bytes": 26424115
+        },
+        "fakea2a": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 9871294
+        },
+        "fakeerp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 47741665
+        },
+        "fakellm": {
+          "mean_cpu_percent": 3.8660714285714297,
+          "max_cpu_percent": 4.34,
+          "max_mem_bytes": 21359493
+        },
+        "fakemcp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 7733248
+        },
+        "llm-gateway": {
+          "mean_cpu_percent": 28.632857142857148,
+          "max_cpu_percent": 31.57,
+          "max_mem_bytes": 12152995
+        },
+        "nats": {
+          "mean_cpu_percent": 2.631428571428571,
+          "max_cpu_percent": 5.85,
+          "max_mem_bytes": 35620126
+        },
+        "postgres": {
+          "mean_cpu_percent": 46.09392857142857,
+          "max_cpu_percent": 52.74,
+          "max_mem_bytes": 753506713
+        },
+        "vault": {
+          "mean_cpu_percent": 9.852499999999997,
+          "max_cpu_percent": 11.79,
+          "max_mem_bytes": 61939384
+        }
+      },
+      "db": {
+        "values": {
+          "cache_hit_ratio": 0.9999784535579909,
+          "commits_per_s": 357.1117217686117,
+          "max_active": 2,
+          "max_lock_waits": 0
+        }
+      },
+      "nats": {
+        "values": {
+          "in_bytes_per_s": 7.3991824013830545,
+          "in_msgs_per_s": 0.22421764852675924,
+          "out_bytes_per_s": 18.385847179194258,
+          "out_msgs_per_s": 0.22421764852675924
+        }
+      },
+      "incomplete": false
+    },
+    {
+      "offered_per_s": 100,
+      "requests": 6000,
+      "errors": 0,
+      "throttled": 0,
+      "duplicate_keys": 0,
+      "admission_per_s": 100,
+      "completed_per_s": 100,
+      "admission": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "idempotency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "governance": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "queue_wait": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "lease": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "external": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "overhead": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "end_to_end": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "llm_client": {
+        "count": 6000,
+        "p50_ms": 15.1427,
+        "p95_ms": 17.74,
+        "p99_ms": 23.766,
+        "max_ms": 266.435
+      },
+      "llm_ledger": {
+        "count": 6000,
+        "p50_ms": 6.792,
+        "p95_ms": 8.396,
+        "p99_ms": 11.774,
+        "max_ms": 169.27
+      },
+      "open": 0,
+      "containers": {
+        "agent": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 3059744
+        },
+        "agt-pdp": {
+          "mean_cpu_percent": 0.010000000000000004,
+          "max_cpu_percent": 0.01,
+          "max_mem_bytes": 27808235
+        },
+        "controlplane-api": {
+          "mean_cpu_percent": 0.3107142857142858,
+          "max_cpu_percent": 0.43,
+          "max_mem_bytes": 23530045
+        },
+        "eacp-bench": {
+          "mean_cpu_percent": 11.41772378596246,
+          "max_cpu_percent": 25.946095861129116,
+          "max_mem_bytes": 32886784
+        },
+        "execution-worker": {
+          "mean_cpu_percent": 0.2007142857142857,
+          "max_cpu_percent": 0.42,
+          "max_mem_bytes": 25962741
+        },
+        "fakea2a": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 9871294
+        },
+        "fakeerp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 47731179
+        },
+        "fakellm": {
+          "mean_cpu_percent": 7.581428571428574,
+          "max_cpu_percent": 8.42,
+          "max_mem_bytes": 23037214
+        },
+        "fakemcp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 7733248
+        },
+        "llm-gateway": {
+          "mean_cpu_percent": 51.51607142857142,
+          "max_cpu_percent": 54.33,
+          "max_mem_bytes": 14480834
+        },
+        "nats": {
+          "mean_cpu_percent": 3.5196428571428564,
+          "max_cpu_percent": 5.59,
+          "max_mem_bytes": 35829841
+        },
+        "postgres": {
+          "mean_cpu_percent": 87.48785714285714,
+          "max_cpu_percent": 122.3,
+          "max_mem_bytes": 802894643
+        },
+        "vault": {
+          "mean_cpu_percent": 10.037142857142856,
+          "max_cpu_percent": 12.69,
+          "max_mem_bytes": 39069941
+        }
+      },
+      "db": {
+        "values": {
+          "cache_hit_ratio": 0.9999204483255669,
+          "commits_per_s": 704.0852476160971,
+          "max_active": 3,
+          "max_lock_waits": 0
+        }
+      },
+      "nats": {
+        "values": {
+          "in_bytes_per_s": 7.39932907506372,
+          "in_msgs_per_s": 0.2242220931837491,
+          "out_bytes_per_s": 18.386211641067426,
+          "out_msgs_per_s": 0.2242220931837491
+        }
+      },
+      "incomplete": false
+    },
+    {
+      "offered_per_s": 200,
+      "requests": 12000,
+      "errors": 0,
+      "throttled": 0,
+      "duplicate_keys": 0,
+      "admission_per_s": 200,
+      "completed_per_s": 200,
+      "admission": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "idempotency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "governance": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "queue_wait": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "lease": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "external": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "overhead": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "end_to_end": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      "llm_client": {
+        "count": 12000,
+        "p50_ms": 17.0965,
+        "p95_ms": 43.8596,
+        "p99_ms": 87.5194,
+        "max_ms": 113.9952
+      },
+      "llm_ledger": {
+        "count": 12000,
+        "p50_ms": 8.092,
+        "p95_ms": 30.445,
+        "p99_ms": 47.123,
+        "max_ms": 69.966
+      },
+      "open": 0,
+      "containers": {
+        "agent": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 3055550
+        },
+        "agt-pdp": {
+          "mean_cpu_percent": 0.01035714285714286,
+          "max_cpu_percent": 0.02,
+          "max_mem_bytes": 27808235
+        },
+        "controlplane-api": {
+          "mean_cpu_percent": 0.33285714285714285,
+          "max_cpu_percent": 0.41,
+          "max_mem_bytes": 23551016
+        },
+        "eacp-bench": {
+          "mean_cpu_percent": 13.074825161339213,
+          "max_cpu_percent": 22.19020252129073,
+          "max_mem_bytes": 32886784
+        },
+        "execution-worker": {
+          "mean_cpu_percent": 0.20500000000000004,
+          "max_cpu_percent": 0.63,
+          "max_mem_bytes": 25962741
+        },
+        "fakea2a": {
+          "mean_cpu_percent": 0.00035714285714285714,
+          "max_cpu_percent": 0.01,
+          "max_mem_bytes": 9871294
+        },
+        "fakeerp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 42802872
+        },
+        "fakellm": {
+          "mean_cpu_percent": 15.2475,
+          "max_cpu_percent": 17.55,
+          "max_mem_bytes": 25102909
+        },
+        "fakemcp": {
+          "mean_cpu_percent": 0,
+          "max_cpu_percent": 0,
+          "max_mem_bytes": 7733248
+        },
+        "llm-gateway": {
+          "mean_cpu_percent": 97.08071428571431,
+          "max_cpu_percent": 107.26,
+          "max_mem_bytes": 15959326
+        },
+        "nats": {
+          "mean_cpu_percent": 2.691071428571429,
+          "max_cpu_percent": 6.11,
+          "max_mem_bytes": 23330816
+        },
+        "postgres": {
+          "mean_cpu_percent": 186.04214285714278,
+          "max_cpu_percent": 224.33,
+          "max_mem_bytes": 849661132
+        },
+        "vault": {
+          "mean_cpu_percent": 0.699642857142857,
+          "max_cpu_percent": 4.47,
+          "max_mem_bytes": 39153827
+        }
+      },
+      "db": {
+        "values": {
+          "cache_hit_ratio": 0.9944589489268143,
+          "commits_per_s": 1416.4046638388106,
+          "max_active": 6,
+          "max_lock_waits": 2
+        }
+      },
+      "nats": {
+        "values": {
+          "in_bytes_per_s": 7.398141227536083,
+          "in_msgs_per_s": 0.22418609780412374,
+          "out_bytes_per_s": 18.383260019938145,
+          "out_msgs_per_s": 0.22418609780412374
+        }
+      },
+      "incomplete": false
+    }
+  ],
+  "max_sustainable": {
+    "100": 25,
+    "1000": 25,
+    "10000": 25,
+    "5000": 25
+  }
+}

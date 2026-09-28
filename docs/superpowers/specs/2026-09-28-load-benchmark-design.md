@@ -221,3 +221,23 @@ under `go vet ./...` and `go test -race ./...` with PostgreSQL.
 - `scripts/bench.sh --quick` passes.
 - One full run has been made. Its baselines, `docs/BENCHMARKS.md` and the README link are committed.
 - AGENTS.md (commands and layout), README and MASTER_PLAN §104 status are updated.
+
+## 7. Rulings made during planning and implementation
+
+- **Tenant.** The bench tenant is `00000000-0000-4000-8000-0000000000be`, not `…00ac`: no development tenant had both a
+  Fake ERP and a Fake LLM entry. `…00be` was added to both development manifests.
+- **NATS monitoring** is read with `docker compose exec nats wget`, not a published port. The `bus` network is
+  internal, so a published port would not be reachable, and publishing one would weaken the boundary.
+- **The local PDP** needs `deployments/bench/compose.bench-local.yml`, which blanks the AGT settings: the local
+  provider with an AGT URL is a startup error.
+- **Subject.** Every action's subject is the human principal `sam@bench.test`. An action whose subject is not a
+  principal is denied.
+- **Throughput is judged against new actions.** The 5% of requests that replay an idempotency key create no action,
+  so completed throughput is compared with the other 95%. The report says so.
+- **Completed throughput** counts first terminal transitions inside the measurement window, in database time
+  (`clock_timestamp()` read at the window's start and end). Counting after the drain would always equal the offered
+  rate and hide saturation. Warm-up actions count toward completions in the window, but stage latencies use measured
+  actions only.
+- **One ERP operation per success** is not checked by the benchmark. It checks one action per idempotency key
+  (`DuplicateKeys`); one ERP operation per action is proven by the demos, and reading the Fake ERP's audit would
+  need its bearer token in the bench process.
