@@ -4,7 +4,10 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ \
+# A release sets VERSION (release.yml); every other build reports "dev".
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags="-s -w -X github.com/atipongsena/eacp/internal/version.Version=${VERSION}" -o /out/ \
       ./cmd/controlplane-api ./cmd/execution-worker ./cmd/fakeerp ./cmd/fakemcp ./cmd/fakea2a ./cmd/eacpctl \
       ./cmd/llm-gateway ./cmd/fakellm \
     && mkdir -p /pki /client-key /client-jwks

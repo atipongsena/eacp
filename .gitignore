@@ -47,3 +47,6 @@ __pycache__/
 
 # load benchmark raw results (scripts/bench.sh); baselines live in docs/benchmarks/
 /bench-results/
+
+# Release archives (scripts/ci/release-binaries.sh)
+/dist/
