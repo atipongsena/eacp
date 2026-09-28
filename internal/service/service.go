@@ -28,6 +28,7 @@ import (
 	"github.com/atipongsena/eacp/internal/logging"
 	"github.com/atipongsena/eacp/internal/storage"
 	"github.com/atipongsena/eacp/internal/telemetry"
+	"github.com/atipongsena/eacp/internal/version"
 	"github.com/atipongsena/eacp/migrations"
 )
 
@@ -121,7 +122,7 @@ func Start(ctx context.Context, name string, getenv func(string) string, opts co
 		deps.DB = pool
 	}
 
-	log.Info("service started", "config", cfg)
+	log.Info("service started", "version", version.Version, "config", cfg)
 	stop := func() {
 		deps.bgCancel()
 		deps.bg.Wait()

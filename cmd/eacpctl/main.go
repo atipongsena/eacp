@@ -98,9 +98,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/atipongsena/eacp/internal/version"
 )
 
 const usage = `usage:
+  eacpctl version
   eacpctl migrate up|status|down-all --yes-destroy-all-data
   eacpctl key generate --kind agent|principal --tenant <uuid>
   eacpctl tenant create --slug <slug> --name <name> --admin <spec> --admin <spec>
@@ -137,6 +140,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out io.
 		return errors.New(usage)
 	}
 	switch args[0] {
+	case "version":
+		_, err := fmt.Fprintln(out, version.Version)
+		return err
 	case "migrate":
 		return runMigrate(ctx, args[1:], getenv, out)
 	case "key":
