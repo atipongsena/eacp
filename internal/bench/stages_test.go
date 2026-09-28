@@ -96,3 +96,18 @@ func TestStagesUseOnlyDatabaseTimes(t *testing.T) {
 		t.Fatalf("Timeline has %d fields, want 4: a stage must not read a client time", n)
 	}
 }
+
+// Throughput counts completions inside the measurement window (database
+// time), so a backlog drained afterwards does not inflate it.
+func TestCompletedInCountsOnlyTheWindow(t *testing.T) {
+	done := func(msec int) Timeline {
+		return Timeline{Transitions: []Transition{{To: "RECEIVED", At: at(0)},
+			{From: "RECEIVED", To: "QUEUED", At: at(1)}, {From: "EXECUTING", To: "SUCCEEDED", At: at(msec)}}}
+	}
+	ts := []Timeline{done(50), done(100), done(199), done(200), done(900),
+		{Transitions: []Transition{{To: "RECEIVED", At: at(0)}, {From: "RECEIVED", To: "DENIED", At: at(150)}}},
+		{Transitions: []Transition{{To: "RECEIVED", At: at(120)}}}}
+	if got := CompletedIn(ts, at(100), at(200)); got != 3 {
+		t.Fatalf("CompletedIn = %d, want 3 (100, 150 and 199 ms; the window is [from, to))", got)
+	}
+}

@@ -97,3 +97,21 @@ func span(from, to *time.Time) (time.Duration, bool) {
 }
 
 func ptrTo(t time.Time) *time.Time { return &t }
+
+// CompletedIn counts the actions whose first terminal transition happened
+// in [from, to), both in database time: completions inside a measurement
+// window, not the backlog drained after it.
+func CompletedIn(ts []Timeline, from, to time.Time) int {
+	n := 0
+	for _, tl := range ts {
+		for _, tr := range tl.Transitions {
+			if slices.Contains(TerminalStates, tr.To) {
+				if !tr.At.Before(from) && tr.At.Before(to) {
+					n++
+				}
+				break
+			}
+		}
+	}
+	return n
+}
