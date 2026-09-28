@@ -305,11 +305,12 @@ The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler.
 ## Benchmarks
 
 `scripts/bench.sh` measures the whole stack under open-loop load on an isolated compose stack (MASTER_PLAN §104).
-The first run, on one development machine, is in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), with every table
-generated from committed raw results. In summary: with the local PDP and with the AGT sidecar, 100 to 10000
-registered agents sustained 25 actions/s, and the execution worker's claim loop is the bottleneck between 25 and
-50 actions/s; the LLM gateway sustained 200 calls/s against a fake provider. The figures are not a production
-capacity claim.
+The latest run, on one development machine, is in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), with every table
+generated from committed raw results. In summary, on that machine and with one worker: with 100 to 5000 registered
+agents the action path sustained 40 requests/s with the local PDP and 35 requests/s through the AGT sidecar (one
+rung less at 10000 agents), with no errors, no duplicate actions and every idempotent replay answered with its
+original; past that rate the execution queue falls behind while admission and governance stay fast. The LLM gateway
+sustained 200 calls/s against a fake provider. The figures are not a production capacity claim.
 
 ## Quick start
 

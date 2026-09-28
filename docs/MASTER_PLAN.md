@@ -4128,8 +4128,9 @@ P99
 
 Status: measured by `scripts/bench.sh` (`cmd/eacp-bench`, `internal/bench`; design in
 `docs/superpowers/specs/2026-09-28-load-benchmark-design.md`) on an isolated compose stack, open-loop, under the
-local and the AGT PDP and through the LLM gateway. The first run is committed in `docs/benchmarks/` and rendered as
-`docs/BENCHMARKS.md`; §105 is enforced by `TestBenchmarksDocMatchesBaseline` and `TestReadmeNumbersComeFromTheBaseline`.
+local and the AGT PDP and through the LLM gateway. The latest run is committed in `docs/benchmarks/` and rendered as
+`docs/BENCHMARKS.md`; §105 is enforced by `TestBenchmarksDocMatchesBaseline`, `TestReadmeNumbersComeFromTheBaseline` and
+`TestFindingsQuoteTheTables`.
 Not yet measured: several tenants, several workers or replicas, Kubernetes.
 
 ---
