@@ -1,6 +1,8 @@
-# Slice A, Slice C, A2A and JIT credential demos
+[English](DEMO.md) | [ไทย](DEMO.th.md)
 
-Four demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)), A2A delegation (tenant Initech, [below](#a2a-delegation-demo)) and JIT credentials (tenant Umbrella, [below](#jit-credential-demo)).
+# Slice A, Slice C, A2A, LLM gateway and JIT credential demos
+
+Five demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)), A2A delegation (tenant Initech, [below](#a2a-delegation-demo)), the LLM gateway (tenant Hooli-AI, [below](#llm-gateway-demo)) and JIT credentials (tenant Umbrella, [below](#jit-credential-demo)).
 
 ## Slice A demo
 

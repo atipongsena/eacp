@@ -32,7 +32,7 @@ action เลี่ยง governance ได้ ถูกทำซ้ำสอง
 - control plane, execution worker, LLM gateway, `eacpctl` และ AGT sidecar PDP
 - schema ของฐานข้อมูล trigger และนโยบาย Row-Level Security (`migrations/`)
 - Helm chart และ network policy (`deployments/helm/`)
-- สิ่งที่รับประกันไว้ใน threat model (`docs/security/THREAT_MODEL.th.md`) และ [ADR-001](docs/adr/ADR-001-product-boundary-and-enforcement-point.md)
+- สิ่งที่รับประกันไว้ใน [threat model](docs/security/THREAT_MODEL.th.md) และ [ADR-001](docs/adr/ADR-001-product-boundary-and-enforcement-point.md)
   สำหรับ conforming deployment ตามนิยามใน ADR-001 §3a
 
 ## สิ่งที่ไม่นับเป็นช่องโหว่

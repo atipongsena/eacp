@@ -34,7 +34,7 @@ release notes unless you prefer otherwise, and publish a GitHub security advisor
 - The control plane, the execution worker, the LLM gateway, `eacpctl` and the AGT sidecar PDP.
 - The database schema, its triggers and Row-Level Security policies (`migrations/`).
 - The Helm chart and its network policies (`deployments/helm/`).
-- The guarantees in the threat model (`docs/security/THREAT_MODEL.md`) and [ADR-001](docs/adr/ADR-001-product-boundary-and-enforcement-point.md),
+- The guarantees in the [threat model](docs/security/THREAT_MODEL.md) and [ADR-001](docs/adr/ADR-001-product-boundary-and-enforcement-point.md),
   for a conforming deployment as ADR-001 §3a defines it.
 
 ## What is not a vulnerability

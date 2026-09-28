@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a new capability or a change to an existing one.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and why EACP does not let you do it today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposal
+      description: What you would like EACP to do. A change to a guarantee, a state transition or a trust boundary needs an ADR first.
+    validations:
+      required: true
+  - type: textarea
+    id: guarantees
+    attributes:
+      label: Guarantees affected
+      description: Which ADRs or invariants (docs/INVARIANTS.md) this touches, if you know.

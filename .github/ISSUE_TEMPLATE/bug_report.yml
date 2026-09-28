@@ -1,0 +1,36 @@
+name: Bug report
+description: EACP does something it should not, or fails to do what its docs or ADRs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. If this could be a security vulnerability (a way around governance, an approval,
+        tenant isolation or credential custody), do not file it here: follow SECURITY.md instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what EACP did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands, API calls or a test against `docker compose up` or the examples. Never paste a key.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release, or the commit of `main` (`eacpctl version` prints it).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and evidence
+      description: Relevant log lines, action states or evidence. Remove any key or token first.
+      render: text
