@@ -146,7 +146,7 @@ const maxSecret = 4096
 //	 "spiffe": {"endpoint": "unix:///spiffe-workload-api/spire-agent.sock", "spiffe_id": "spiffe://…"},  (optional)
 //	 "secrets": [{"tenant_id": "...", "secret_ref": "erp", "host": "erp.internal:8443",
 //	              "value": "..." | "value_file": "/run/secrets/erp" |
-//	              "value_vault": {"path": "github.com/atipongsena/eacp/erp", "key": "token"} |
+//	              "value_vault": {"path": "eacp/erp", "key": "token"} |
 //	              "value_spiffe": {"audience": "erp-api"} |
 //	              "oauth2": {"token_url": "https://idp/token", "client_id": "...",
 //	                         "client_secret": "..." | "client_secret_file": "...",

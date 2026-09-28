@@ -76,7 +76,7 @@ func TestTheWorkerExecutesWithAVaultCredential(t *testing.T) {
 	}
 	v := newJITFile(t, func(string) fakeerp.Options { return fakeerp.Options{} }, func(_, host string) string {
 		return fmt.Sprintf(`{"vault":{"address":%q,"refresh_seconds":30,"auth":{"approle":{"role_id_file":%q,"secret_id_file":%q}}},
-			"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,"value_vault":{"path":"github.com/atipongsena/eacp/fakeerp","key":"token"}}]}`,
+			"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,"value_vault":{"path":"eacp/fakeerp","key":"token"}}]}`,
 			jv.srv.URL, roleFile, secretFile, pgtest.TenantA, host)
 	}, 100)
 	ctx := context.Background()

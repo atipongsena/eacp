@@ -172,7 +172,7 @@ func (h *Hints) handle(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 	carrier := propagation.MapCarrier{"traceparent": msg.Headers().Get("traceparent")}
-	ctx, span := otel.Tracer("github.com/atipongsena/eacp/messaging").Start(
+	ctx, span := otel.Tracer("eacp/messaging").Start(
 		otel.GetTextMapPropagator().Extract(ctx, carrier), "work hint")
 	defer span.End()
 

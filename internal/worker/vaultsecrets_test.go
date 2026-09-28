@@ -37,7 +37,7 @@ func vaultFile(t *testing.T, address string, refresh int, binding string) string
 		address, refresh, roleFile, secretFile, vaultTenant, binding)
 }
 
-const staticVault = `"value_vault":{"path":"github.com/atipongsena/eacp/erp","key":"token"}`
+const staticVault = `"value_vault":{"path":"eacp/erp","key":"token"}`
 
 func TestAStaticCredentialComesFromVault(t *testing.T) {
 	f := newFakeVault(t)

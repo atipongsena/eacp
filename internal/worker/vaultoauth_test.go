@@ -124,7 +124,7 @@ func TestAnOAuthClientSecretComesFromVault(t *testing.T) {
 	f.put("secret/data/eacp/idp", map[string]any{"client_secret": "cs1-" + vaultCanary})
 	idp.set(func(p *fakeIDP) { p.secret = "cs1-" + vaultCanary })
 	c := &vclock{t: time.Now()}
-	s := oauthVaultStore(t, f, idp, c, nil, `"client_secret_vault":{"path":"github.com/atipongsena/eacp/idp","key":"client_secret"}`)
+	s := oauthVaultStore(t, f, idp, c, nil, `"client_secret_vault":{"path":"eacp/idp","key":"client_secret"}`)
 	ctx := context.Background()
 	tok, err := s.Credential(ctx, vaultTenant, "erp", vaultEndpoint, time.Minute)
 	if err != nil {
@@ -160,7 +160,7 @@ func TestAPrivateKeyComesFromVault(t *testing.T) {
 	idp.set(func(p *fakeIDP) { p.pub, p.x5t = &k1.PublicKey, x5t1 })
 	set := logging.NewSecretSet()
 	s := oauthVaultStore(t, f, idp, c, set, `"private_key_jwt":{"alg":"PS256",
-		"key_vault":{"path":"github.com/atipongsena/eacp/key","key":"pem"},"certificate_vault":{"path":"github.com/atipongsena/eacp/key","key":"cert"}}`)
+		"key_vault":{"path":"eacp/key","key":"pem"},"certificate_vault":{"path":"eacp/key","key":"cert"}}`)
 	ctx := context.Background()
 	tok, err := s.Credential(ctx, vaultTenant, "erp", vaultEndpoint, time.Minute)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestAPrivateKeyComesFromVault(t *testing.T) {
 
 func TestInvalidOAuthVaultEntriesRejectTheWholeFile(t *testing.T) {
 	_, keyPEM := newRSA(t)
-	ref := `{"path":"github.com/atipongsena/eacp/x","key":"k"}`
+	ref := `{"path":"eacp/x","key":"k"}`
 	for name, oauth := range map[string]string{
 		"client_secret and client_secret_vault":   `"client_secret":"s","client_secret_vault":` + ref,
 		"client_secret_vault and private_key_jwt": `"client_secret_vault":` + ref + `,"private_key_jwt":{"alg":"PS256","key_vault":` + ref + `}`,
@@ -243,7 +243,7 @@ func TestAnExchangeClientSecretComesFromVault(t *testing.T) {
 		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix()})
 	file := writeFile(t, "subject", subject)
 	s := oauthVaultStore(t, f, idp, &vclock{t: now}, nil, fmt.Sprintf(`"grant":"token_exchange","subject_token":{"file":%q},`+
-		`"client_secret_vault":{"path":"github.com/atipongsena/eacp/idp","key":"client_secret"}`, file))
+		`"client_secret_vault":{"path":"eacp/idp","key":"client_secret"}`, file))
 	if _, err := s.Credential(context.Background(), vaultTenant, "erp", vaultEndpoint, time.Minute); err != nil {
 		t.Fatal(err)
 	}
