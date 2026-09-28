@@ -38,6 +38,10 @@ const policy = `{"format_version": 1, "rules": [
 	{"id": "routine", "match": {"target": "erp"}, "verdict": "allow", "reason": "a routine purchase"},
 	{"id": "llm", "match": {"operation": "llm.generate"}, "verdict": "allow", "reason": "model use"}]}`
 
+// keyDays is how long the people's and the agent's keys last: as long as
+// the admins' keys from eacpctl tenant create.
+const keyDays = 90
+
 // people are the tenant's members after alice and bob, the admins.
 var people = []struct{ name, role, env string }{
 	{"erin", "registry_editor", "EDITOR_KEY"},
@@ -93,13 +97,24 @@ func main() {
 	} {
 		fmt.Printf("examples: %s\n", step.what)
 		if err := step.fn(ctx); err != nil {
-			fail(fmt.Errorf("%s: %w", step.what, err))
+			fail(stepError(step.what, err))
 		}
 	}
 	if err := writeEnv(envPath, s.env); err != nil {
 		fail(err)
 	}
 	fmt.Println("examples: ready; keys are in examples/.env (git-ignored, never printed)")
+}
+
+// resetHint is how to start over: the admin keys exist only in
+// examples/.env, so a tenant without a working .env cannot be reused.
+const resetHint = "start over with `docker compose down -v && docker compose up -d --build --wait`, " +
+	"delete examples/.env and run examples/setup.sh again"
+
+// stepError reports a failed step. .env is written only once every step
+// has succeeded, so the tenant a failed run leaves behind has no keys.
+func stepError(what string, err error) error {
+	return fmt.Errorf("%s: %w\n%s", what, err, resetHint)
 }
 
 func fail(err error) {
@@ -131,7 +146,8 @@ func repoRoot() (string, error) {
 	}
 }
 
-// alreadySetUp reports whether .env exists and its admin key still works.
+// alreadySetUp reports whether .env exists and every key in it still
+// works: people and the agent sign in with /v1/me and /v1/agent/self.
 func (s *setup) alreadySetUp(ctx context.Context, path string) (bool, error) {
 	env, err := readEnv(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -140,14 +156,30 @@ func (s *setup) alreadySetUp(ctx context.Context, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	s.keys["alice"] = env["ADMIN_KEY"]
-	code, _, err := s.call(ctx, "alice", "GET", "/v1/me", nil)
-	if err != nil {
-		return false, err
+	names := make([]string, 0, len(env))
+	for k := range env {
+		if strings.HasSuffix(k, "_KEY") {
+			names = append(names, k)
+		}
 	}
-	if code != http.StatusOK {
-		return false, fmt.Errorf("examples/.env exists but its admin key is not accepted (%d): the stack was reset. "+
-			"Delete examples/.env, run `docker compose down -v && docker compose up -d --build --wait`, then run setup again", code)
+	sort.Strings(names)
+	if len(names) == 0 {
+		return false, fmt.Errorf("examples/.env holds no key; %s", resetHint)
+	}
+	for _, k := range names {
+		route := "/v1/me"
+		if k == "AGENT_KEY" {
+			route = "/v1/agent/self"
+		}
+		s.keys[k] = env[k]
+		code, _, err := s.call(ctx, k, "GET", route, nil)
+		if err != nil {
+			return false, err
+		}
+		if code != http.StatusOK {
+			return false, fmt.Errorf("examples/.env exists but its %s is not accepted (HTTP %d): the stack was reset "+
+				"or the key expired; %s", k, code, resetHint)
+		}
 	}
 	return true, nil
 }
@@ -202,7 +234,7 @@ func (s *setup) tenant(ctx context.Context) error {
 			return err
 		}
 		if _, err := s.must(ctx, 201, "alice", "POST", "/v1/credentials", map[string]any{"id": cred,
-			"kind": identity.KindPrincipal, "principal_id": id(p), "hash": hash, "expires_in_days": 30}); err != nil {
+			"kind": identity.KindPrincipal, "principal_id": id(p), "hash": hash, "expires_in_days": keyDays}); err != nil {
 			return err
 		}
 		if _, err := s.must(ctx, 204, "bob", "POST", "/v1/credentials/"+cred.String()+"/approve", nil); err != nil {
@@ -310,7 +342,7 @@ func (s *setup) agent(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.must(ctx, 201, "erin", "POST", "/v1/credentials", map[string]any{"id": cred,
-		"kind": identity.KindAgent, "agent_version_id": id(v), "hash": hash, "expires_in_days": 30}); err != nil {
+		"kind": identity.KindAgent, "agent_version_id": id(v), "hash": hash, "expires_in_days": keyDays}); err != nil {
 		return err
 	}
 	if _, err := s.must(ctx, 204, "rita", "POST", "/v1/credentials/"+cred.String()+"/approve", nil); err != nil {

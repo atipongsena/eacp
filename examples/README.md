@@ -71,3 +71,6 @@ rm examples/.env
 
 `down -v` removes the database volume, and with it the examples tenant. Remove `examples/.env` too: its keys are
 worthless once the tenant is gone, and the next `setup.sh` writes a new one.
+
+Clean up the same way when `setup.sh` says so: when it stopped part way (it writes `examples/.env` only at the end,
+so the tenant it left behind has no keys), or when a key in `examples/.env` no longer works. The keys last 90 days.
