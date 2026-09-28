@@ -5,8 +5,10 @@ package security
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -144,7 +146,7 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":9`) {
+	if err != nil || !manifestBindings(t, "connector-secrets.dev.json").Match(logs) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
 	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") ||
@@ -399,4 +401,21 @@ func networkMembers(t *testing.T, network string) []string {
 	}
 	slices.Sort(on)
 	return on
+}
+
+// manifestBindings matches the "bindings":N a service logs once it has
+// loaded every entry of the development manifest compose mounts into it.
+func manifestBindings(t *testing.T, name string) *regexp.Regexp {
+	t.Helper()
+	raw, err := os.ReadFile("../../deployments/docker/secrets/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Secrets []json.RawMessage `json:"secrets"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil || len(manifest.Secrets) == 0 {
+		t.Fatalf("%s: %d entries (%v)", name, len(manifest.Secrets), err)
+	}
+	return regexp.MustCompile(fmt.Sprintf(`"bindings":%d\D`, len(manifest.Secrets)))
 }

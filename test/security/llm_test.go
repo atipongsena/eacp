@@ -71,7 +71,7 @@ func TestOnlyTheGatewayHoldsProviderSecrets(t *testing.T) {
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "llm-gateway", "fakellm").CombinedOutput()
-	if err != nil || !strings.Contains(string(logs), `"bindings":1`) {
+	if err != nil || !manifestBindings(t, "llm-secrets.dev.json").Match(logs) {
 		t.Fatalf("gateway did not load its credential (err=%v): %s", err, logs)
 	}
 	if strings.Contains(string(logs), "dev-only-fakellm-key") {
