@@ -160,3 +160,15 @@ func TestReplaySelection(t *testing.T) {
 		t.Fatalf("ReplayOf(19) = %d, want 9", ReplayOf(19))
 	}
 }
+
+// Replays create no action, so the throughput rule compares completions
+// with the new actions offered, not with every request.
+func TestNewActionsOfferedExcludeReplays(t *testing.T) {
+	var samples []Sample
+	for i := range 40 {
+		samples = append(samples, Sample{Index: i, Measured: i >= 20, Replay: IsReplay(i)})
+	}
+	if got := NewActionsOffered(samples, 2*time.Second); got != 9.5 {
+		t.Fatalf("NewActionsOffered = %v, want 9.5 (19 new actions over 2 s)", got)
+	}
+}

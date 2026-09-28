@@ -278,8 +278,10 @@ func (rn *runner) actionStep(ctx context.Context, level int, rate float64) bench
 		st.NA["budget_reserve"] = "no budget_reserve calls recorded (track_functions)"
 	}
 	sm.resources(&st)
-	st.Saturated = bench.SaturationReasons(bench.Verdict{Throughput: st.CompletedThroughput, Offered: rate,
-		Requests: st.Requests, Errors: st.Errors, Throttled: st.Throttled, EndToEndP99Ms: st.EndToEnd.P99Ms})
+	// Replays create no action: completions are compared with new actions.
+	st.Saturated = bench.SaturationReasons(bench.Verdict{Throughput: st.CompletedThroughput,
+		Offered: bench.NewActionsOffered(load.Samples, rn.cfg.measure), Requests: st.Requests, Errors: st.Errors,
+		Throttled: st.Throttled, EndToEndP99Ms: st.EndToEnd.P99Ms})
 	logf("%d agents, %v/s: completed %.1f/s, errors %d, 429 %d, e2e %s ms, %s", len(rn.s.agents), rate,
 		st.CompletedThroughput, st.Errors, st.Throttled, p50p99(st.EndToEnd), status(st))
 	return st

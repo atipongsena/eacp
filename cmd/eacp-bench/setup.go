@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -227,7 +228,7 @@ func (s *setup) register(ctx context.Context, name string) (agent, error) {
 	}
 	for _, b := range [][2]string{{"THB", thbLimit}, {"USD", usdLimit}} {
 		acct, err := s.api.must(ctx, 201, "alice", "POST", "/v1/budgets", map[string]any{
-			"name": name + "-" + b[0], "unit": b[0], "agent_id": id(a)})
+			"name": name + "-" + strings.ToLower(b[0]), "unit": b[0], "agent_id": id(a)})
 		if err != nil {
 			return agent{}, err
 		}

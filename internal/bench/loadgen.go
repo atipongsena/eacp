@@ -151,3 +151,15 @@ func Counts(samples []Sample) (requests, errors, throttled int) {
 	}
 	return requests, errors, throttled
 }
+
+// NewActionsOffered is the rate of measured requests that are not replays:
+// the actions a step asked the system to create and complete.
+func NewActionsOffered(samples []Sample, measure time.Duration) float64 {
+	n := 0
+	for _, s := range samples {
+		if s.Measured && !s.Replay {
+			n++
+		}
+	}
+	return float64(n) / measure.Seconds()
+}

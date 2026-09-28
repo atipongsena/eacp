@@ -44,3 +44,6 @@ __pycache__/
 
 # Pinned local tools (Helm), downloaded and checksum-verified per docs/KUBERNETES.md
 /.tools/
+
+# load benchmark raw results (scripts/bench.sh); baselines live in docs/benchmarks/
+/bench-results/

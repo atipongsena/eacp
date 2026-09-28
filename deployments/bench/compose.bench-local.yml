@@ -1,0 +1,12 @@
+# The bench stack with the API on the local PDP (scripts/bench.sh, PDP
+# local). EACP_AGT_PDP_URL set with the local provider is a startup error,
+# so the AGT settings are blanked; the sidecar still runs but is not asked.
+
+services:
+  controlplane-api:
+    environment:
+      EACP_GOVERNANCE_PROVIDER: "local"
+      EACP_AGT_PDP_URL: ""
+      EACP_AGT_PDP_CA_FILE: ""
+      EACP_AGT_PDP_CERT_FILE: ""
+      EACP_AGT_PDP_KEY_FILE: ""

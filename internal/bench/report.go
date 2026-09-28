@@ -140,7 +140,8 @@ func Report(inputs []Input) (string, error) {
 
 	for _, p := range all {
 		w("\n## Action path: %s PDP\n\n", p.r.PDP)
-		w("Latencies in ms as P50 / P95 / P99.\n\n")
+		w("Latencies in ms as P50 / P95 / P99. Offered/s counts every request; 5%% of them replay an earlier " +
+			"idempotency key and create no action, so Completed/s is judged against the other 95%%.\n\n")
 		w("| Agents | Offered/s | Admission | Governance | Queue wait | Lease | External | Overhead | End-to-end | " +
 			"Idempotency | Budget reserve (mean) | Completed/s | Errors | 429 | Terminal | Status |\n")
 		w("|%s\n", strings.Repeat("---|", 16))

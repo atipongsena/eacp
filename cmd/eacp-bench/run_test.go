@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,5 +66,33 @@ func TestClimbStopsAtTheFirstBadStep(t *testing.T) {
 	_, best = climb([]float64{25, 50}, func(r float64) bench.Step { return bench.Step{Offered: r, Incomplete: true} })
 	if best != 0 {
 		t.Fatalf("every step incomplete gave best %v, want 0", best)
+	}
+}
+
+// The overrides printed in every report are the ones the bench compose
+// files actually set.
+func TestOverridesMatchTheComposeFiles(t *testing.T) {
+	read := func(name string) string {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "deployments", "bench", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	bench, local := read("compose.bench.yml"), read("compose.bench-local.yml")
+	for _, pdp := range []string{"local", "microsoft-agt"} {
+		for _, o := range overrides(pdp) {
+			file := bench
+			if o.Name == "EACP_GOVERNANCE_PROVIDER" {
+				file = local
+			}
+			want := fmt.Sprintf("%s: %q", o.Name, o.Value)
+			if o.Name == "track_functions" {
+				want = `"track_functions=pl"`
+			}
+			if !strings.Contains(file, want) {
+				t.Errorf("%s: the compose files do not set %s", pdp, want)
+			}
+		}
 	}
 }

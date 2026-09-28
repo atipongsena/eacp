@@ -1,0 +1,34 @@
+# Load benchmark stack (MASTER_PLAN §104, docs/BENCHMARKS.md): the stack of
+# docker-compose.yml as its own compose project (eacp-bench) with its own
+# volumes and host ports, so it never touches a development or demo stack.
+# Use it only through scripts/bench.sh:
+#
+#   docker compose -p eacp-bench -f docker-compose.yml -f deployments/bench/compose.bench.yml [-f deployments/bench/compose.bench-local.yml] ...
+#
+# Bench-only settings, each printed in the report next to its default
+# (cmd/eacp-bench overrides; TestOverridesMatchTheComposeFiles):
+# the admission limits are raised so the run measures the system rather than
+# the limit, the worker runs more calls at once, and PostgreSQL tracks
+# PL/pgSQL function times (eacp.budget_reserve's mean).
+
+services:
+  postgres:
+    command: ["postgres", "-c", "track_functions=pl"]
+    ports: !override
+      - "127.0.0.1:55434:5432"
+
+  controlplane-api:
+    environment:
+      EACP_ACTION_MAX_QUEUED_PER_TENANT: "100000"
+      EACP_ACTION_MAX_QUEUED_GLOBAL: "100000"
+      EACP_ACTION_MAX_PENDING_PER_TENANT: "100000"
+    ports: !override
+      - "127.0.0.1:28080:8080"
+
+  llm-gateway:
+    ports: !override
+      - "127.0.0.1:28083:8083"
+
+  execution-worker:
+    environment:
+      EACP_WORKER_CONCURRENCY: "32"

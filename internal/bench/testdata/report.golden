@@ -46,7 +46,7 @@ Raw results (SHA-256):
 
 ## Action path: local PDP
 
-Latencies in ms as P50 / P95 / P99.
+Latencies in ms as P50 / P95 / P99. Offered/s counts every request; 5% of them replay an earlier idempotency key and create no action, so Completed/s is judged against the other 95%.
 
 | Agents | Offered/s | Admission | Governance | Queue wait | Lease | External | Overhead | End-to-end | Idempotency | Budget reserve (mean) | Completed/s | Errors | 429 | Terminal | Status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -80,7 +80,7 @@ Against a fake provider that answers immediately: this is the gateway's own over
 
 ## Action path: microsoft-agt PDP
 
-Latencies in ms as P50 / P95 / P99.
+Latencies in ms as P50 / P95 / P99. Offered/s counts every request; 5% of them replay an earlier idempotency key and create no action, so Completed/s is judged against the other 95%.
 
 | Agents | Offered/s | Admission | Governance | Queue wait | Lease | External | Overhead | End-to-end | Idempotency | Budget reserve (mean) | Completed/s | Errors | 429 | Terminal | Status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
