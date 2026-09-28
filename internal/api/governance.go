@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"eacp/internal/approval"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/approval"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request, c identity.Caller) error {

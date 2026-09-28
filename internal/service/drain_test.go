@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/config"
-	"eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/service"
 )
 
 type served struct {

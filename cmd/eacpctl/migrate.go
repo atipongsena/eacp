@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 const (

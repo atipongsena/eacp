@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"eacp/internal/identity"
-	"eacp/internal/kill"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/kill"
 )
 
 func (s *Server) registerKill(mux *http.ServeMux) {

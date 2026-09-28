@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"eacp/internal/bench"
+	"github.com/atipongsena/eacp/internal/bench"
 )
 
 func main() {

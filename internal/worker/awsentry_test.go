@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/jwttest"
 )
 
 var awsTenant = uuid.MustParse("00000000-0000-4000-8000-0000000000aa")

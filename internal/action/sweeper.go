@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // SweeperComponent is the system actor name the sweeper runs as.

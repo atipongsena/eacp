@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"eacp/internal/config"
-	"eacp/internal/fakeerp"
-	"eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/service"
 )
 
 func loadHandler(tokenPath, dataPath string, o fakeerp.Options) (http.Handler, string, error) {

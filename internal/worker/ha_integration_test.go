@@ -15,16 +15,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/action"
-	"eacp/internal/audit"
-	"eacp/internal/connector"
-	"eacp/internal/finops"
-	"eacp/internal/governance"
-	"eacp/internal/incident"
-	"eacp/internal/messaging"
-	"eacp/internal/release"
-	"eacp/internal/storage"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/audit"
+	"github.com/atipongsena/eacp/internal/connector"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/incident"
+	"github.com/atipongsena/eacp/internal/messaging"
+	"github.com/atipongsena/eacp/internal/release"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // syncBuffer is a log sink shared by goroutines.

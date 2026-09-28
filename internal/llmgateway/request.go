@@ -13,7 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/llm"
 )
 
 // maxDepth bounds the nesting of a request body.

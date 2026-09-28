@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/identity"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 func (s *Server) registerDependency(mux *http.ServeMux) {

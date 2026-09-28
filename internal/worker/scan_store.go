@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // ScanCandidate is an MCP server due for a scan (ADR-023 §2).

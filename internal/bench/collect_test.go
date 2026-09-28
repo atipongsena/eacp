@@ -7,10 +7,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/bench"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage/pgtest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/bench"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // collected drives one action to SUCCEEDED and leaves another QUEUED.

@@ -19,7 +19,7 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/google/uuid"
 
-	"eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/fakeerp"
 )
 
 const (

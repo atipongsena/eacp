@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/jwttest"
-	"eacp/internal/llm"
-	"eacp/internal/llmgateway"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/llmgateway"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func wantSettled(t *testing.T, got llm.Settlement, outcome string, status int, u llm.Usage) {

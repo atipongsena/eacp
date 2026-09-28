@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/fakeerp"
-	"eacp/internal/jwttest"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 const exchangedAccount = "eacp-erp@eacp-demo.iam.gserviceaccount.com"

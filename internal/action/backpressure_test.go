@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/action"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // queueCappedContractSQL is SafeContractSQL with at most two released,

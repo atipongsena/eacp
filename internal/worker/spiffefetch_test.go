@@ -14,8 +14,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"eacp/internal/logging"
-	"eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/spiffetest"
 )
 
 // svidClient is a spiffeClient for agent a (tcp, development) on clock c.

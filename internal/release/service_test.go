@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/governance"
-	"eacp/internal/registry"
-	"eacp/internal/release"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/release"
 )
 
 // pdp is the local provider, which a test can take down, counting calls.

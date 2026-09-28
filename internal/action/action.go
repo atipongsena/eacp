@@ -26,9 +26,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"eacp/internal/governance"
-	"eacp/internal/registry"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // Errors returned by the Engine, besides *registry.Error kinds.

@@ -11,9 +11,9 @@ import (
 	"os"
 	"strings"
 
-	"eacp/internal/config"
-	"eacp/internal/fakea2a"
-	"eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/fakea2a"
+	"github.com/atipongsena/eacp/internal/service"
 )
 
 func loadHandler(getenv func(string) string) (http.Handler, string, error) {

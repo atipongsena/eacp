@@ -28,7 +28,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 const (

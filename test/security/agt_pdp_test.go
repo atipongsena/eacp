@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
 )
 
 // pdpProbe connects to the AGT sidecar from inside the pdp network (a

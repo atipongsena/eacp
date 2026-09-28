@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/finops"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 func TestGatewayUsageIsInChargeback(t *testing.T) {

@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"eacp/internal/logging"
-	"eacp/internal/spiffetest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const spiffeWorker = "spiffe://eacp.test/ns/eacp/sa/eacp-worker"

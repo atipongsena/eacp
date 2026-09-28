@@ -15,9 +15,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector/a2a"
-	"eacp/internal/governance"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector/a2a"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const token = "a2a-test-canary"

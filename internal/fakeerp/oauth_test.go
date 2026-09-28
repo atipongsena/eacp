@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/fakeerp"
 )
 
 const (

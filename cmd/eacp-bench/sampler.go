@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/bench"
+	"github.com/atipongsena/eacp/internal/bench"
 )
 
 const sampleEvery = 2 * time.Second

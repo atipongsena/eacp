@@ -28,10 +28,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/governance"
-	"eacp/internal/identity"
-	"eacp/internal/llm"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // Bounds (ADR-031).

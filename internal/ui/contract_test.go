@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/internal/api"
-	"eacp/internal/ui"
+	"github.com/atipongsena/eacp/internal/api"
+	"github.com/atipongsena/eacp/internal/ui"
 )
 
 var (

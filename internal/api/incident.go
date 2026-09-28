@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/identity"
-	"eacp/internal/incident"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/incident"
 )
 
 var (

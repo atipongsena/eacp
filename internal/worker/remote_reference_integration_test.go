@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // remoteConnector returns whatever result its function makes of the call.

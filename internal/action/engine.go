@@ -17,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/approval"
-	"eacp/internal/governance"
-	"eacp/internal/registry"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/approval"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // Limits are the admission limits (MASTER_PLAN §26, ADR-022 §1): released,

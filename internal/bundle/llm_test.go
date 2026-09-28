@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 // A bundle does not declare models (ADR-031): a new allowlist it proposes for

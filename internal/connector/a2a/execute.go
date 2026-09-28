@@ -15,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
-	"eacp/internal/governance"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // Task states (A2A 1.0).

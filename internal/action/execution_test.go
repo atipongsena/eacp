@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/action"
-	"eacp/internal/registry"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // claim leases a QUEUED action for worker w (T14).

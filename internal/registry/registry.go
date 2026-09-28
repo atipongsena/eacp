@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // Error kinds. Every error returned by Service matches exactly one of them

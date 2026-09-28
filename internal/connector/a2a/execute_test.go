@@ -20,10 +20,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector/a2a"
-	"eacp/internal/fakeerp"
-	"eacp/internal/jwttest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector/a2a"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // rpc is one JSON-RPC request the fake agent received.

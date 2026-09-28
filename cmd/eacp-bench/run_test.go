@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/bench"
+	"github.com/atipongsena/eacp/internal/bench"
 )
 
 func TestResolveQuickAndFull(t *testing.T) {

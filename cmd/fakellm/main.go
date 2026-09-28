@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"eacp/internal/config"
-	"eacp/internal/fakellm"
-	"eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/fakellm"
+	"github.com/atipongsena/eacp/internal/service"
 )
 
 func loadHandler(keyPath, dataPath string) (http.Handler, string, error) {

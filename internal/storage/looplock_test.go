@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // beginIn opens a transaction in tenant's context and returns it; the test

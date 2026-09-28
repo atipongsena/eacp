@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/budget"
-	"eacp/internal/finops"
-	"eacp/internal/governance"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/budget"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 // applyGovernance makes one identity, policy, budget or price step's write

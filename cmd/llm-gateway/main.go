@@ -18,13 +18,13 @@ import (
 	"net/http"
 	"os"
 
-	"eacp/internal/config"
-	"eacp/internal/governance"
-	"eacp/internal/identity"
-	"eacp/internal/llm"
-	"eacp/internal/llmgateway"
-	"eacp/internal/service"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/llmgateway"
+	"github.com/atipongsena/eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func main() {

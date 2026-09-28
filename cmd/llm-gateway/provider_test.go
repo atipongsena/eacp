@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"eacp/integrations/governance/microsoftagt"
-	"eacp/internal/config"
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 func health(versions microsoftagt.Versions) http.Handler {

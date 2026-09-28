@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"eacp/internal/incident"
-	"eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/incident"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
 )
 
 func killedTool(t *testing.T, f *registrytest.Fixture) {

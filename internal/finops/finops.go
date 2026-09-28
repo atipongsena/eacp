@@ -23,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/registry"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // SystemActor is the component that raises alerts (storage.SetSystem).

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/logging"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // idp is a token endpoint whose answers the test controls.

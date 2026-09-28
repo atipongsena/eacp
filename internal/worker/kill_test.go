@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"eacp/internal/action"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func setKillAs(t *testing.T, v *env, operator, scope string, target uuid.UUID, killed bool) int64 {

@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/finops"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // finopsReader may read spend: admins manage it, operators watch it,

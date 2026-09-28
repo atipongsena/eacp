@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/approval"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/approval"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 const reviewPolicy = `{"format_version":1,"rules":[{"id":"review","verdict":"escalate","reason":"needs review",` +

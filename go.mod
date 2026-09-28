@@ -1,4 +1,4 @@
-module eacp
+module github.com/atipongsena/eacp
 
 go 1.27.0
 

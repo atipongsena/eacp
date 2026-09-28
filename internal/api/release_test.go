@@ -5,10 +5,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/api"
-	"eacp/internal/identity"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/release"
+	"github.com/atipongsena/eacp/internal/api"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/release"
 )
 
 func TestReleaseAPI(t *testing.T) {

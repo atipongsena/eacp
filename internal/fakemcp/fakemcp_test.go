@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector/mcp"
-	"eacp/internal/fakemcp"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector/mcp"
+	"github.com/atipongsena/eacp/internal/fakemcp"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const token = "fakemcp-test-canary"

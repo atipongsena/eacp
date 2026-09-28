@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/internal/storage/pgtest"
-	"eacp/migrations"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/migrations"
 )
 
 func runWith(t *testing.T, env map[string]string, args ...string) (string, error) {

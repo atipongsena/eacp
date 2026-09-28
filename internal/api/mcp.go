@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // registerMCP mounts the MCP registry routes (ADR-023): scan state and

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/fakeerp"
-	"eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/jwttest"
 )
 
 const (

@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"eacp/internal/budget"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/budget"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // budgetReader may see budget accounts: admins manage them, operators

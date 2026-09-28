@@ -9,8 +9,8 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"eacp/internal/messaging"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/messaging"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 func (v *env) hints() *messaging.Hints {

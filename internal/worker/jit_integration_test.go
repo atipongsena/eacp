@@ -22,16 +22,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/action"
-	"eacp/internal/connector"
-	"eacp/internal/fakeerp"
-	"eacp/internal/governance"
-	"eacp/internal/jwttest"
-	"eacp/internal/logging"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/connector"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // jitEnv is a tenant whose ERP connector authenticates with tokens minted by

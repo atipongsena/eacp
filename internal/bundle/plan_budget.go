@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/budget"
-	"eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/budget"
+	"github.com/atipongsena/eacp/internal/finops"
 )
 
 // budgets plans the declared accounts. Accounts are created parents first;

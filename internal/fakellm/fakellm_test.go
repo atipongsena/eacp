@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/fakellm"
+	"github.com/atipongsena/eacp/internal/fakellm"
 )
 
 const key = "fakellm-provider-key-canary"

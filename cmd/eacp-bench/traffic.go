@@ -9,7 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 
-	"eacp/internal/bench"
+	"github.com/atipongsena/eacp/internal/bench"
 )
 
 // traffic builds one step's requests: request i comes from a uniformly

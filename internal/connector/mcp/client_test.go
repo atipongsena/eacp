@@ -15,10 +15,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector/mcp"
-	"eacp/internal/connector/mcp/mcptest"
-	"eacp/internal/jwttest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector/mcp"
+	"github.com/atipongsena/eacp/internal/connector/mcp/mcptest"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const token = "mcp-test-canary"

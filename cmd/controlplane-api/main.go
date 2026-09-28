@@ -22,15 +22,15 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	"eacp/internal/action"
-	"eacp/internal/api"
-	"eacp/internal/config"
-	"eacp/internal/finops"
-	"eacp/internal/incident"
-	"eacp/internal/messaging"
-	"eacp/internal/release"
-	"eacp/internal/service"
-	"eacp/internal/ui"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/api"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/incident"
+	"github.com/atipongsena/eacp/internal/messaging"
+	"github.com/atipongsena/eacp/internal/release"
+	"github.com/atipongsena/eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/ui"
 )
 
 // relayInterval is the idle wait between outbox relay passes.

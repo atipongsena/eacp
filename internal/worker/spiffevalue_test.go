@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/spiffetest"
 )
 
 // spiffeStore loads bindings against agent a on clock c, logging to buf.

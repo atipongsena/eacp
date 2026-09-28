@@ -16,7 +16,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	ooption "github.com/openai/openai-go/v3/option"
 
-	"eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/llm"
 )
 
 // clearSDKEnv keeps a developer's own provider settings out of the test.

@@ -15,11 +15,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/api"
-	"eacp/internal/identity"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/api"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 type harness struct {

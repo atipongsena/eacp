@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/logging"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func rsaKey(t *testing.T, bits int) *rsa.PrivateKey {

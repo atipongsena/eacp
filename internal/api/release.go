@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/identity"
-	"eacp/internal/release"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/release"
 )
 
 // Release roles (ADR-018 §5): the registry opens and records evidence, a

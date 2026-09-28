@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/spiffetest"
 )
 
 var spiffeTenant = uuid.MustParse("00000000-0000-4000-8000-0000000000a8")

@@ -14,8 +14,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	eacpmcp "eacp/internal/connector/mcp"
-	"eacp/internal/worker"
+	eacpmcp "github.com/atipongsena/eacp/internal/connector/mcp"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func sdkServer(t *testing.T, opts *sdk.ServerOptions, httpOpts *sdk.StreamableHTTPOptions) string {

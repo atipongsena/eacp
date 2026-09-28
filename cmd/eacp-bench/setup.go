@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // benchTenant has the ERP and LLM entries in the development secrets

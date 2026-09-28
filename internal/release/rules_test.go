@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // adminExec runs sql as the database owner with triggers disabled, to

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 var sonnet = registry.NewLLMModel{Name: "sonnet", Provider: "anthropic", BaseURL: "https://api.anthropic.test",

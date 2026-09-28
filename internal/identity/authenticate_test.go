@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/identity"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // issue registers a credential the way ADR-003 §5 prescribes: the holder

@@ -13,10 +13,10 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
 
-	"eacp/internal/jwttest"
-	"eacp/internal/logging"
-	"eacp/internal/spiffetest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // exchanged answers a token exchange the way GCP's STS does.

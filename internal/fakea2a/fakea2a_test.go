@@ -14,9 +14,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector/a2a"
-	"eacp/internal/fakea2a"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector/a2a"
+	"github.com/atipongsena/eacp/internal/fakea2a"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const token = "fakea2a-test-token"

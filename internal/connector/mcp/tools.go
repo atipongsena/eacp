@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"eacp/internal/governance"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // Tool names EACP accepts: the characters the specification recommends,

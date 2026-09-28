@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector/mcp"
-	"eacp/internal/jwttest"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector/mcp"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const a2aEndpoint = "http://a2a.test:9000/a2a"

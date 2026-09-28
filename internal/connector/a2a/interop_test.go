@@ -20,8 +20,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	eacpa2a "eacp/internal/connector/a2a"
-	"eacp/internal/worker"
+	eacpa2a "github.com/atipongsena/eacp/internal/connector/a2a"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // executor runs fn for each message and cancels a task on request.

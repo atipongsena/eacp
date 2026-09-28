@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/audit"
-	"eacp/internal/identity"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/audit"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 func newFlags(name string) *flag.FlagSet {

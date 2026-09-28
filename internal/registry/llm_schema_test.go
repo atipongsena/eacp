@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 const llmModelSQL = `INSERT INTO eacp.llm_models (tenant_id, name, provider, base_url, upstream_model, secret_ref,

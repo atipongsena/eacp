@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // Protocol revisions (research/REFERENCES.md, MCP specification).

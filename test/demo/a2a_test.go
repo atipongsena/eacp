@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // tenantD is the A2A demo's tenant: the local connector-secrets manifest

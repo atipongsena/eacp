@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // Cast of tenant A principals and their (approved) roles.

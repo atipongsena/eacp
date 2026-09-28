@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // Invariant 8 (MASTER_PLAN §103): tenant isolation cannot be bypassed.

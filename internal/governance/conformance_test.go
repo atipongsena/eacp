@@ -9,8 +9,8 @@ import (
 	"os"
 	"testing"
 
-	"eacp/internal/governance"
-	"eacp/internal/governance/conformance"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance/conformance"
 )
 
 const referencePath = "../../test/conformance/governance_reference.json"

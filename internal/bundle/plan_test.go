@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 var (

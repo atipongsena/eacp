@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
 )
 
 const delegateSchema = `{"additionalProperties":false,"minProperties":1,"properties":{"data":{"type":"object"},"text":{"maxLength":65536,"minLength":1,"type":"string"}},"type":"object"}`

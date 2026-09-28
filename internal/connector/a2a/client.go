@@ -19,8 +19,8 @@ import (
 	"regexp"
 	"time"
 
-	"eacp/internal/governance"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // Protocol constants (research/REFERENCES.md, a2a-go v2.6.0).

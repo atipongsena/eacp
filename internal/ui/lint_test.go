@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/internal/ui"
+	"github.com/atipongsena/eacp/internal/ui"
 )
 
 // banned are sinks and APIs the console must never use (ADR-028): markup

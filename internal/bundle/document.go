@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 // MaxSteps is the most steps one change set may have (the ordinal CHECK of

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/action"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 func (v env) sweep() action.Stats {

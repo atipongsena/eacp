@@ -19,7 +19,7 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 
-	"eacp/migrations"
+	"github.com/atipongsena/eacp/migrations"
 )
 
 // Open creates a connection pool and verifies connectivity.

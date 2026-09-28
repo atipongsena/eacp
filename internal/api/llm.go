@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/identity"
-	"eacp/internal/llm"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 // llmCallReader may read the LLM-call ledger (ADR-031).

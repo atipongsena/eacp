@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // driftedTools is what the SAP MCP server advertises after its "vendor

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 // policy plans the tenant policy: a new version when the declared content

@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 // principal plans a declared principal and its roles. Every live grant of a

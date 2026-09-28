@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/integrations/governance/microsoftagt"
-	"eacp/internal/action"
-	"eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
 )
 
 const allowAll = `{"format_version":1,"rules":[{"id":"all","verdict":"allow","reason":"permitted"}]}`

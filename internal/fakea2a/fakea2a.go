@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 // Task states (A2A 1.0).

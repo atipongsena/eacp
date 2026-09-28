@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/logging"
 )
 
 // maxSPIFFEID bounds the worker's SPIFFE ID in the secrets file.

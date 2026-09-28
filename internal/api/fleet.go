@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/fleet"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/fleet"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // fleetReader may see the fleet view: those who contain, grant or audit.

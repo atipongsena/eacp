@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/config"
 )
 
 func TestConsoleIsMountedUnlessDisabled(t *testing.T) {

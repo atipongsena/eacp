@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/action"
-	"eacp/internal/registry"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // Contracts with a 200 ms call budget, so an unknown outcome settles fast.

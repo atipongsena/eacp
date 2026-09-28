@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/logging"
 )
 
 // The Vault client (ADR-019 §3c): the worker logs in to Vault with its own

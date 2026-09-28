@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/logging"
 )
 
 // TestRepeatedVaultReadsKeepTheRedactionSetConstant: a cached value used
@@ -107,7 +107,7 @@ func TestAFailedMintDoesNotBlockAvailability(t *testing.T) {
 	}))
 	t.Cleanup(idp.Close)
 	body := vaultFile(t, f.srv.URL, 30, fmt.Sprintf(`"oauth2":{"token_url":%q,"client_id":"eacp-worker",
-		"client_secret_vault":{"path":"eacp/idp","key":"client_secret"}}`, idp.URL))
+		"client_secret_vault":{"path":"github.com/atipongsena/eacp/idp","key":"client_secret"}}`, idp.URL))
 	s, err := LoadSecrets(writeFile(t, "secrets.json", body), AllowPlainTokenURL(), WithClock(c.now))
 	if err != nil {
 		t.Fatal(err)

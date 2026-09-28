@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 func TestLoadStateReadsPeopleGroupsPolicyBudgetsAndPrices(t *testing.T) {

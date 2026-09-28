@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/release"
+	"github.com/atipongsena/eacp/internal/release"
 )
 
 // breached returns a service whose tenant has one CANARY release with a

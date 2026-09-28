@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/jwttest"
-	"eacp/internal/logging"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // gcp is an STS and an IAM Credentials endpoint on one server, as the test

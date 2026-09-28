@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/llm"
-	"eacp/internal/registry"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 func decision() llm.Decision {

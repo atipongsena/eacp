@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"eacp/internal/config"
-	"eacp/internal/fakemcp"
-	"eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/fakemcp"
+	"github.com/atipongsena/eacp/internal/service"
 )
 
 func loadHandler(tokenPath, toolsFile string) (http.Handler, string, error) {

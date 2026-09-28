@@ -13,13 +13,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/action"
-	"eacp/internal/approval"
-	"eacp/internal/connector"
-	"eacp/internal/governance"
-	"eacp/internal/registry"
-	"eacp/internal/storage/pgtest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/approval"
+	"github.com/atipongsena/eacp/internal/connector"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // loops runs the worker, reconciler and sweeper loops as the services do,

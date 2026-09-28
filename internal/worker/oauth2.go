@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/logging"
 )
 
 const (

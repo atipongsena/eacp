@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eacp/internal/bench"
+	"github.com/atipongsena/eacp/internal/bench"
 )
 
 // machine describes the host, Docker and PostgreSQL. A field that cannot be

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"eacp/internal/llm"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // api is a provider request shape the gateway serves.

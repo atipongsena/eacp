@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
 )
 
 const allowPolicy = `{"format_version":1,"rules":[{"id":"all","verdict":"allow","reason":"permitted"}]}`

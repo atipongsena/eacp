@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 // File is the reference set. Field order is the on-disk order.

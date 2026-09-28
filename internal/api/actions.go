@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
-	"eacp/internal/action"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 const (

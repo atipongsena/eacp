@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 // Principal is a declared principal. Its name, kind and subject are

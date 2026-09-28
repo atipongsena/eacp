@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 const bundleDoc = `{

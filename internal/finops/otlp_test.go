@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/finops"
 )
 
 // span builds an OTLP JSON span with the given attributes (raw JSON values).

@@ -22,13 +22,13 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"eacp/internal/config"
-	"eacp/internal/connector"
-	"eacp/internal/connector/a2a"
-	"eacp/internal/connector/mcp"
-	"eacp/internal/messaging"
-	"eacp/internal/service"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/connector"
+	"github.com/atipongsena/eacp/internal/connector/a2a"
+	"github.com/atipongsena/eacp/internal/connector/mcp"
+	"github.com/atipongsena/eacp/internal/messaging"
+	"github.com/atipongsena/eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func main() {

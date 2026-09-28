@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const maxResponseBytes = 16 << 10

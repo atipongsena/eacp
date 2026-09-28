@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/registry"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 // Health values (ADR-024 §5). They are observations, never decisions.

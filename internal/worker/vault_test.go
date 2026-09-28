@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/logging"
 )
 
 const vaultCanary = "vault-canary-7c2e"
@@ -184,7 +184,7 @@ func vaultClientFor(t *testing.T, f *fakeVault, c *vclock, logs *lockedBuffer, e
 	return v
 }
 
-var erpRef = vaultRef{Path: "eacp/erp", Key: "token"}
+var erpRef = vaultRef{Path: "github.com/atipongsena/eacp/erp", Key: "token"}
 
 func TestVaultAppRoleLogin(t *testing.T) {
 	f := newFakeVault(t)
@@ -284,7 +284,7 @@ func TestVaultCachesAPathForTheRefreshInterval(t *testing.T) {
 	}
 	f.put("secret/data/eacp/erp", map[string]any{"token": "v2", "other": "o"})
 	c.add(29 * time.Second)
-	if got, _ := v.value(ctx, vaultRef{Path: "eacp/erp", Key: "other"}); got.Reveal() != "o" {
+	if got, _ := v.value(ctx, vaultRef{Path: "github.com/atipongsena/eacp/erp", Key: "other"}); got.Reveal() != "o" {
 		t.Fatal(got.Reveal())
 	}
 	if got, _ := v.value(ctx, erpRef); got.Reveal() != "v1" {

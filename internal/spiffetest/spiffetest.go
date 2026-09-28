@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/jwttest"
 )
 
 // Agent is a fake Workload API. By default it answers every FetchJWTSVID

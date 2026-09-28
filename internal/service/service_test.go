@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/config"
-	"eacp/internal/service"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/service"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 func envFrom(m map[string]string) func(string) string {

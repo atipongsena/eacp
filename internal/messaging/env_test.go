@@ -15,14 +15,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"eacp/internal/action"
-	"eacp/internal/governance"
-	"eacp/internal/messaging"
-	"eacp/internal/messaging/natstest"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/messaging"
+	"github.com/atipongsena/eacp/internal/messaging/natstest"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"

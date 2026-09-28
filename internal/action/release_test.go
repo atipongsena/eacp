@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/action"
 )
 
 // ADR-018 §4: the engine denies a canary candidate's action outside its

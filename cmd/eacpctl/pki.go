@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
 )
 
 type names []string

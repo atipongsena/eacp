@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/action"
-	"eacp/internal/budget"
-	"eacp/internal/registry"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/budget"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // The env payload costs 2 400 000 THB under registrytest.CostedContractSQL.

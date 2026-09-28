@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/integrations/governance/microsoftagt"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // The demo tenants: the local connector-secrets manifest binds the Fake ERP

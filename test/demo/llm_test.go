@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // tenantL is the LLM gateway demo's tenant: the gateway's provider manifest

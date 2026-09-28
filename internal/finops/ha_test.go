@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/finops"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 func unpricedUsage(t *testing.T, f *registrytest.Fixture) {

@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"eacp/internal/bundle"
-	"eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/bundle"
+	"github.com/atipongsena/eacp/internal/identity"
 )
 
 // Governance-as-Code (ADR-026). Planning and submitting are open to those

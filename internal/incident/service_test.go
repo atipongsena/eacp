@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"eacp/internal/incident"
-	"eacp/internal/registry"
-	"eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/incident"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
 )
 
 func as(f *registrytest.Fixture, name string) registry.Actor {

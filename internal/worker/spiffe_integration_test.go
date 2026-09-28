@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"eacp/internal/fakeerp"
-	"eacp/internal/spiffetest"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // svidAgent is a fake SPIRE agent whose SVIDs name issuer https://spire.test

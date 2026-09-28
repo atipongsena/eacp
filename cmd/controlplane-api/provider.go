@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"eacp/integrations/governance/microsoftagt"
-	"eacp/internal/config"
-	"eacp/internal/governance"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/governance"
 )
 
 // governanceProvider builds the configured PDP (ADR-002 §8). For the AGT

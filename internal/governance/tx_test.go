@@ -8,10 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/governance"
-	"eacp/internal/registry"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 func TestTxCreatesAndActivatesInTheCallersTransaction(t *testing.T) {

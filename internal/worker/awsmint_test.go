@@ -17,8 +17,8 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
 
-	"eacp/internal/logging"
-	"eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/spiffetest"
 )
 
 const (

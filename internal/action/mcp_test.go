@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"eacp/internal/action"
+	"github.com/atipongsena/eacp/internal/action"
 )
 
 // mcpScan is a successful scan listing get_po with description desc.

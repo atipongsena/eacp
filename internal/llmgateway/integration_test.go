@@ -21,14 +21,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/fakellm"
-	"eacp/internal/governance"
-	"eacp/internal/identity"
-	"eacp/internal/llm"
-	"eacp/internal/llmgateway"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/fakellm"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/llmgateway"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const (

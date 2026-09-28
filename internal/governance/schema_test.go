@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
-	"eacp/migrations"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/migrations"
 )
 
 const simplePolicy = `{"format_version":1,"rules":[{"id":"allow-read","match":{"operation":"read"},"verdict":"allow","reason":"read permitted"}]}`

@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {

@@ -18,7 +18,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 var consumerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
@@ -172,7 +172,7 @@ func (h *Hints) handle(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 	carrier := propagation.MapCarrier{"traceparent": msg.Headers().Get("traceparent")}
-	ctx, span := otel.Tracer("eacp/messaging").Start(
+	ctx, span := otel.Tracer("github.com/atipongsena/eacp/messaging").Start(
 		otel.GetTextMapPropagator().Extract(ctx, carrier), "work hint")
 	defer span.End()
 

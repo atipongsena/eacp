@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"eacp/internal/governance"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 // displayMembers leave the certified definition: they change nothing an

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"eacp/integrations/governance/microsoftagt"
-	"eacp/internal/governance"
-	"eacp/internal/governance/conformance"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/internal/governance"
+	"github.com/atipongsena/eacp/internal/governance/conformance"
 )
 
 const referencePath = "../../../test/conformance/governance_reference.json"

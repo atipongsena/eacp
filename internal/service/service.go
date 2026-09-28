@@ -22,13 +22,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"eacp/internal/config"
-	"eacp/internal/health"
-	"eacp/internal/httpserver"
-	"eacp/internal/logging"
-	"eacp/internal/storage"
-	"eacp/internal/telemetry"
-	"eacp/migrations"
+	"github.com/atipongsena/eacp/internal/config"
+	"github.com/atipongsena/eacp/internal/health"
+	"github.com/atipongsena/eacp/internal/httpserver"
+	"github.com/atipongsena/eacp/internal/logging"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/telemetry"
+	"github.com/atipongsena/eacp/migrations"
 )
 
 // readinessTimeout bounds each /readyz evaluation.

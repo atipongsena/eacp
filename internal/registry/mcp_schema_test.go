@@ -15,9 +15,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"eacp/internal/registry"
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
 )
 
 type mcpTool struct{ remote, def, display string }

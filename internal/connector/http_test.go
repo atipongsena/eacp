@@ -17,10 +17,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/connector"
-	"eacp/internal/fakeerp"
-	"eacp/internal/jwttest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/connector"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const token = "connector-test-canary"

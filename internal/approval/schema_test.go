@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"eacp/internal/registry/registrytest"
-	"eacp/internal/storage"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
+	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 const policyJSON = `{"format_version":1,"rules":[{"id":"high-risk","match":{"risk_class":"high"},"verdict":"escalate","reason":"high risk","approval":{"quorum":2,"eligible_roles":["approver"],"ttl_seconds":600}}]}`

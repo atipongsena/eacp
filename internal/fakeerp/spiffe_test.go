@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/fakeerp"
 )
 
 const (

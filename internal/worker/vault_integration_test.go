@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/fakeerp"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/fakeerp"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // jitVault is a minimal Vault: AppRole login and one KV v2 secret,
@@ -76,7 +76,7 @@ func TestTheWorkerExecutesWithAVaultCredential(t *testing.T) {
 	}
 	v := newJITFile(t, func(string) fakeerp.Options { return fakeerp.Options{} }, func(_, host string) string {
 		return fmt.Sprintf(`{"vault":{"address":%q,"refresh_seconds":30,"auth":{"approle":{"role_id_file":%q,"secret_id_file":%q}}},
-			"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,"value_vault":{"path":"eacp/fakeerp","key":"token"}}]}`,
+			"secrets":[{"tenant_id":%q,"secret_ref":"erp-jit","host":%q,"value_vault":{"path":"github.com/atipongsena/eacp/fakeerp","key":"token"}}]}`,
 			jv.srv.URL, roleFile, secretFile, pgtest.TenantA, host)
 	}, 100)
 	ctx := context.Background()

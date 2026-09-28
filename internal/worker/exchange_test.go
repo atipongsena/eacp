@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/jwttest"
-	"eacp/internal/spiffetest"
-	"eacp/internal/worker"
+	"github.com/atipongsena/eacp/internal/jwttest"
+	"github.com/atipongsena/eacp/internal/spiffetest"
+	"github.com/atipongsena/eacp/internal/worker"
 )
 
 const (

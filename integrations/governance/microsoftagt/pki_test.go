@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"eacp/integrations/governance/microsoftagt"
+	"github.com/atipongsena/eacp/integrations/governance/microsoftagt"
 )
 
 func readCert(t *testing.T, path string) *x509.Certificate {

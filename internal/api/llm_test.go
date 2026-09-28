@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/identity"
-	"eacp/internal/llm"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/llm"
 )
 
 func TestLLMModelRoutes(t *testing.T) {

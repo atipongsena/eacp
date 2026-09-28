@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"eacp/internal/finops"
-	"eacp/internal/identity"
-	"eacp/internal/storage/pgtest"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/identity"
+	"github.com/atipongsena/eacp/internal/storage/pgtest"
 )
 
 // otlp posts an OTLP export with the agent key.

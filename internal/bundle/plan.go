@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"eacp/internal/budget"
-	"eacp/internal/finops"
-	"eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/budget"
+	"github.com/atipongsena/eacp/internal/finops"
+	"github.com/atipongsena/eacp/internal/registry"
 )
 
 // Step operations and stages.

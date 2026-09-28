@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"eacp/internal/ui"
+	"github.com/atipongsena/eacp/internal/ui"
 )
 
 // consoleFiles is every file the console serves. Adding a served file is a
