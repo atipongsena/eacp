@@ -1,0 +1,33 @@
+# A Governance-as-Code bundle: the ledger connector, its tool and contract,
+# and an agent allowed to use it. `eacpctl bundle plan` turns it into a
+# change set; a second person approves it before anything becomes active.
+bundle:
+  name: ledger
+targets:
+  examples:
+    default: true
+    tenant: 00000000-0000-4000-8000-0000000000e0
+resources:
+  connectors:
+    ledger:
+      protocol: http
+      endpoint: http://fakeerp:8090
+      secret_ref: fakeerp
+      tools:
+        get_balance:
+          contract:
+            side_effects: [READ_ONLY]
+            idempotency_mode: none
+            reconciliation_lookup: none
+            reconciliation_consistency: none
+            proof_standard: none
+            max_attempts: 3
+  agents:
+    ledger-bot:
+      display_name: Ledger bot
+      environment: production
+      risk_class: medium
+      owner: {principal: sam}
+      version: {runtime: python, code_ref: "git:examples-ledger"}
+      allowlist: [ledger.get_balance]
+      state: ACTIVE

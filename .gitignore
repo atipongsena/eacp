@@ -50,3 +50,7 @@ __pycache__/
 
 # Release archives (scripts/ci/release-binaries.sh)
 /dist/
+
+# The examples keep their keys and virtual environments here (examples/setup.sh)
+/examples/.env
+/examples/**/.venv/

@@ -12,6 +12,10 @@ rest) packages=$(go list ./... | grep -v -e /internal/registry -e /internal/work
 *) echo "unknown shard $shard (slow|rest)" >&2; exit 2 ;;
 esac
 
+# The Fake ERP, MCP, A2A and LLM verifier secrets are generated, git-ignored files.
+python=python3
+command -v python3 >/dev/null 2>&1 || python=python
+"$python" deployments/docker/secrets/prepare_fakeerp_token.py
 docker compose up -d --wait postgres
 export EACP_TEST_ADMIN_DSN="postgres://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable"
 # Without node the console's JavaScript tests would skip; in CI they must run.
