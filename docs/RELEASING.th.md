@@ -39,7 +39,7 @@ release หนึ่งตัวคือ Git tag `vX.Y.Z` บน `main` เม�
 |---|---|
 | `verify` | รัน `ci.yml` ทั้งชุดบน commit ที่ติด tag ทุก job ถัดไปต้องรอให้ job นี้ผ่าน |
 | `binaries` | `scripts/ci/release-binaries.sh` build `controlplane-api`, `execution-worker`, `llm-gateway` และ `eacpctl` สำหรับ linux/amd64, linux/arm64, darwin/arm64 และ windows/amd64 โดยฝังเวอร์ชันไว้ในไบนารี และเขียน `SHA256SUMS` |
-| `images` | push `ghcr.io/atipongsena/eacp:vX.Y.Z` (ไบนารีทุกตัวของ EACP) และ `ghcr.io/atipongsena/eacp-agt-pdp:vX.Y.Z` (AGT sidecar) เฉพาะ linux/amd64 |
+| `images` | push `ghcr.io/atipongsena/eacp:vX.Y.Z` (stage `release` ของ Dockerfile: controlplane-api, execution-worker, llm-gateway และ eacpctl ไม่มี fake service) และ `ghcr.io/atipongsena/eacp-agt-pdp:vX.Y.Z` (AGT sidecar) เฉพาะ linux/amd64 |
 | `publish` | ดึง release notes จากหัวข้อของเวอร์ชันนั้นใน `CHANGELOG.md` แล้วสร้าง GitHub release พร้อม archive ถ้าไม่มีหัวข้อนั้น job จะล้ม |
 
 ไบนารีทุกตัวรายงานเวอร์ชันของตัวเองได้ `eacpctl version` พิมพ์เวอร์ชันออกมา และทุก service บันทึกเวอร์ชันลง log ตอนเริ่มทำงาน

@@ -42,7 +42,7 @@ is pushed:
 |---|---|
 | `verify` | Runs the whole `ci.yml` on the tagged commit. Every later job needs it. |
 | `binaries` | `scripts/ci/release-binaries.sh` builds `controlplane-api`, `execution-worker`, `llm-gateway` and `eacpctl` for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64, with the version stamped in, and writes `SHA256SUMS`. |
-| `images` | Pushes `ghcr.io/atipongsena/eacp:vX.Y.Z` (every EACP binary) and `ghcr.io/atipongsena/eacp-agt-pdp:vX.Y.Z` (the AGT sidecar), linux/amd64 only. |
+| `images` | Pushes `ghcr.io/atipongsena/eacp:vX.Y.Z` (the Dockerfile's `release` stage: controlplane-api, execution-worker, llm-gateway and eacpctl, no fake service) and `ghcr.io/atipongsena/eacp-agt-pdp:vX.Y.Z` (the AGT sidecar), linux/amd64 only. |
 | `publish` | Takes the release notes from the `CHANGELOG.md` section for the version and creates the GitHub release with the archives. A missing section fails the job. |
 
 Every binary reports its version: `eacpctl version` prints it, and every service logs it at startup.

@@ -1,4 +1,5 @@
-# One image containing every EACP binary; docker-compose selects the command.
+# The compose image holds every EACP binary and docker-compose selects the
+# command; the release stage holds only what a deployment runs.
 FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -12,6 +13,13 @@ RUN CGO_ENABLED=0 go build -trimpath \
       ./cmd/llm-gateway ./cmd/fakellm \
     && mkdir -p /pki /client-key /client-jwks
 
+# The published image (release.yml builds --target release): only the
+# commands a deployment runs, never a fake service.
+FROM gcr.io/distroless/static-debian12:nonroot AS release
+COPY --from=build /out/controlplane-api /out/execution-worker /out/llm-gateway /out/eacpctl /
+USER nonroot:nonroot
+
+# The compose image (the default target): every binary, fakes included.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ /
 # Mount point of the development PDP PKI volume, writable by nonroot so a
