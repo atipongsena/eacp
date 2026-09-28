@@ -131,8 +131,9 @@ func RunOpenLoop(ctx context.Context, clk Clock, p Plan, send func(ctx context.C
 // idempotency key (5% of requests).
 func IsReplay(i int) bool { return i%20 == 19 }
 
-// ReplayOf is the request that replay i repeats.
-func ReplayOf(i int) int { return i - 10 }
+// ReplayOf is the request that replay i repeats: the one just before it, so
+// the original is often still in flight when the replay arrives.
+func ReplayOf(i int) int { return i - 1 }
 
 // Counts tallies measured samples: 429 is throttled; any other non-2xx
 // status or a transport error is an error.
@@ -162,4 +163,41 @@ func NewActionsOffered(samples []Sample, measure time.Duration) float64 {
 		}
 	}
 	return float64(n) / measure.Seconds()
+}
+
+func succeeded(s Sample) bool { return s.Err == "" && s.Status >= 200 && s.Status <= 299 }
+
+// ArrivedIn counts successful answers that arrived in [from, to), in the
+// client's clock: the completions of a synchronous call inside a window.
+func ArrivedIn(samples []Sample, from, to time.Time) int {
+	n := 0
+	for _, s := range samples {
+		if at := s.Intended.Add(s.Latency); succeeded(s) && !at.Before(from) && at.Before(to) {
+			n++
+		}
+	}
+	return n
+}
+
+// ReplayCheck compares each accepted replay with its original: mismatched
+// counts replays answered with a different action than an accepted
+// original, missing counts accepted replays without an action id.
+func ReplayCheck(samples []Sample) (mismatched, missing int) {
+	byIndex := make(map[int]Sample, len(samples))
+	for _, s := range samples {
+		byIndex[s.Index] = s
+	}
+	for _, s := range samples {
+		if !s.Replay || !succeeded(s) {
+			continue
+		}
+		if s.ActionID == "" {
+			missing++
+			continue
+		}
+		if orig, ok := byIndex[ReplayOf(s.Index)]; ok && succeeded(orig) && orig.ActionID != "" && orig.ActionID != s.ActionID {
+			mismatched++
+		}
+	}
+	return mismatched, missing
 }

@@ -16,7 +16,7 @@ import (
 func TestResolveQuickAndFull(t *testing.T) {
 	full := resolve(false)
 	if !slices.Equal(full.levels, []int{100, 1000, 5000, 10000}) ||
-		!slices.Equal(full.actionRates, []float64{25, 50, 100, 200, 400, 800}) ||
+		!slices.Equal(full.actionRates, []float64{25, 30, 35, 40, 45, 50, 100, 200, 400, 800}) ||
 		!slices.Equal(full.llmRates, []float64{25, 50, 100, 200}) ||
 		full.warmup != 10*time.Second || full.measure != 60*time.Second || full.drain != 5*time.Minute ||
 		full.maxInFlight != 20000 {

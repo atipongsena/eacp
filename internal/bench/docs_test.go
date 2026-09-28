@@ -57,20 +57,72 @@ func TestBenchmarksDocMatchesBaseline(t *testing.T) {
 	}
 }
 
-var performanceFigure = regexp.MustCompile(`(\d[\d,.]*)\s*(?:actions/s|req/s|rps|ms|/s)\b`)
+// resultTables is the generated block without its Configuration section:
+// the measured tables a published figure may be quoted from. (A setting
+// such as 100000 is not a result.)
+func resultTables(t *testing.T) string {
+	t.Helper()
+	doc := benchmarksDoc(t)
+	i, j := strings.Index(doc, GeneratedBegin), strings.Index(doc, GeneratedEnd)
+	if i < 0 || j < i {
+		t.Fatal("docs/BENCHMARKS.md has no generated block")
+	}
+	block := doc[i:j]
+	c := strings.Index(block, "## Configuration")
+	if c < 0 {
+		t.Fatal("the generated block has no Configuration section")
+	}
+	end := strings.Index(block[c+1:], "\n## ")
+	if end < 0 {
+		t.Fatal("the Configuration section is the last one")
+	}
+	return block[:c] + block[c+1+end:]
+}
+
+// inTables reports whether n appears in the result tables as a whole number
+// token (not as part of a longer number).
+func inTables(tables, n string) bool {
+	return regexp.MustCompile(`(^|[^\d.])` + regexp.QuoteMeta(n) + `([^\d.]|$)`).MatchString(tables)
+}
+
+// performanceFigure is a number followed by a rate or a latency unit.
+var performanceFigure = regexp.MustCompile(`(\d[\d,.]*\d|\d)\s*(?:[A-Za-z]*/s|ms|rps)\b`)
 
 func TestReadmeNumbersComeFromTheBaseline(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A figure must appear in docs/BENCHMARKS.md with its unit: a bare number
-	// matches too much (an override of 100000 is not 100000 actions/s).
-	space := regexp.MustCompile(`\s+`)
-	doc := space.ReplaceAllString(benchmarksDoc(t), " ")
-	for _, m := range performanceFigure.FindAllString(string(raw), -1) {
-		if figure := space.ReplaceAllString(m, " "); !strings.Contains(doc, figure) {
-			t.Errorf("README quotes %q, which docs/BENCHMARKS.md does not state", figure)
+	tables := resultTables(t)
+	found := 0
+	for _, m := range performanceFigure.FindAllStringSubmatch(string(raw), -1) {
+		found++
+		if n := strings.ReplaceAll(m[1], ",", ""); !inTables(tables, n) {
+			t.Errorf("README quotes %q, but %s is in no result table of docs/BENCHMARKS.md", m[0], n)
+		}
+	}
+	if found == 0 {
+		t.Fatal("the README quotes no benchmark figure: the guard would check nothing")
+	}
+}
+
+// The hand-written Findings below the generated block add no figure of
+// their own: every measured-looking number is a table cell.
+func TestFindingsQuoteTheTables(t *testing.T) {
+	doc := benchmarksDoc(t)
+	i := strings.Index(doc, "## Findings")
+	if i < 0 {
+		t.Fatal("docs/BENCHMARKS.md has no Findings section")
+	}
+	tables := resultTables(t)
+	// Decimals, and integers with a unit, are measurements; bare integers
+	// such as agent counts, rates of the ladder or "13 API calls" are
+	// checked only when they carry a unit.
+	figure := regexp.MustCompile(`\d[\d,]*\.\d+|\d[\d,]*\s*(?:ms|%|[A-Za-z]*/s)\b`)
+	for _, m := range figure.FindAllString(doc[i:], -1) {
+		n := strings.ReplaceAll(regexp.MustCompile(`[\d,.]*\d`).FindString(m), ",", "")
+		if !inTables(tables, n) {
+			t.Errorf("the Findings state %q, but %s is in no result table", m, n)
 		}
 	}
 }

@@ -29,12 +29,14 @@ Raw results (SHA-256):
 | microsoft-agt | flag `erp_delay_ms` | 0 | |
 | microsoft-agt | flag `quick` | false | |
 
-## Maximum sustainable rate (actions/s)
+## Maximum sustainable rate (requests/s)
+
+The highest rung of the rate ladder that was neither saturated nor incomplete, and the rung that failed: the true limit lies between them.
 
 | PDP | 100 agents | 1000 agents |
 |---|---|---|
-| local | 25 | none |
-| microsoft-agt | 25 | not run |
+| local | 25 (saturated at 50) | none (incomplete at 25) |
+| microsoft-agt | 25 (highest rung) | not run |
 
 ## Setup
 
@@ -52,7 +54,7 @@ Latencies in ms as P50 / P95 / P99. Offered/s counts every request; 5% of them r
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 100 | 25 | 8.2 / 12.5 / 20.1 | 4.0 / 6.0 / 9.0 | 10.0 / 40.0 / 90.0 | 2.0 / 3.0 / 5.0 | 3.0 / 5.0 / 7.0 | 20.0 / 55.0 / 110.0 | 27.0 / 66.0 / 126.0 | 3.1 / 4.4 / 5.2 | 0.412 ms | 25.0 | 0 | 0 | SUCCEEDED 1425 | ok |
 | 100 | 50 | 9.0 / 30.0 / 60.0 | 4.0 / 7.0 / 12.0 | 4000.0 / 9000.0 / 11000.0 | 2.0 / 3.0 / 6.0 | 3.0 / 5.0 / 8.0 | 4010.0 / 9015.0 / 11020.0 | 4017.0 / 9027.0 / 11040.0 | 3.0 / 5.0 / 8.0 | 0.500 ms | 31.2 | 0 | 0 | SUCCEEDED 2850 | saturated (throughput, p99) |
-| 1000 | 25 | 10.0 / 900.0 / 4000.0 | 4.0 / 6.0 / 9.0 | 10.0 / 40.0 / 90.0 | n/a | 3.0 / 5.0 / 7.0 | 20.0 / 60.0 / 120.0 | 27.0 / 71.0 / 136.0 | n/a | n/a (no reservations in the step) | 12.0 | 3 | 1 | DENIED 150, SUCCEEDED 700, open 5 | incomplete |
+| 1000 | 25 | 10.0 / 900.0 / 4000.0 | 4.0 / 6.0 / 9.0 | 10.0 / 40.0 / 90.0 | n/a | 3.0 / 5.0 / 7.0 | 20.0 / 60.0 / 120.0 | 27.0 / 71.0 / 136.0 | n/a | n/a (no reservations in the step) | 12.0 | 3 | 1 | DENIED 150, SUCCEEDED 700, open 5 | incomplete: 5 still open; latencies cover finished actions only |
 
 ### Resources: local PDP
 
@@ -64,11 +66,11 @@ CPU as mean / max % of one core, then peak memory.
 | 100 | 50 | n/a (docker: not found) | n/a (docker: not found) | n/a (docker: not found) | n/a (docker: not found) | n/a (docker: not found) | n/a (docker: not found) | n/a (docker: not found) | n/a (docker: not found) | 5.0 / 9.0%, 48 MiB |
 | 1000 | 25 | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) |
 
-| Agents | Offered/s | DB commits/s | DB cache hit | DB max active | DB max lock waits | NATS msgs in/s | NATS msgs out/s | Duplicate keys |
-|---|---|---|---|---|---|---|---|---|
-| 100 | 25 | 310.5 | 0.999 | 6 | 2 | 75 | 150 | 0 |
-| 100 | 50 | 400 | 0.998 | 12 | 9 | n/a (fewer than two NATS samples) | n/a (fewer than two NATS samples) | 0 |
-| 1000 | 25 | n/a (fewer than two database samples) | n/a (fewer than two database samples) | n/a (fewer than two database samples) | n/a (fewer than two database samples) | n/a (fewer than two NATS samples) | n/a (fewer than two NATS samples) | 0 |
+| Agents | Offered/s | DB commits/s | DB cache hit | DB max active | DB max lock waits | NATS msgs in/s | NATS msgs out/s | Duplicate keys | Replays answered with another action |
+|---|---|---|---|---|---|---|---|---|---|
+| 100 | 25 | 310.5 | 0.999 | 6 | 2 | 75 | 150 | 0 | 0 |
+| 100 | 50 | 400 | 0.998 | 12 | 9 | n/a (fewer than two NATS samples) | n/a (fewer than two NATS samples) | 0 | 0 |
+| 1000 | 25 | n/a (fewer than two database samples) | n/a (fewer than two database samples) | n/a (fewer than two database samples) | n/a (fewer than two database samples) | n/a (fewer than two NATS samples) | n/a (fewer than two NATS samples) | 0 | 0 |
 
 ## LLM gateway: local run
 
@@ -94,8 +96,8 @@ CPU as mean / max % of one core, then peak memory.
 |---|---|---|---|---|---|---|---|---|---|---|
 | 100 | 25 | 30.0 / 50.0%, 70 MiB | n/a (not sampled) | 90.0 / 101.5%, 150 MiB | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) | n/a (not sampled) |
 
-| Agents | Offered/s | DB commits/s | DB cache hit | DB max active | DB max lock waits | NATS msgs in/s | NATS msgs out/s | Duplicate keys |
-|---|---|---|---|---|---|---|---|---|
-| 100 | 25 | 300 | 0.999 | 5 | 1 | 75 | 150 | 0 |
+| Agents | Offered/s | DB commits/s | DB cache hit | DB max active | DB max lock waits | NATS msgs in/s | NATS msgs out/s | Duplicate keys | Replays answered with another action |
+|---|---|---|---|---|---|---|---|---|---|
+| 100 | 25 | 300 | 0.999 | 5 | 1 | 75 | 150 | 0 | 0 |
 
 <!-- end generated -->

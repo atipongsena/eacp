@@ -78,6 +78,15 @@ func OpenCount(ctx context.Context, db *pgxpool.Pool, tenant uuid.UUID, ids []uu
 	return n, err
 }
 
+// TenantOpen is how many of the tenant's actions are not in a terminal
+// state: a backlog a step would otherwise inherit.
+func TenantOpen(ctx context.Context, db *pgxpool.Pool, tenant uuid.UUID) (int, error) {
+	var n int
+	err := db.QueryRow(ctx, `SELECT count(*) FROM eacp.actions
+		WHERE tenant_id = $1 AND state <> ALL($2::text[])`, tenant, TerminalStates).Scan(&n)
+	return n, err
+}
+
 // DuplicateKeys counts (agent, idempotency key) pairs with more than one
 // action created since since. The unique constraint keeps it 0; the check
 // guards a regression.

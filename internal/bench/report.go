@@ -110,7 +110,8 @@ func Report(inputs []Input) (string, error) {
 		}
 	}
 	ns := slices.Sorted(maps.Keys(levels))
-	w("\n## Maximum sustainable rate (actions/s)\n\n| PDP |")
+	w("\n## Maximum sustainable rate (requests/s)\n\nThe highest rung of the rate ladder that was neither saturated nor " +
+		"incomplete, and the rung that failed: the true limit lies between them.\n\n| PDP |")
 	for _, n := range ns {
 		w(" %d agents |", n)
 	}
@@ -119,14 +120,17 @@ func Report(inputs []Input) (string, error) {
 		w("| %s |", p.r.PDP)
 		for _, n := range ns {
 			v, ok := p.r.MaxSustainable[n]
-			switch {
-			case !ok:
+			if !ok {
 				w(" not run |")
-			case v == 0:
-				w(" none |")
-			default:
-				w(" %s |", num(v))
+				continue
 			}
+			var steps []Step
+			for _, l := range p.r.Levels {
+				if l.Agents == n {
+					steps = l.Steps
+				}
+			}
+			w(" %s |", maxCell(steps, v))
 		}
 		w("\n")
 	}
@@ -147,11 +151,7 @@ func Report(inputs []Input) (string, error) {
 		w("|%s\n", strings.Repeat("---|", 16))
 		for _, l := range p.r.Levels {
 			for _, s := range l.Steps {
-				w("| %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %.1f | %d | %d | %s | %s |\n",
-					l.Agents, num(s.Offered), summaryCell(s.Admission), summaryCell(s.Governance),
-					summaryCell(s.QueueWait), summaryCell(s.Lease), summaryCell(s.External), summaryCell(s.Overhead),
-					summaryCell(s.EndToEnd), summaryCell(s.Idempotency), budgetCell(s), s.CompletedThroughput,
-					s.Errors, s.Throttled, terminalCell(s), statusCell(s))
+				w("%s\n", actionRow(l.Agents, s))
 			}
 		}
 		w("\n### Resources: %s PDP\n\n", p.r.PDP)
@@ -175,13 +175,14 @@ func Report(inputs []Input) (string, error) {
 			}
 		}
 		w("\n| Agents | Offered/s | DB commits/s | DB cache hit | DB max active | DB max lock waits | "+
-			"NATS msgs in/s | NATS msgs out/s | Duplicate keys |\n|%s\n", strings.Repeat("---|", 9))
+			"NATS msgs in/s | NATS msgs out/s | Duplicate keys | Replays answered with another action |\n|%s\n",
+			strings.Repeat("---|", 10))
 		for _, l := range p.r.Levels {
 			for _, s := range l.Steps {
-				w("| %d | %s | %s | %s | %s | %s | %s | %s | %d |\n", l.Agents, num(s.Offered),
+				w("| %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", l.Agents, num(s.Offered),
 					ratesCell(s.DB, "commits_per_s"), ratesCell(s.DB, "cache_hit_ratio"), ratesCell(s.DB, "max_active"),
 					ratesCell(s.DB, "max_lock_waits"), ratesCell(s.NATS, "in_msgs_per_s"),
-					ratesCell(s.NATS, "out_msgs_per_s"), s.DuplicateKeys)
+					ratesCell(s.NATS, "out_msgs_per_s"), dupCell(s), replayCell(s))
 			}
 		}
 		if len(p.r.LLM) > 0 {
@@ -253,15 +254,76 @@ func terminalCell(s Step) string {
 	return strings.Join(parts, ", ")
 }
 
-func statusCell(s Step) string {
-	switch {
-	case s.Incomplete:
-		return "incomplete"
-	case len(s.Saturated) > 0:
-		return "saturated (" + strings.Join(s.Saturated, ", ") + ")"
-	default:
-		return "ok"
+// stepFailed is why a step's figures could not be collected, or "".
+func stepFailed(s Step) string {
+	for _, k := range []string{"database", "window", "drain", "timelines"} {
+		if why, ok := s.NA[k]; ok {
+			return k + ": " + why
+		}
 	}
+	return ""
+}
+
+// actionRow is one row of an action-path table; a failed step shows n/a in
+// every measured cell and why in its status.
+func actionRow(agents int, s Step) string {
+	if why := stepFailed(s); why != "" {
+		return fmt.Sprintf("| %d | %s |%s failed (%s) |", agents, num(s.Offered), strings.Repeat(" n/a |", 13), why)
+	}
+	return fmt.Sprintf("| %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %.1f | %d | %d | %s | %s |",
+		agents, num(s.Offered), summaryCell(s.Admission), summaryCell(s.Governance), summaryCell(s.QueueWait),
+		summaryCell(s.Lease), summaryCell(s.External), summaryCell(s.Overhead), summaryCell(s.EndToEnd),
+		summaryCell(s.Idempotency), budgetCell(s), s.CompletedThroughput, s.Errors, s.Throttled, terminalCell(s),
+		statusCell(s))
+}
+
+func statusCell(s Step) string {
+	var out string
+	switch {
+	case s.Incomplete && s.Open > 0:
+		out = fmt.Sprintf("incomplete: %d still open; latencies cover finished actions only", s.Open)
+	case s.Incomplete:
+		out = "incomplete"
+	case len(s.Saturated) > 0:
+		out = "saturated (" + strings.Join(s.Saturated, ", ") + ")"
+	default:
+		out = "ok"
+	}
+	if s.PreexistingOpen > 0 {
+		out += fmt.Sprintf("; began with %d earlier actions open", s.PreexistingOpen)
+	}
+	return out
+}
+
+// maxCell is a level's maximum sustainable rate and the rung that failed.
+func maxCell(steps []Step, best float64) string {
+	v := "none"
+	if best > 0 {
+		v = num(best)
+	}
+	for _, s := range steps {
+		switch {
+		case s.Incomplete:
+			return fmt.Sprintf("%s (incomplete at %s)", v, num(s.Offered))
+		case len(s.Saturated) > 0:
+			return fmt.Sprintf("%s (saturated at %s)", v, num(s.Offered))
+		}
+	}
+	return v + " (highest rung)"
+}
+
+func dupCell(s Step) string {
+	if why, ok := s.NA["duplicate_keys"]; ok {
+		return "n/a (" + why + ")"
+	}
+	return fmt.Sprint(s.DuplicateKeys)
+}
+
+func replayCell(s Step) string {
+	if s.ReplayMissing > 0 {
+		return fmt.Sprintf("%d (%d without an action id)", s.ReplayMismatched, s.ReplayMissing)
+	}
+	return fmt.Sprint(s.ReplayMismatched)
 }
 
 // num prints integers without a fraction and others with one decimal.

@@ -86,11 +86,13 @@ Success:
   in-flight requests are unbounded up to a safety cap of 20,000, and reaching the cap marks the step `incomplete`.
 - **Request.** Each request is `POST /v1/actions` from a uniformly random agent among the current N, with a unique
   `Idempotency-Key` and payload `{"amount": 1, "currency": "THB"}`, plus `delay_ms` when `--erp-delay-ms` is set.
-- **Idempotency replays.** Five percent of requests replay an earlier request's key and payload from the same agent.
+- **Idempotency replays.** Five percent of requests replay the previous request's key and payload from the same agent
+  (so the original is often still in flight). Each replay must be answered with its original's action id.
   Their latency is the idempotency latency. After each step, SQL checks that every key has exactly one action and
   that every succeeded action has exactly one ERP operation.
-- **Steps.** Action steps are 25, 50, 100, 200, 400 and 800 per second, each with a 10 s warm-up (excluded) and a
-  60 s measurement. After each step the tool waits for the backlog to drain: every measured action must be terminal,
+- **Steps.** Action steps are 25, 30, 35, 40, 45, 50, 100, 200, 400 and 800 requests per second, each with a 10 s
+  warm-up (excluded) and a 60 s measurement. Before each step the tool waits (at most 5 minutes) for the tenant's
+  earlier actions to finish and records how many were still open. After each step the tool waits for the backlog to drain: every measured action must be terminal,
   within 5 minutes. A step that does not drain is `incomplete`. Climbing stops at the first saturated or incomplete
   step.
 - **Saturation.** A step is saturated if any of these holds:
@@ -241,3 +243,10 @@ under `go vet ./...` and `go test -race ./...` with PostgreSQL.
 - **One ERP operation per success** is not checked by the benchmark. It checks one action per idempotency key
   (`DuplicateKeys`); one ERP operation per action is proven by the demos, and reading the Fake ERP's audit would
   need its bearer token in the bench process.
+- **Final-review fixes.**
+  - The ladder is finer between 25 and 50, so a published maximum is bracketed by the rung that failed.
+  - A replay repeats the request just before it, and its answer is compared with the original's action id.
+  - Every step starts only after the backlog of earlier steps has finished (or 5 minutes have passed); the count still
+    open is recorded, so no step silently inherits another's queue.
+  - LLM completed throughput counts answers that arrived inside the window, not answers to requests sent in it.
+  - A failed step renders n/a, never zeros; an incomplete step says how many actions were open.

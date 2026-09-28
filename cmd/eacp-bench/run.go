@@ -42,7 +42,7 @@ func resolve(quick bool) config {
 		return config{levels: []int{100}, actionRates: []float64{25, 50}, llmRates: []float64{25},
 			warmup: 5 * time.Second, measure: 20 * time.Second, drain: 5 * time.Minute, maxInFlight: 20000}
 	}
-	return config{levels: []int{100, 1000, 5000, 10000}, actionRates: []float64{25, 50, 100, 200, 400, 800},
+	return config{levels: []int{100, 1000, 5000, 10000}, actionRates: []float64{25, 30, 35, 40, 45, 50, 100, 200, 400, 800},
 		llmRates: []float64{25, 50, 100, 200}, warmup: 10 * time.Second, measure: 60 * time.Second,
 		drain: 5 * time.Minute, maxInFlight: 20000}
 }
@@ -194,8 +194,27 @@ func (rn *runner) measured(ctx context.Context, rate float64, send func(context.
 	return load, sm, from, to, err
 }
 
+// settle waits (at most the drain timeout) until the tenant has no open
+// actions, so a step does not inherit an earlier step's backlog, and
+// returns how many were still open when it gave up.
+func (rn *runner) settle(ctx context.Context) int {
+	open := 0
+	_, err := drain(ctx, func(ctx context.Context) (int, error) {
+		n, err := bench.TenantOpen(ctx, rn.db, benchTenant)
+		open = n
+		return n, err
+	}, rn.cfg.drain, time.Second)
+	if err != nil {
+		logf("settle: %v", err)
+	}
+	if open > 0 {
+		logf("settle: %d actions still open from earlier steps", open)
+	}
+	return open
+}
+
 func (rn *runner) actionStep(ctx context.Context, level int, rate float64) bench.Step {
-	st := bench.Step{Offered: rate, NA: map[string]string{}}
+	st := bench.Step{Offered: rate, NA: map[string]string{}, PreexistingOpen: rn.settle(ctx)}
 	requests := int(rate*(rn.cfg.warmup+rn.cfg.measure).Seconds()) + 1
 	tr := newTraffic(rn.s.api, rn.gw, rn.s.agents, uint64(level)<<32|uint64(rate), requests,
 		fmt.Sprintf("b-%d-%d", len(rn.s.agents), int(rate)), rn.o.erpDelayMS)
@@ -209,6 +228,7 @@ func (rn *runner) actionStep(ctx context.Context, level int, rate float64) bench
 		return failed(st, "window", err)
 	}
 	st.Requests, st.Errors, st.Throttled = bench.Counts(load.Samples)
+	st.ReplayMismatched, st.ReplayMissing = bench.ReplayCheck(load.Samples)
 	var admission, replays []time.Duration
 	var all, measured []uuid.UUID
 	accepted := 0
@@ -288,7 +308,7 @@ func (rn *runner) actionStep(ctx context.Context, level int, rate float64) bench
 }
 
 func (rn *runner) llmStep(ctx context.Context, rate float64) bench.Step {
-	st := bench.Step{Offered: rate, NA: map[string]string{}}
+	st := bench.Step{Offered: rate, NA: map[string]string{}, PreexistingOpen: rn.settle(ctx)}
 	requests := int(rate*(rn.cfg.warmup+rn.cfg.measure).Seconds()) + 1
 	tr := newTraffic(rn.s.api, rn.gw, rn.s.agents, 0x4c4c4d<<32|uint64(rate), requests, "", 0)
 	load, sm, from, to, err := rn.measured(ctx, rate, tr.llm)
@@ -303,8 +323,10 @@ func (rn *runner) llmStep(ctx context.Context, rate float64) bench.Step {
 		}
 	}
 	st.LLMClient = bench.Summarize(client)
-	st.CompletedThroughput = float64(len(client)) / rn.cfg.measure.Seconds()
-	st.AdmissionThroughput = st.CompletedThroughput
+	// Answers that arrived inside the window, not answers to requests sent in
+	// it (which would equal the offered rate by construction).
+	st.CompletedThroughput = float64(bench.ArrivedIn(load.Samples, load.Started, load.Ended)) / rn.cfg.measure.Seconds()
+	st.AdmissionThroughput = float64(len(client)) / rn.cfg.measure.Seconds()
 	st.Incomplete = load.Incomplete
 	ledger, err := bench.ReadLLMCalls(ctx, rn.db, benchTenant, from, to)
 	if err != nil {

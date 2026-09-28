@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -156,8 +157,10 @@ func TestReplaySelection(t *testing.T) {
 	if len(replays) != 3 || replays[0] != 19 || replays[1] != 39 || replays[2] != 59 {
 		t.Fatalf("replays = %v, want [19 39 59]", replays)
 	}
-	if ReplayOf(19) != 9 {
-		t.Fatalf("ReplayOf(19) = %d, want 9", ReplayOf(19))
+	// A replay follows its original immediately, so the original is often
+	// still in flight when the replay arrives.
+	if ReplayOf(19) != 18 {
+		t.Fatalf("ReplayOf(19) = %d, want 18", ReplayOf(19))
 	}
 }
 
@@ -170,5 +173,39 @@ func TestNewActionsOfferedExcludeReplays(t *testing.T) {
 	}
 	if got := NewActionsOffered(samples, 2*time.Second); got != 9.5 {
 		t.Fatalf("NewActionsOffered = %v, want 9.5 (19 new actions over 2 s)", got)
+	}
+}
+
+// Completions of a synchronous call are answers that arrived inside the
+// window, not answers to requests sent in it.
+func TestArrivedInCountsOnlyTheWindow(t *testing.T) {
+	base := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	arrive := func(sentMs, latencyMs, status int) Sample {
+		return Sample{Intended: base.Add(time.Duration(sentMs) * time.Millisecond),
+			Latency: time.Duration(latencyMs) * time.Millisecond, Status: status}
+	}
+	samples := []Sample{arrive(0, 50, 200), arrive(90, 20, 200), arrive(150, 49, 200), arrive(150, 50, 200),
+		arrive(180, 900, 200), arrive(120, 1, 500), {Intended: base.Add(130 * time.Millisecond), Latency: time.Millisecond, Err: "reset"}}
+	if got := ArrivedIn(samples, base.Add(100*time.Millisecond), base.Add(200*time.Millisecond)); got != 2 {
+		t.Fatalf("ArrivedIn = %d, want 2 (arrivals at 110 and 199 ms; [from, to); failures do not count)", got)
+	}
+}
+
+// A replay must be answered with its original's action.
+func TestReplayCheck(t *testing.T) {
+	samples := make([]Sample, 60)
+	for i := range samples {
+		samples[i] = Sample{Index: i, Status: 201, ActionID: fmt.Sprintf("a%d", i), Replay: IsReplay(i)}
+	}
+	samples[19].ActionID = samples[18].ActionID // matches its original
+	samples[39].ActionID = "other"              // a second action for one key
+	samples[59].ActionID = ""                   // accepted without an action id
+	if mismatched, missing := ReplayCheck(samples); mismatched != 1 || missing != 1 {
+		t.Fatalf("ReplayCheck = %d mismatched, %d missing; want 1 and 1", mismatched, missing)
+	}
+	samples[38].Status, samples[38].ActionID = 503, "" // the original failed: the replay may create the action
+	samples[39].ActionID = "created-by-replay"
+	if mismatched, _ := ReplayCheck(samples); mismatched != 0 {
+		t.Fatalf("a replay of a failed original counted as a mismatch")
 	}
 }

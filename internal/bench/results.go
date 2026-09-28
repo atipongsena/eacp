@@ -71,6 +71,9 @@ type Step struct {
 	Errors              int                 `json:"errors"`
 	Throttled           int                 `json:"throttled"`
 	DuplicateKeys       int                 `json:"duplicate_keys"`
+	ReplayMismatched    int                 `json:"replay_mismatched"`
+	ReplayMissing       int                 `json:"replay_missing"`
+	PreexistingOpen     int                 `json:"preexisting_open"`
 	AdmissionThroughput float64             `json:"admission_per_s"`
 	CompletedThroughput float64             `json:"completed_per_s"`
 	Admission           Summary             `json:"admission"`

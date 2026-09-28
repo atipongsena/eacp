@@ -68,6 +68,9 @@ func TestReadTimelinesReadsEveryStage(t *testing.T) {
 	if err != nil || open != 1 {
 		t.Fatalf("OpenCount = %d %v, want 1", open, err)
 	}
+	if open, err := bench.TenantOpen(ctx, admin, f.Tenant); err != nil || open != 1 {
+		t.Fatalf("TenantOpen = %d %v, want the one queued action", open, err)
+	}
 	db, err := bench.ReadDB(ctx, admin)
 	if err != nil || db.Commits <= 0 || db.SizeBytes <= 0 {
 		t.Fatalf("ReadDB = %+v %v", db, err)
