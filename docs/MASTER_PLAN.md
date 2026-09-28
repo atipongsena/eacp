@@ -15,42 +15,42 @@
 
 # 0. Revision 2 — What Changed
 
-Rev 2 นำผลจาก `docs/reviews/2026-09-23-master-plan-review.md` (Claude + Codex cross-review) มาใช้
+Rev 2 adopts the findings of `docs/reviews/2026-09-23-master-plan-review.md` (a Claude + Codex cross-review).
 
-ส่วนที่แก้จะมีป้าย **Rev 2** เลข section เดิมไม่เปลี่ยน เพื่อให้ review และ ADR อ้างอิงได้ตรงกัน
+Changed sections carry a **Rev 2** label. Section numbers are unchanged, so reviews and ADRs keep matching references.
 
-การตัดสินใจหลัก:
+Main decisions:
 
 | # | Decision | ADR | Sections |
 |---|---|---|---|
-| 1 | Slice แรกของ EACP เป็น **Agent Tool / Action Control Plane** ยังไม่ทำ LLM gateway แต่ออกแบบ interface เผื่อไว้ | ADR-001 | §3.1, §45, §65 |
-| 2 | **Enforcement point อยู่ใน Slice A**: agent ไม่มี credential ของ privileged system และ side effect เกิดได้เฉพาะผ่าน EACP หรือ execution proxy ที่ EACP ควบคุม | ADR-001 | §1, §3.2, §70 |
-| 3 | AGT/ACS เชื่อมผ่าน **sidecar PDP** หลัง `GovernanceProvider` interface ส่วน Go เป็น core | ADR-002 | §4, §5, §12, §83 |
-| 4 | **AGT decides, EACP stores**: approval state อยู่ใน Postgres ของ EACP และ bind กับ `enforced_digest` + `policy_version` | ADR-005 | §13, §14, §15 |
-| 5 | Action state machine ฉบับเต็ม มี `PENDING_APPROVAL`, `NEEDS_HUMAN_RESOLUTION` และ crash recovery ครบทุก state | ADR-004 | §18 |
-| 6 | Fencing ครอบคลุม **execution semantics** ไม่ใช่แค่ DB write: dispatch intent และ reclaim → reconcile | ADR-004, ADR-005 | §19, §22, §23 |
-| 7 | Operation identity และ reconciliation proof standard ต่อ connector ถ้าได้แค่ "not found" ห้าม auto-retry destructive action | ADR-004 | §20, §31 |
-| 8 | Postgres เป็น execution authority เพียงแหล่งเดียว NATS เข้ามาใน Slice B เพื่อส่ง hint/event เท่านั้น | ADR-014 | §60 |
-| 9 | Tenant isolation ใช้ Postgres RLS ตั้งแต่ schema แรก | ADR-021 | §69 |
-| 10 | MVP แบ่งเป็น **Slice A / B / C** และ demo แรกใช้เฉพาะ Slice A | — | §73–§97, §110, §111 |
+| 1 | EACP's first slice is an **Agent Tool / Action Control Plane**. It is not an LLM gateway yet, but its interfaces leave room for one | ADR-001 | §3.1, §45, §65 |
+| 2 | **The enforcement point is in Slice A**: agents hold no credential for a privileged system, and side effects happen only through EACP or an execution proxy EACP controls | ADR-001 | §1, §3.2, §70 |
+| 3 | AGT/ACS is connected through a **sidecar PDP** behind the `GovernanceProvider` interface; Go is the core | ADR-002 | §4, §5, §12, §83 |
+| 4 | **AGT decides, EACP stores**: approval state lives in EACP's Postgres and is bound to `enforced_digest` + `policy_version` | ADR-005 | §13, §14, §15 |
+| 5 | The full action state machine, with `PENDING_APPROVAL`, `NEEDS_HUMAN_RESOLUTION` and crash recovery for every state | ADR-004 | §18 |
+| 6 | Fencing covers **execution semantics**, not only DB writes: dispatch intent, and reclaim → reconcile | ADR-004, ADR-005 | §19, §22, §23 |
+| 7 | Operation identity and a reconciliation proof standard per connector. If all we get is "not found", a destructive action must not be retried automatically | ADR-004 | §20, §31 |
+| 8 | Postgres is the only execution authority. NATS arrives in Slice B and carries hints/events only | ADR-014 | §60 |
+| 9 | Tenant isolation uses Postgres RLS from the first schema | ADR-021 | §69 |
+| 10 | The MVP is split into **Slice A / B / C**, and the first demo uses Slice A only | — | §73–§97, §110, §111 |
 
 **Slice A goal statement:**
 
 > Privileged agent actions cannot bypass the control plane, approvals are durable, retries cannot casually duplicate irreversible side effects, and ambiguous execution outcomes are handled explicitly rather than guessed.
 
-ถ้า assumption ใดยังไม่ resolve ให้เลือกทางที่ **conservative ที่สุดด้าน correctness / safety** ก่อน
+Where an assumption is still unresolved, choose the option that is **most conservative for correctness / safety** first.
 
-คำว่า "AEF" ในเอกสารเดิมหมายถึง **Execution Fabric** (Execution Plane)
+"AEF" in the earlier documents means the **Execution Fabric** (the Execution Plane).
 
 ---
 
 # 1. Vision
 
-Enterprise Agent Control Plane คือระบบกลางสำหรับองค์กรที่มี AI Agent จำนวนมาก
+Enterprise Agent Control Plane is a central system for organisations that run many AI agents.
 
-เป้าหมายไม่ใช่การสร้าง Agent Framework ใหม่
+The goal is not to build a new agent framework.
 
-แต่คือการทำให้บริษัทสามารถ:
+It is to let a company:
 
 ```text
 Discover
@@ -66,28 +66,28 @@ Evaluate
 Deploy
 ```
 
-AI Agents จากหลายทีม หลาย framework และหลาย environment ผ่านระบบกลางเดียว
+AI agents from many teams, many frameworks and many environments, through one central system.
 
-แนวคิดหลัก:
+The core idea:
 
 > Teams may build agents however they want, but enterprise resources are accessed through the Control Plane.
 
-หรือ:
+Or:
 
-> คุณสร้าง Agent ด้วยอะไรก็ได้ แต่ถ้าจะใช้ทรัพยากรขององค์กร ต้องผ่าน Control Plane
+> Build your agent with anything you like, but to use the organisation's resources it must go through the Control Plane.
 
-**Rev 2 — หลักการนี้ต้องถูก enforce จริง ไม่ใช่แค่ convention:**
+**Rev 2 — this principle must actually be enforced, not just a convention:**
 
-> Agent ต้องไม่มี credential สำหรับเรียก privileged external system โดยตรง
-> Privileged side effect ทุกอย่างต้อง execute ผ่าน EACP หรือ execution proxy ที่ EACP ควบคุม
+> Agents must hold no credential for calling a privileged external system directly.
+> Every privileged side effect must execute through EACP or an execution proxy that EACP controls.
 
-รายละเอียดอยู่ใน §3.2 และ §70
+Details are in §3.2 and §70.
 
 ---
 
 # 2. Problem
 
-องค์กรหนึ่งอาจมี:
+One organisation may have:
 
 ```text
 Finance          120 Agents
@@ -101,7 +101,7 @@ Customer Service 300 Agents
 Total          1,270 Agents
 ```
 
-Agent เหล่านี้อาจสร้างด้วย:
+These agents may be built with:
 
 ```text
 OpenAI Agents
@@ -115,7 +115,7 @@ Custom Go
 Internal platforms
 ```
 
-และเชื่อมต่อ:
+And connect to:
 
 ```text
 SAP
@@ -131,7 +131,7 @@ LLM Providers
 Internal APIs
 ```
 
-ถ้าแต่ละทีมจัดการทุกอย่างเอง จะเกิดการสร้างซ้ำ:
+If every team handles everything itself, the same things get built again and again:
 
 ```text
 Authentication
@@ -150,41 +150,41 @@ Deployment
 Evaluation
 ```
 
-และองค์กรจะไม่มีคำตอบง่าย ๆ สำหรับคำถามเช่น:
+And the organisation has no easy answer to questions such as:
 
 ```text
-เรามี production agents กี่ตัว?
+How many production agents do we have?
 
-ใครเป็นเจ้าของ Agent นี้?
+Who owns this agent?
 
-Agent ไหนเข้าถึงข้อมูลลูกค้า?
+Which agents can access customer data?
 
-Agent ไหนใช้ MCP server นี้?
+Which agents use this MCP server?
 
-Agent ไหนสามารถสร้าง Purchase Order?
+Which agents can create a Purchase Order?
 
-ถ้า MCP server ถูก compromise จะกระทบ Agent ไหนบ้าง?
+If this MCP server is compromised, which agents are affected?
 
-วันนี้ Agent ทั้งองค์กรใช้เงิน LLM ไปเท่าไร?
+How much has the whole organisation spent on LLMs today?
 
-Agent ไหนกำลังสร้าง error ซ้ำ ๆ?
+Which agent keeps producing the same error?
 
-จะหยุด Agent version หนึ่งทั้งองค์กรได้อย่างไร?
+How do we stop one agent version across the whole organisation?
 
-Agent action นี้ได้รับอนุมัติจากใคร?
+Who approved this agent action?
 
-Action นี้เกิดขึ้นจริงหรือไม่?
+Did this action actually happen?
 
-ถ้า API timeout เรารู้ได้อย่างไรว่าการทำงานสำเร็จหรือไม่?
+If the API timed out, how do we know whether the work succeeded?
 ```
 
-Enterprise Agent Control Plane ถูกสร้างมาเพื่อตอบปัญหาเหล่านี้
+Enterprise Agent Control Plane is built to answer these problems.
 
 ---
 
 # 3. Core Principle
 
-ระบบแบ่ง responsibility ออกเป็นสาม plane
+The system splits responsibility across three planes.
 
 ```text
 CONTROL PLANE
@@ -222,31 +222,31 @@ How do we recover?
 
 ## 3.1 Product Boundary — Rev 2
 
-ช่วงแรก EACP คือ **Agent Tool / Action Control Plane**
+At first, EACP is an **Agent Tool / Action Control Plane**.
 
-EACP อยู่ใน path ของ **tool / action calls** ที่แตะทรัพยากรองค์กร เช่น SAP, DB, GitHub, Email หรือ MCP tools
+EACP sits in the path of **tool / action calls** that touch organisational resources, such as SAP, databases, GitHub, e-mail or MCP tools.
 
-EACP **ไม่เป็น LLM gateway** ใน MVP
+EACP is **not an LLM gateway** in the MVP.
 
 ```text
-Agent ──LLM call──► LLM Provider             (ไม่ผ่าน EACP)
+Agent ──LLM call──► LLM Provider             (not through EACP)
   │                      │
   │                      └─ usage/cost ─► EACP FinOps (ingest: OTel GenAI spans / provider billing)
   │
   └──tool/action──► EACP ──► Governance ──► Execution Fabric ──► Enterprise System
 ```
 
-เหตุผล:
+Reasons:
 
 ```text
-LLM gateway เป็น product แยกที่มีคู่แข่งเยอะ
+An LLM gateway is a separate product with many competitors
 latency-sensitive
-ไม่ใช่ differentiator ของ EACP (§114)
+It is not EACP's differentiator (§114)
 ```
 
-LLM gateway จะเป็น optional module ภายหลัง (§97, ADR-001)
+The LLM gateway will be an optional module later (§97, ADR-001).
 
-**Architecture ต้องเผื่อ LLM gateway ไว้ตั้งแต่ตอนนี้:**
+**The architecture must leave room for an LLM gateway now:**
 
 ```text
 Ingress (per call type)            Shared core (reused by every ingress)
@@ -260,48 +260,48 @@ A2A ingress         (later)    ─┘  GovernanceProvider
                                    Telemetry
 ```
 
-Shared core ต้องไม่ผูกกับรูปแบบ "tool call" เช่น governance request ใช้ `operation` + `target` + `payload` ทั่วไป
+The shared core must not be tied to the shape of a "tool call": a governance request uses a generic `operation` + `target` + `payload`,
 
-ingress ใหม่จึงต่อเข้ามาได้โดยไม่ต้องแก้ core
+so a new ingress can connect without changing the core.
 
 ## 3.2 Enforcement Point — Rev 2 (Slice A)
 
-หลัก "resources are accessed through the Control Plane" จะจริงได้ก็ต่อเมื่อ agent **ไม่มี credential** ของ privileged system และ **ไม่มี network path** ไปหา system นั้นโดยตรง
+"Resources are accessed through the Control Plane" is only true when the agent **has no credential** for the privileged system and **no network path** to that system directly.
 
 ```text
-Connector credentials  → อยู่ใน Execution Worker / execution proxy ที่ EACP ควบคุมเท่านั้น
-                         ไม่เคยถูกส่งกลับผ่าน API ไม่อยู่ใน action payload และไม่อยู่ใน log
-Agent                  → มีแค่ agent identity (credential สำหรับเรียก EACP API)
-Capability             → agent เรียกได้เฉพาะ tool ที่อยู่ใน allowlist ของ AgentVersion ที่ ACTIVE
-                         ตรวจแบบ deterministic ก่อนถึง governance และ fail closed
-Network                → agent runtime ไม่มี egress ไป privileged system
+Connector credentials  → only in the Execution Worker / an execution proxy that EACP controls;
+                         never returned through the API, never in an action payload and never in a log
+Agent                  → holds only an agent identity (a credential for calling the EACP API)
+Capability             → an agent may call only the tools in the allowlist of its ACTIVE AgentVersion,
+                         checked deterministically before governance, failing closed
+Network                → the agent runtime has no egress to privileged systems
                          demo: docker network segmentation
                          production: network policy / egress firewall
 ```
 
-ใน Slice A ใช้ static secret ที่ worker ถือเท่านั้น
+Slice A uses only static secrets held by the worker.
 
-JIT / short-lived credentials อยู่ Phase 24 (§96)
+JIT / short-lived credentials are Phase 24 (§96).
 
-**ขอบเขตของ claim (Rev 2.1):** claim "cannot bypass" ใช้ได้กับ **conforming deployment** (ADR-001 §3a)
+**The scope of the claim (Rev 2.1):** the claim "cannot bypass" holds for a **conforming deployment** (ADR-001 §3a),
 
-คือ target system ออก privileged credential ให้เฉพาะ EACP worker/proxy และ agent ไม่มี network route ไปถึง target
+that is, the target system issues privileged credentials only to the EACP worker/proxy, and the agent has no network route to the target.
 
-**หลักฐานที่ Slice A ต้องแสดงได้:**
+**Evidence Slice A must be able to show:**
 
 ```text
-agent เรียก Fake ERP ตรง ๆ          → ล้มเหลว (ไม่มี credential และไม่มี network path)
-agent เรียก tool นอก allowlist       → DENIED ก่อนถึง governance
-ค้น secret ใน API response / log / DB → ไม่พบ
+agent calls the Fake ERP directly        → fails (no credential and no network path)
+agent calls a tool outside its allowlist → DENIED before governance
+search for a secret in API responses / logs / DB → none found
 ```
 
 ---
 
 # 4. Relationship With Microsoft AGT
 
-Microsoft Agent Governance Toolkit เป็น Governance Foundation
+Microsoft Agent Governance Toolkit is the governance foundation.
 
-ใช้ AGT/ACS สำหรับสิ่งเช่น:
+AGT/ACS is used for things such as:
 
 ```text
 Policy
@@ -316,9 +316,9 @@ Audit evidence
 SRE primitives
 ```
 
-Enterprise Agent Control Plane ไม่ควรสร้างของเหล่านี้ซ้ำโดยไม่มีเหตุผล
+Enterprise Agent Control Plane should not rebuild these without a reason.
 
-**Rev 2 — แบ่งความรับผิดชอบให้ชัด:**
+**Rev 2 — a clear split of responsibilities:**
 
 ```text
 AGT / ACS (sidecar PDP)          EACP (Go core)
@@ -330,7 +330,7 @@ Action identity semantics        Execution, idempotency, lease/fencing
 Audit primitives                 Durable audit journal
 ```
 
-ACS เป็น stateless จึง **ไม่ใช่ state store** ของ approval (§5.1)
+ACS is stateless, so it is **not a state store** for approvals (§5.1).
 
 Architecture:
 
@@ -383,9 +383,9 @@ Architecture:
 
 # 5. Extension-First Strategy
 
-ไม่ fork Microsoft AGT ทั้ง repo เป็นค่าเริ่มต้น
+By default, do not fork the whole Microsoft AGT repository.
 
-ใช้:
+Use:
 
 ```text
 Microsoft AGT
@@ -398,51 +398,51 @@ Compatibility / Integration Layer
 Enterprise Agent Control Plane
 ```
 
-เหตุผล:
+Reasons:
 
 ```text
-AGT ยัง evolve เร็ว
-API ยังเป็น Public Preview
-ACS ยังพัฒนา
-package layout เปลี่ยนได้
+AGT still evolves quickly
+its API is still a Public Preview
+ACS is still in development
+the package layout may change
 ```
 
-ดังนั้น AGT-specific code ต้องถูก isolate
+So AGT-specific code must be isolated.
 
-ตัวอย่าง:
+For example:
 
 ```text
-integrations/governance/microsoftagt/   (Go client ของ sidecar)
+integrations/governance/microsoftagt/   (the sidecar's Go client)
 sidecars/agt-pdp/                        (AGT Python/Rust sidecar)
 ```
 
-Core domain ห้าม depend กับ Microsoft-specific types โดยตรง
+The core domain must not depend on Microsoft-specific types directly.
 
 ## 5.1 Upstream Reality (verified 2026-09-23) — Rev 2
 
 ```text
 AGT                     Public Preview v4.1.0, MIT, may break before GA
 ACS                     in-process, stateless library (Rust core; SDK: Python/Node/.NET/Rust)
-ACS Go binding          ไม่มี
+ACS Go binding          none
 AGT Go SDK              core only (policy/identity/trust/audit)
-                        ไม่มี approval chains (issue #3083)
+                        no approval chains (issue #3083)
 ACS verdicts            allow / warn / deny / escalate / transform
 Action binding          JCS (RFC 8785) + SHA-256; approval binds to enforced identity
 ```
 
-ผลที่ตามมา:
+Consequences:
 
 ```text
-Go เรียก ACS ผ่าน sidecar PDP (ADR-002)
-EACP เป็นเจ้าของ approval state (ADR-005)
-Pin AGT version + conformance tests ใน CI
+Go calls ACS through a sidecar PDP (ADR-002)
+EACP owns approval state (ADR-005)
+Pin the AGT version + conformance tests in CI
 ```
 
 ---
 
 # 6. Product Modules
 
-ระบบใหญ่แบ่งเป็น 10 modules
+The system is split into 10 modules.
 
 ```text
 1. Agent Registry
@@ -461,11 +461,11 @@ Pin AGT version + conformance tests ใน CI
 
 # 7. Module 1 — Agent Registry
 
-Agent Registry เป็น CMDB สำหรับ AI Agents
+The Agent Registry is a CMDB for AI agents.
 
-ทุก production agent ต้องมี Passport
+Every production agent must have a Passport.
 
-ตัวอย่าง:
+For example:
 
 ```yaml
 agent_id: procurement-agent
@@ -485,7 +485,7 @@ models:
   - claude
   - gpt
 
-tools:                     # Rev 2: นี่คือ capability allowlist ที่ถูก enforce
+tools:                     # Rev 2: this is the capability allowlist that is enforced
   - supplier_search
   - sap.create_po
   - email.send
@@ -533,24 +533,24 @@ RETIRED
 Alternative:
 
 ```text
-SUSPENDED      (Rev 2: หยุดชั่วคราวและ resume ได้)
+SUSPENDED      (Rev 2: paused, and can be resumed)
 QUARANTINED
 REVOKED
 ```
 
-ทุก transition ต้องมีเหตุผลและ audit event
+Every transition must carry a reason and an audit event.
 
-**Rev 2:** เฉพาะ AgentVersion ที่ `ACTIVE` (และ `CANARY` ตาม rollout) เท่านั้นที่ submit action ได้
+**Rev 2:** only an AgentVersion that is `ACTIVE` (and `CANARY` during a rollout) may submit actions.
 
-สถานะนี้ถูกตรวจซ้ำใน release boundary (§15) และตอน dispatch-intent commit (§23.1)
+This state is checked again at the release boundary (§15) and at the dispatch-intent commit (§23.1).
 
-ถ้าถูก SUSPENDED หรือ QUARANTINED ระหว่างทาง action ที่ยังไม่ dispatch จะไม่ถูก execute
+If it is SUSPENDED or QUARANTINED along the way, actions not yet dispatched are not executed.
 
 ---
 
 # 9. Ownership Requirement
 
-Production Agent ที่ไม่มี owner ถือเป็น risk
+A production agent without an owner is a risk.
 
 Policy:
 
@@ -561,7 +561,7 @@ and owner == null
 → deployment denied
 ```
 
-Owner สามารถเป็น:
+An owner can be:
 
 ```text
 Human
@@ -574,19 +574,19 @@ Business unit
 
 # 10. Agent Versioning
 
-แยก:
+Separate:
 
 ```text
 Agent
 ```
 
-กับ:
+from:
 
 ```text
 AgentVersion
 ```
 
-ตัวอย่าง:
+For example:
 
 ```text
 procurement-agent
@@ -596,7 +596,7 @@ v13
 v14
 ```
 
-แต่ละ version อาจต่างกันใน:
+Versions may differ in:
 
 ```text
 Prompt
@@ -613,11 +613,11 @@ Risk class
 
 # 11. Agent Bill of Materials
 
-สร้าง:
+Create:
 
 > Agent BOM / Agent SBOM
 
-ตัวอย่าง:
+For example:
 
 ```text
 Procurement Agent v14
@@ -644,7 +644,7 @@ Procurement Agent v14
     └── finance-api
 ```
 
-เป้าหมาย:
+Goals:
 
 ```text
 Reproducibility
@@ -658,9 +658,9 @@ Release comparison
 
 # 12. Module 2 — Governance Integration
 
-Microsoft AGT / ACS เป็น default governance provider
+Microsoft AGT / ACS is the default governance provider,
 
-แต่ Control Plane ต้องไม่ lock-in
+but the Control Plane must not be locked in.
 
 Interface concept (Rev 2 — ADR-002):
 
@@ -685,15 +685,15 @@ type GovernanceDecision struct {
 }
 ```
 
-**Revalidation** ไม่ใช่ primitive ของ ACS
+**Revalidation** is not an ACS primitive.
 
-EACP นิยาม revalidation เองว่า = เรียก `Evaluate` ซ้ำด้วย snapshot ปัจจุบันก่อนเข้า atomic boundary (§15)
+EACP defines revalidation itself as calling `Evaluate` again with the current snapshot before entering the atomic boundary (§15).
 
-ถ้า error, timeout หรือ response ไม่ครบ → **fail closed** สำหรับ action ใหม่ที่มี side effect
+On an error, a timeout or an incomplete response → **fail closed** for new actions with side effects.
 
-Rev 2.1: fail closed ในที่นี้หมายถึง action จะยังไม่ execute โดยยังค้างเป็น RECEIVED และ API ตอบ 503 ให้ retry ได้ ไม่ได้หมายถึงการ DENIED แบบถาวร (ADR-002 §6)
+Rev 2.1: failing closed here means the action does not execute yet: it stays RECEIVED and the API answers 503 so it can be retried. It does not mean a permanent DENIED (ADR-002 §6).
 
-แต่ห้ามบล็อก cancel, reconciliation read และ containment
+But cancel, reconciliation reads and containment must never be blocked.
 
 Providers:
 
@@ -706,15 +706,15 @@ OpenFGA
 Custom HTTP PDP
 ```
 
-Microsoft AGT เป็น primary production integration
+Microsoft AGT is the primary production integration,
 
-แต่ Slice A ใช้ `local` provider เพื่อให้ execution correctness ไม่ต้องรอ AGT
+but Slice A uses the `local` provider so that execution correctness does not have to wait for AGT.
 
 ---
 
 # 13. Governance Context
 
-Control Plane เก็บ:
+The Control Plane stores:
 
 ```text
 agent_id
@@ -742,25 +742,25 @@ trace_id
 
 **Rev 2 — reference governance *decisions*, own approval *state*:**
 
-EACP ไม่ reimplement policy engine
+EACP does not reimplement a policy engine,
 
-แต่ EACP **เป็นเจ้าของ approval state** และ **decision evidence** เพราะ:
+but EACP **owns approval state** and **decision evidence**, because:
 
 ```text
-ACS stateless → ไม่มี state ให้ "duplicate"
-approval ต้องถูก consume ใน transaction เดียวกับ action (§15)
-audit ต้อง reconstruct ได้ว่า policy version ไหนตัดสิน (invariant 10)
+ACS is stateless → there is no state to "duplicate"
+an approval must be consumed in the same transaction as the action (§15)
+audit must be able to reconstruct which policy version decided (invariant 10)
 ```
 
-ถ้าไม่มี decision evidence → action ห้ามเข้า atomic boundary (fail closed)
+Without decision evidence → the action must not enter the atomic boundary (fail closed).
 
 ---
 
 # 14. Action-Bound Approval
 
-ใช้แนวคิดของ AGT approval protocol
+Use the ideas of the AGT approval protocol.
 
-Action ต้อง bind กับ:
+An action must be bound to:
 
 ```text
 Agent
@@ -772,7 +772,7 @@ Resource
 Parameters
 ```
 
-จากนั้นสร้าง canonical digest
+Then create a canonical digest.
 
 ```text
 ActionBinding
@@ -784,43 +784,43 @@ SHA-256
 Action Digest
 ```
 
-เปลี่ยน parameter:
+Change a parameter:
 
 ```text
 2,400,000 THB
 ```
 
-เป็น:
+to:
 
 ```text
 24,000,000 THB
 ```
 
-approval เดิมใช้ไม่ได้
+and the old approval no longer applies.
 
 ## 14.1 Enforced Digest — Rev 2
 
-ถ้า policy ตอบ `transform` (เช่น redact field หรือ cap amount) payload ที่จะ execute จริงคือ **enforced payload**
+If the policy answers `transform` (for example, redact a field or cap an amount), the payload that really executes is the **enforced payload**.
 
 ```text
 input binding     → JCS → SHA-256 → input_digest      (request identity: idempotency conflict check, audit)
-enforced binding  → JCS → SHA-256 → enforced_digest   (approval, revalidation, execution ใช้ตัวนี้)
+enforced binding  → JCS → SHA-256 → enforced_digest   (approval, revalidation and execution use this one)
 ```
 
-Idempotency key ซ้ำ:
+A repeated idempotency key:
 
 ```text
-input_digest เดิม     → คืน action เดิม
-input_digest ต่างกัน  → 409 Conflict
+same input_digest       → returns the original action
+different input_digest  → 409 Conflict
 ```
 
-Approver เห็นและอนุมัติ **enforced payload**
+The approver sees and approves the **enforced payload**.
 
-Worker execute **เฉพาะ** enforced payload ที่ persist ไว้ใน atomic boundary และห้ามใช้ payload จาก agent โดยตรง
+The worker executes **only** the enforced payload persisted at the atomic boundary, never a payload taken directly from the agent.
 
 ## 14.2 Approval Model — Rev 2 (Slice A, ADR-005)
 
-Approval state อยู่ใน Postgres ของ EACP:
+Approval state lives in EACP's Postgres:
 
 ```text
 approval_requests   (tenant_id, action_id, enforced_digest, policy_version,
@@ -831,122 +831,122 @@ approval_grants     (request_id, action_id, enforced_digest, policy_version,
                      expires_at, consumed_at, consumed_by_action_id)
 ```
 
-กฎ (conservative):
+Rules (conservative):
 
 ```text
-Grant bind กับ tenant + action + enforced_digest + policy_version
-Grant ใช้ได้ครั้งเดียว: consume ใน atomic boundary ด้วย
+A grant is bound to tenant + action + enforced_digest + policy_version
+A grant can be used once: it is consumed at the atomic boundary too
     UPDATE ... WHERE consumed_at IS NULL AND expires_at > now()
-Grant หมดอายุได้ และ PENDING_APPROVAL ก็หมดอายุได้ (→ EXPIRED)
+A grant can expire, and so can PENDING_APPROVAL (→ EXPIRED)
 Separation of duties:
-    approver ≠ subject ที่ขอ
-    approver ≠ owner ของ agent
-    approver อยู่ tenant เดียวกัน และมี role ที่ policy กำหนด
-Quorum: ต้องครบจำนวน vote ที่ policy กำหนด
-    deny vote เดียว → DENIED (short-circuit)
-Policy version เปลี่ยนก่อน consume → grant เดิมใช้ไม่ได้
-    → revalidate ใหม่
-    → allow: ไปต่อได้ (void request/grant เดิม) / escalate: ขอ approval ใหม่ / deny: DENIED
-Policy version เป็น immutable และมี tenant policy pointer ที่ถูก lock ร่วมกัน
-    ระหว่าง activation กับ release/dispatch (ADR-005 §5)
-Policy / allowlist / contract activation เป็น two-person operation
-    และคนที่ author หรือ activate ห้าม approve action ที่พึ่งพาสิ่งนั้น
-Team owner: ตรวจ membership จาก group_memberships ถ้า resolve ไม่ได้ → ปฏิเสธ vote
-ทุก vote และ grant มี authorization basis และ audit event
+    approver ≠ the subject who asked
+    approver ≠ the agent's owner
+    approver is in the same tenant and holds the role the policy requires
+Quorum: the number of votes the policy requires must be reached
+    a single deny vote → DENIED (short-circuit)
+The policy version changes before consumption → the old grant no longer applies
+    → revalidate again
+    → allow: continue (void the old request/grant) / escalate: ask for a new approval / deny: DENIED
+Policy versions are immutable, with a tenant policy pointer that is locked together
+    by activation and by release/dispatch (ADR-005 §5)
+Policy / allowlist / contract activation is a two-person operation,
+    and whoever authored or activated it must not approve actions that depend on it
+Team owner: membership is checked in group_memberships; if it cannot be resolved → the vote is refused
+Every vote and grant has an authorization basis and an audit event
 ```
 
-Approval **durable**: survive restart เพราะอยู่ใน Postgres ไม่อยู่ใน memory ของ process ใด
+Approvals are **durable**: they survive a restart because they live in Postgres, not in any process's memory.
 
 ---
 
 # 15. Atomic Execution Boundary
 
-นี่เป็นหัวใจสำคัญที่สุดของ Execution Plane
+This is the most important part of the Execution Plane.
 
-หลัง governance อนุญาตแล้ว Action ยังไม่ถือว่าเริ่ม execution
+After governance allows it, an action has still not started executing.
 
-ต้องผ่าน atomic boundary
+It must pass the atomic boundary.
 
-**Rev 2 — ลำดับเต็ม (ADR-005):**
+**Rev 2 — the full sequence (ADR-005):**
 
 ```text
-(0) Submission — transaction แยก
+(0) Submission — its own transaction
     authenticate agent → capability check → claim idempotency key
     → persist action (RECEIVED, input payload, input_digest)
 
-(1) Governance — นอก DB transaction เพราะห้ามถือ DB lock ระหว่างรอ PDP
+(1) Governance — outside any DB transaction, because no DB lock may be held while waiting for the PDP
     Evaluate → persist decision evidence
     → AUTHORIZED | PENDING_APPROVAL | DENIED
 
-(2) Revalidation — นอก transaction, ก่อน release
-    Evaluate อีกครั้งด้วย snapshot ปัจจุบัน
-    → ได้ policy_version + enforced_digest ล่าสุด
+(2) Revalidation — outside the transaction, before release
+    Evaluate again with the current snapshot
+    → yields the latest policy_version + enforced_digest
 
 (3) Release boundary — ONE TRANSACTION
     BEGIN
       lock action row (state ∈ {AUTHORIZED}), check not_after
-      verify revalidation: policy_version ตรงกับ current policy version
-                           enforced_digest ตรงกับที่ persist ไว้
-      verify agent version ยัง ACTIVE และ tool ยังอยู่ใน allowlist
-      consume one-time approval grant (ถ้ามี)
-      reserve budget                       (hook ใน Slice A; hard budget ใน Slice B)
+      verify revalidation: policy_version matches the current policy version
+                           enforced_digest matches the persisted one
+      verify the agent version is still ACTIVE and the tool still in the allowlist
+      consume the one-time approval grant (if any)
+      reserve budget                       (a hook in Slice A; hard budgets in Slice B)
       transition AUTHORIZED → QUEUED
       append execution journal + audit event
       insert outbox event
     COMMIT
 ```
 
-ถ้าเงื่อนไขใดไม่ผ่าน → ROLLBACK ทั้งหมด
+If any condition fails → ROLLBACK everything.
 
-ผลคือ approval ไม่ถูกเผาทิ้ง และ action ไม่ถูก queue
+So the approval is not burned, and the action is not queued.
 
-หลัง COMMIT เท่านั้น:
+Only after COMMIT:
 
 ```text
 Action is executable
 ```
 
-ก่อน COMMIT:
+Before COMMIT:
 
 ```text
 No worker should execute the action
 ```
 
-การ execute จริงยังต้องผ่าน **fenced dispatch** อีกชั้น (§23)
+The actual execution still has to pass **fenced dispatch**, one more layer (§23).
 
 ---
 
 # 16. Why Atomic Execution Boundary Matters
 
-ป้องกัน:
+It prevents:
 
 ```text
-Approval ถูกใช้สองครั้ง
+An approval being used twice
 
 Worker race
 
-Action ถูก queue แต่ DB ไม่มี record
+An action queued with no record in the DB
 
-Budget ถูกใช้เกินจาก race
+A budget overspent through a race
 
-Duplicate request สร้าง external effect ซ้ำ
+A duplicate request causing a duplicate external effect
 
-Approval ถูกเผาทิ้งโดยไม่มี action รองรับ   (Rev 2)
+An approval burned with no action behind it   (Rev 2)
 
-Policy เปลี่ยนแล้วแต่ยังใช้ approval เก่า    (Rev 2)
+A policy that changed while an old approval is still used    (Rev 2)
 ```
 
-Atomic boundary **ไม่ได้** ป้องกัน duplicate external effect จาก worker ที่ค้าง (stale)
+The atomic boundary does **not** prevent a duplicate external effect from a stale worker.
 
-กรณีนั้นแก้ด้วย fenced dispatch (§23) และ reconciliation protocol (§20)
+That case is solved by fenced dispatch (§23) and the reconciliation protocol (§20).
 
 ---
 
 # 17. Module 3 — Distributed Execution Fabric
 
-Go เป็นภาษาหลัก
+Go is the main language.
 
-หน้าที่:
+Responsibilities:
 
 ```text
 Admission
@@ -966,7 +966,7 @@ Execution Evidence
 
 # 18. Action State Machine
 
-**Rev 2 — ตาราง transition ฉบับเต็มอยู่ใน ADR-004 ซึ่งเป็น source of truth**
+**Rev 2 — the full transition table is in ADR-004, which is the source of truth**
 
 Happy path:
 
@@ -979,7 +979,7 @@ QUEUED
    ↓  worker claim: lease_generation++
 LEASED
    ↓  fenced dispatch-intent commit (§23)
-EXECUTING          ← หมายถึง "อาจ dispatch ไปแล้ว" ไม่ใช่ "กำลังรอ"
+EXECUTING          ← means "may already have been dispatched", not "waiting"
    ↓  definitive success + evidence
 SUCCEEDED
 ```
@@ -1012,39 +1012,39 @@ Terminal:
 SUCCEEDED  FAILED  DENIED  CANCELLED  EXPIRED
 ```
 
-Crash recovery (สรุป):
+Crash recovery (summary):
 
-| State ตอน crash | Recovery |
+| State at the crash | Recovery |
 |---|---|
-| RECEIVED | Governance sweeper ประเมินใหม่ (Evaluate เป็น pure function) หรือ EXPIRED เมื่อเลย `not_after` ถ้า PDP ล่มจะยังเป็น RECEIVED และ API ตอบ 503 (ไม่ถูก DENIED) |
-| PENDING_APPROVAL / AUTHORIZED / QUEUED / RETRY_WAIT | อยู่ใน Postgres (durable) แล้วทำงานต่อได้เลย |
-| LEASED (ยังไม่มี dispatch intent) | Lease หมด → กลับ QUEUED ได้อย่างปลอดภัย เพราะยังไม่มี side effect |
-| EXECUTING | Lease หมด → **UNKNOWN_OUTCOME** ห้ามกลับ QUEUED ข้อยกเว้นเดียว: connector ที่ certified READ_ONLY หรือ native-idempotent ให้ re-dispatch ได้ด้วย **operation key เดิม** |
-| RECONCILING | Reconciler lease หมด → กลับ UNKNOWN_OUTCOME |
+| RECEIVED | The governance sweeper evaluates again (Evaluate is a pure function), or EXPIRED once past `not_after`. If the PDP is down it stays RECEIVED and the API answers 503 (it is not DENIED) |
+| PENDING_APPROVAL / AUTHORIZED / QUEUED / RETRY_WAIT | Already in Postgres (durable), so work simply continues |
+| LEASED (no dispatch intent yet) | Lease expires → back to QUEUED safely, because there is no side effect yet |
+| EXECUTING | Lease expires → **UNKNOWN_OUTCOME**; never back to QUEUED. The one exception: a connector certified READ_ONLY or native-idempotent may be re-dispatched with the **same operation key** |
+| RECONCILING | Reconciler lease expires → back to UNKNOWN_OUTCOME |
 
-การเปลี่ยนจาก Rev 1:
+Changes from Rev 1:
 
 ```text
-CREATED    → เปลี่ยนชื่อเป็น RECEIVED (persist ก่อน governance เพื่อ audit request ที่ถูก deny)
-ADMITTED   → รวมเข้ากับ admission ตอน submission (§26) ถ้าถูก reject ได้ 429 และไม่สร้าง action
-PREPARING  → รวมเข้ากับ LEASED (worker-local)
-DEAD_LETTER → เป็น concept ของ message/inbox ไม่ใช่ action state
-              action ที่ retry หมดแล้วจะเป็น FAILED(reason=retry_exhausted)
+CREATED    → renamed RECEIVED (persisted before governance, so denied requests are audited)
+ADMITTED   → merged into admission at submission (§26); a rejection is a 429 and creates no action
+PREPARING  → merged into LEASED (worker-local)
+DEAD_LETTER → a concept of messages/inboxes, not an action state;
+              an action out of retries becomes FAILED(reason=retry_exhausted)
 ```
 
-ทุก transition ต้องมี actor, reason และ audit event ตาม §8
+Every transition must have an actor, a reason and an audit event, as in §8.
 
 ---
 
 # 19. First-Class UNKNOWN_OUTCOME
 
-ห้ามถือว่า:
+Never assume:
 
 ```text
 timeout = failure
 ```
 
-ตัวอย่าง:
+For example:
 
 ```text
 Agent Control Plane
@@ -1058,19 +1058,19 @@ SAP creates PO
 response lost
 ```
 
-Control Plane เห็น:
+The Control Plane sees:
 
 ```text
 timeout
 ```
 
-แต่ความจริงอาจเป็น:
+But the truth may be:
 
 ```text
 PO created
 ```
 
-ดังนั้น:
+So:
 
 ```text
 EXECUTING
@@ -1080,31 +1080,31 @@ timeout after dispatch
 UNKNOWN_OUTCOME
 ```
 
-ไม่ใช่:
+Not:
 
 ```text
 FAILED
 ```
 
-**Rev 2 — UNKNOWN_OUTCOME เกิดได้หลายทาง ไม่ใช่แค่ timeout:**
+**Rev 2 — UNKNOWN_OUTCOME arises in many ways, not only timeouts:**
 
 ```text
-timeout หลังส่ง request
-connection reset หลังส่ง request
-5xx ที่ connector ไม่ได้ certify ว่าเป็น "no effect"
-worker crash / lease หมด ระหว่าง EXECUTING
-kill / cancel ระหว่าง EXECUTING
+a timeout after the request was sent
+a connection reset after the request was sent
+a 5xx the connector has not certified as "no effect"
+a worker crash / lease expiry during EXECUTING
+a kill / cancel during EXECUTING
 ```
 
-ผลที่ถือว่า **definitive** มีแค่สองแบบ:
+Only two kinds of result count as **definitive**:
 
 ```text
-definitive success   = response สำเร็จที่มี external reference
-definitive no-effect = error ที่ connector contract certify ว่าไม่มี side effect
-                       เช่น validation 4xx ที่ระบุไว้ หรือ connection refused ก่อนส่ง
+definitive success   = a successful response with an external reference
+definitive no-effect = an error the connector contract certifies as having no side effect,
+                       such as a declared validation 4xx or a connection refused before sending
 ```
 
-นอกนั้นทั้งหมดเป็น UNKNOWN_OUTCOME (conservative default)
+Everything else is UNKNOWN_OUTCOME (the conservative default).
 
 ---
 
@@ -1119,7 +1119,7 @@ Check external world state
        ↓
 ```
 
-ผล:
+Result:
 
 ```text
 CONFIRMED_SUCCESS
@@ -1128,17 +1128,17 @@ STILL_UNKNOWN
 CONFLICT
 ```
 
-จากนั้น:
+Then:
 
 ```text
 CONFIRMED_SUCCESS
 → SUCCEEDED
 
 CONFIRMED_NOT_EXECUTED
-→ retry may be allowed (เฉพาะเมื่อ evidence ผ่าน proof standard ด้านล่าง)
+→ retry may be allowed (only when the evidence meets the proof standard below)
 
 STILL_UNKNOWN
-→ retry reconciliation later → หมดจำนวนครั้ง/เวลา → NEEDS_HUMAN_RESOLUTION
+→ retry reconciliation later → out of attempts/time → NEEDS_HUMAN_RESOLUTION
 
 CONFLICT
 → NEEDS_HUMAN_RESOLUTION
@@ -1146,70 +1146,70 @@ CONFLICT
 
 ## 20.1 Operation Identity — Rev 2
 
-ทุก action มี **operation key** ที่คงที่ตลอดอายุ action และไม่เปลี่ยนตาม attempt
+Every action has an **operation key** that stays the same for the action's whole life and does not change per attempt.
 
 ```text
 operation_key = "eacp:{tenant_id}:{action_id}"
 ```
 
-Connector ต้องส่ง operation key ไปยัง external system:
+The connector must send the operation key to the external system:
 
 ```text
-native idempotency     → เป็น Idempotency-Key ของ external API
-correlation only       → ฝังใน field อ้างอิงของ record (เช่น PO external reference)
-                         เพื่อให้ reconciliation ค้นหาได้
-none                   → execute ได้แบบ at-most-once เท่านั้น
-                         ambiguity ใด ๆ → NEEDS_HUMAN_RESOLUTION
+native idempotency     → as the external API's Idempotency-Key
+correlation only       → embedded in a reference field of the record (e.g. the PO's external reference)
+                         so that reconciliation can find it
+none                   → can execute at most once only;
+                         any ambiguity → NEEDS_HUMAN_RESOLUTION
 ```
 
 ## 20.2 Reconciliation Proof Standard — Rev 2
 
-**"Not found" อย่างเดียวไม่ใช่หลักฐานว่าไม่ได้ execute**
+**"Not found" alone is not evidence that nothing executed.**
 
-เช่น SAP อาจ index ช้า, lookup API อาจ eventual-consistent หรือ query อาจผิด
+For example, SAP may index slowly, a lookup API may be eventually consistent, or the query may be wrong.
 
-Connector contract (§31) ต้องประกาศ proof standard:
+The connector contract (§31) must declare its proof standard:
 
 | Evidence | Positive (success) | Negative (not executed) |
 |---|---|---|
-| `AUTHORITATIVE` | ค้นเจอ record ด้วย operation key | lookup ด้วย operation key บน read path ที่ **strongly consistent** และ connector certify ว่า "ไม่เจอ = ไม่เคยเกิด" |
-| `BEST_EFFORT` | ค้นเจอ record ด้วย operation key | **ใช้ไม่ได้** → STILL_UNKNOWN |
-| `NONE` | ใช้ไม่ได้ | ใช้ไม่ได้ → NEEDS_HUMAN_RESOLUTION |
+| `AUTHORITATIVE` | a record found by operation key | a lookup by operation key on a **strongly consistent** read path, and the connector certifies that "not found = never happened" |
+| `BEST_EFFORT` | a record found by operation key | **not usable** → STILL_UNKNOWN |
+| `NONE` | not usable | not usable → NEEDS_HUMAN_RESOLUTION |
 
-กฎ auto-retry หลัง UNKNOWN_OUTCOME (conservative):
+Auto-retry rules after UNKNOWN_OUTCOME (conservative):
 
 ```text
-READ_ONLY                                   → retry ได้
-native idempotent (same operation key)      → retry ได้ด้วย key เดิม
+READ_ONLY                                   → may retry
+native idempotent (same operation key)      → may retry with the same key
 irreversible / non-idempotent:
-    AUTHORITATIVE negative evidence         → retry ได้ด้วย operation key เดิม
-                                              ถ้า retry policy อนุญาต
-    อื่น ๆ ทั้งหมด                           → NEEDS_HUMAN_RESOLUTION
+    AUTHORITATIVE negative evidence         → may retry with the same operation key
+                                              if the retry policy allows
+    everything else                         → NEEDS_HUMAN_RESOLUTION
 ```
 
 ## 20.3 Human Resolution — Rev 2
 
-`NEEDS_HUMAN_RESOLUTION` เป็น state ที่ต้องมีคน resolve อย่างชัดเจน
+`NEEDS_HUMAN_RESOLUTION` is a state that a person must resolve explicitly.
 
-Operator ที่ authenticated แล้วทำได้:
+An authenticated operator can:
 
 ```text
-mark SUCCEEDED  (แนบ external reference / evidence)
-mark FAILED     (แนบ evidence ว่าไม่ได้ execute)
-authorize retry (ใช้ operation key เดิม; ถ้าเป็น high-risk action ต้องมี SoD)
+mark SUCCEEDED  (attaching the external reference / evidence)
+mark FAILED     (attaching evidence that it did not execute)
+authorize retry (with the same operation key; a high-risk action needs SoD)
 ```
 
-ทุก resolution เป็น privileged action ที่มี reason, actor และ audit event (§57)
+Every resolution is a privileged action with a reason, an actor and an audit event (§57).
 
 ---
 
 # 21. No Fake Exactly-Once
 
-ห้ามเขียน marketing ว่า:
+Never write marketing that says:
 
 > Exactly-once execution across every external system
 
-ใช้ terminology:
+Use the terminology:
 
 ```text
 Idempotent where supported
@@ -1223,7 +1223,7 @@ At-most-once when retry is unsafe
 
 # 22. Execution Lease
 
-Worker ต้อง acquire lease
+A worker must acquire a lease.
 
 ```text
 action_id
@@ -1243,7 +1243,7 @@ lease expires
 another worker may claim
 ```
 
-**Rev 2 — การ claim อ่านจาก Postgres เท่านั้น:**
+**Rev 2 — claims read from Postgres only:**
 
 ```sql
 SELECT ... FROM actions
@@ -1252,19 +1252,19 @@ FOR UPDATE SKIP LOCKED
 LIMIT n;
 ```
 
-Worker **ห้าม** execute จาก message ใน queue (NATS) โดยตรง ต้อง claim และ fence ผ่าน Postgres ทุกครั้ง (§60)
+A worker **must never** execute from a message in a queue (NATS) directly. It must claim and fence through Postgres every time (§60).
 
-Reclaim action ที่ lease หมด:
+Reclaiming an action whose lease expired:
 
 ```text
-LEASED    (ไม่มี dispatch intent) → QUEUED           ปลอดภัย: ยังไม่มี side effect
-EXECUTING (มี dispatch intent)    → UNKNOWN_OUTCOME  ห้าม re-dispatch
-                                    ยกเว้น READ_ONLY / native-idempotent ที่ใช้ operation key เดิม
+LEASED    (no dispatch intent)    → QUEUED           safe: no side effect yet
+EXECUTING (with a dispatch intent) → UNKNOWN_OUTCOME  never re-dispatch,
+                                    except READ_ONLY / native-idempotent with the same operation key
 ```
 
-Worker ต้องไม่เริ่ม external call ถ้า lease ที่เหลือน้อยกว่า `connector_timeout + safety_margin`
+A worker must not start an external call if the lease it has left is shorter than `connector_timeout + safety_margin`,
 
-และ call deadline ต้องสั้นกว่า lease ที่เหลือเสมอ
+and the call deadline must always be shorter than the lease left.
 
 ---
 
@@ -1286,7 +1286,7 @@ generation = 11
 A wakes up
 ```
 
-A ห้าม commit
+A must not commit
 
 DB update:
 
@@ -1298,62 +1298,62 @@ AND lease_generation = $2
 AND state = 'EXECUTING';
 ```
 
-generation 10 จะ update ไม่สำเร็จ
+generation 10's update fails
 
-## 23.1 Fencing ต้องครอบคลุม Execution Semantics — Rev 2
+## 23.1 Fencing Must Cover Execution Semantics — Rev 2
 
-Fencing ที่ DB **อย่างเดียวไม่พอ**
+Fencing in the DB **alone is not enough**.
 
-ตัวอย่างความล้มเหลวใน Rev 1:
+An example failure in Rev 1:
 
 ```text
-A (gen 10) ส่ง create_po ไป SAP → freeze → lease หมด
-B (gen 11) reclaim → เห็น state EXECUTING → ส่ง create_po อีกครั้ง
-→ PO สองใบ
-(commit ของ A ถูก reject อย่างถูกต้อง แต่ side effect เกิดไปแล้ว)
+A (gen 10) sends create_po to SAP → freezes → its lease expires
+B (gen 11) reclaims → sees state EXECUTING → sends create_po again
+→ two POs
+(A's commit is correctly rejected, but the side effect has already happened)
 ```
 
-Rev 2 ใช้ **fenced dispatch protocol**:
+Rev 2 uses a **fenced dispatch protocol**:
 
 ```text
-1. Dispatch intent (fenced, commit ของตัวเอง, ก่อน external call ทุกครั้ง)
+1. Dispatch intent (fenced, its own commit, before every external call)
      UPDATE actions SET state='EXECUTING', dispatch_intent_at=now()
      WHERE id=$1 AND lease_generation=$2 AND state='LEASED'
        AND leased_until > now() + $call_budget
-     + ตรวจใน transaction เดียวกัน (อ่าน registry แบบ FOR SHARE):
-       AgentVersion ACTIVE, tool ยังอยู่ใน allowlist,
-       pinned connector contract ยัง active และไม่ถูก revoke,
-       tenant policy pointer == pinned policy_version (ถ้าไม่ตรง → กลับไป AUTHORIZED)
+     + checks in the same transaction (reading the registry FOR SHARE):
+       AgentVersion ACTIVE, the tool still in the allowlist,
+       the pinned connector contract still active and not revoked,
+       tenant policy pointer == pinned policy_version (if not → back to AUTHORIZED)
      + INSERT action_attempts(attempt_no, lease_generation, worker_id,
                               operation_key, dispatched_at)
-     ถ้า update 0 rows → ห้ามเรียก external system
+     if the update touches 0 rows → never call the external system
 
-2. External call ใช้ operation key (§20.1) และ deadline < lease ที่เหลือ
-   ส่ง fencing generation ไปด้วยสำหรับ target ที่รองรับ conditional write
+2. The external call uses the operation key (§20.1) and a deadline < the lease left,
+   and sends the fencing generation for targets that support conditional writes
 
 3. Result commit (fenced)
      ... WHERE lease_generation=$2 AND state='EXECUTING'
 
-4. ถ้า stale worker commit ไม่ผ่าน
-     → append "late result evidence" ลง journal (ไม่เปลี่ยน state)
-     → reconciler นำไปใช้เป็นหลักฐาน
+4. If a stale worker's commit fails
+     → append "late result evidence" to the journal (no state change)
+     → the reconciler uses it as evidence
 
-5. Reclaim action ที่มี dispatch intent → UNKNOWN_OUTCOME (§22) ห้าม re-dispatch
+5. Reclaiming an action with a dispatch intent → UNKNOWN_OUTCOME (§22); never re-dispatch
 ```
 
-ผลลัพธ์:
+Outcome:
 
 ```text
-DB state        ถูก fence ด้วย generation
-External effect ถูกจำกัดด้วย dispatch-intent rule + operation key
-                (idempotent/correlated ที่ external) + reconciliation
+DB state        fenced by the generation
+External effect limited by the dispatch-intent rule + the operation key
+                (idempotent/correlated at the external system) + reconciliation
 ```
 
 ---
 
 # 24. Fair Scheduler
 
-ต้องรองรับหลาย tenant/team
+It must support many tenants/teams.
 
 ```text
 Team A     10,000 jobs
@@ -1361,7 +1361,7 @@ Team B        100 jobs
 Team C        100 jobs
 ```
 
-A ห้าม starvation B/C
+A must not starve B/C
 
 Slice B (Phase 12):
 
@@ -1373,13 +1373,13 @@ Priority
 Aging
 ```
 
-**Rev 2:** Slice A ใช้ FIFO claim จาก Postgres บวก per-tenant cap แบบ static (§26)
+**Rev 2:** Slice A uses a FIFO claim from Postgres plus a static per-tenant cap (§26).
 
-ยอมรับความเสี่ยง starvation ได้ใน Slice A เพราะเป้าหมายคือ correctness ไม่ใช่ fairness
+The risk of starvation is accepted in Slice A, because its goal is correctness, not fairness.
 
-Fair scheduler ต้องเลือก *ลำดับการ claim* ใน Postgres
+The fair scheduler must choose the *claim order* in Postgres,
 
-ไม่ได้ขึ้นกับลำดับที่ message มาถึงใน NATS (§60)
+not depend on the order in which messages arrive in NATS (§60).
 
 ---
 
@@ -1402,7 +1402,7 @@ Side-effect risk
 
 # 26. Backpressure
 
-เมื่อ capacity เต็ม:
+When capacity is full:
 
 ```text
 Agent
@@ -1419,26 +1419,26 @@ THROTTLE
 REJECT
 ```
 
-ห้าม queue แบบ unbounded
+Never queue without a bound.
 
-**Rev 2:** Slice A มี admission แบบ static ตอน submission
+**Rev 2:** Slice A has static admission at submission.
 
 ```text
 global max QUEUED
 per-tenant max QUEUED
 ```
 
-ถ้าเกิน → 429 และไม่สร้าง action
+If it is exceeded → 429, and no action is created.
 
-แต่ละ limit แบบละเอียด (tenant/connector/worker) อยู่ Slice B (Phase 13)
+Fine-grained limits (tenant/connector/worker) are in Slice B (Phase 13).
 
-**Phase 13 (ADR-022 §1):** เพิ่ม limit ของ action ที่ยังไม่ release ต่อ tenant และ queue ต่อ connector group (`max_queued`); 429 บอก `scope` ของ limit ที่เต็ม
+**Phase 13 (ADR-022 §1):** adds a limit on unreleased actions per tenant and a queue limit per connector group (`max_queued`); a 429 names the `scope` of the limit that is full.
 
 ---
 
 # 27. Bulkhead Isolation
 
-แยก resource pool:
+Separate resource pools:
 
 ```text
 SAP writes
@@ -1452,13 +1452,13 @@ LLM
 Database
 ```
 
-ถ้า SAP ล่ม:
+If SAP is down:
 
 ```text
 SAP capacity exhausted
 ```
 
-Email/GitHub ต้องยังทำงาน
+Email/GitHub must keep working
 
 ---
 
@@ -1487,7 +1487,7 @@ tool
 
 # 29. Retry Safety
 
-Retry decision ต้องอิง execution semantics
+A retry decision must rest on execution semantics.
 
 ```text
 READ
@@ -1505,19 +1505,19 @@ IRREVERSIBLE + NON-IDEMPOTENT
 
 **Rev 2:**
 
-Retry หลัง definitive no-effect ทำได้ตาม retry policy
+A retry after a definitive no-effect follows the retry policy.
 
-Retry หลัง UNKNOWN_OUTCOME ต้องผ่านกฎ §20.2 เสมอ
+A retry after UNKNOWN_OUTCOME must always pass the rules of §20.2.
 
-ทุก retry ใช้ **operation key เดิม** (§20.1)
+Every retry uses the **same operation key** (§20.1).
 
-ถ้าไม่รู้ side-effect class → ถือเป็น `IRREVERSIBLE_WRITE` + non-idempotent (at-most-once)
+If the side-effect class is unknown → treat it as `IRREVERSIBLE_WRITE` + non-idempotent (at-most-once).
 
 ---
 
 # 30. Retry Budget
 
-มี:
+There is:
 
 ```text
 max_attempts
@@ -1525,15 +1525,15 @@ max_elapsed_time
 max_retry_cost
 ```
 
-เพื่อหยุด retry storm
+to stop retry storms.
 
 ---
 
 # 31. Module 4 — Tool / Connector Registry
 
-ทุก external capability ต้อง register
+Every external capability must be registered.
 
-ตัวอย่าง:
+For example:
 
 ```yaml
 connector: sap-production
@@ -1548,19 +1548,19 @@ idempotency:
   key_field: Idempotency-Key
 
 operation_identity:
-  correlation_field: external_reference   # operation key ถูกฝังไว้ตรงนี้
+  correlation_field: external_reference   # the operation key is embedded here
 
 reconciliation:
   lookup: by_operation_key
   proof_standard: authoritative  # authoritative | best_effort | none
   consistency: strong
 
-no_effect_errors:                # error ที่ certify ว่าไม่มี side effect
+no_effect_errors:                # errors certified as having no side effect
   - http_400_validation
   - connection_refused_before_send
 
 credentials:
-  custody: worker         # agent ไม่เคยได้รับ credential
+  custody: worker         # the agent never receives the credential
 
 concurrency:
   group: sap-write
@@ -1570,17 +1570,17 @@ data:
   sensitivity: confidential
 ```
 
-**Rev 2 — Connector contract เป็น operator-declared และ certified:**
+**Rev 2 — the connector contract is operator-declared and certified:**
 
-MCP/tool metadata เป็น untrusted (§67)
+MCP/tool metadata is untrusted (§67).
 
-ดังนั้น `side_effect`, `idempotency`, `reconciliation` และ `no_effect_errors` ต้องประกาศโดย operator ใน registry
+So `side_effect`, `idempotency`, `reconciliation` and `no_effect_errors` must be declared by an operator in the registry.
 
-ค่าที่ server ประกาศเอง (self-description) เป็นแค่ข้อมูลประกอบ
+What the server declares about itself (self-description) is supporting information only.
 
-Contract ผูกกับ tool fingerprint (§33) ถ้า fingerprint เปลี่ยน contract ถือว่า invalid จนกว่าจะ recertify
+A contract is bound to the tool fingerprint (§33). If the fingerprint changes, the contract is invalid until it is recertified.
 
-ถ้าไม่มี contract → tool นั้น execute ไม่ได้ (fail closed)
+Without a contract → the tool cannot execute (fail closed).
 
 ---
 
@@ -1600,13 +1600,13 @@ FINANCIAL
 ADMINISTRATIVE
 ```
 
-หนึ่ง action อาจมีหลาย tag
+One action may carry several tags.
 
 ---
 
 # 33. Tool Fingerprint
 
-Tool definition ต้อง fingerprint
+Tool definitions must be fingerprinted.
 
 ```text
 Tool Schema
@@ -1620,7 +1620,7 @@ Canonical form
 SHA-256
 ```
 
-เมื่อ MCP reconnect:
+When an MCP server reconnects:
 
 ```text
 old fingerprint
@@ -1628,7 +1628,7 @@ vs
 new fingerprint
 ```
 
-ถ้าเปลี่ยน:
+If it changed:
 
 ```text
 Low risk
@@ -1663,7 +1663,7 @@ QUARANTINED
 REVOKED
 ```
 
-**Rev 2:** การ certify tool ต้องรวม **connector contract** ด้วย (§31):
+**Rev 2:** certifying a tool must include the **connector contract** (§31):
 
 ```text
 side-effect class
@@ -1674,13 +1674,13 @@ no-effect errors
 credential custody
 ```
 
-Contract ผูกกับ fingerprint ถ้า fingerprint เปลี่ยน → contract invalid → tool execute ไม่ได้จนกว่าจะ recertify
+The contract is bound to the fingerprint. If the fingerprint changes → the contract is invalid → the tool cannot execute until it is recertified.
 
 ---
 
 # 35. Module 5 — Dependency Graph
 
-สร้าง graph:
+Build a graph:
 
 ```text
 Agent
@@ -1696,7 +1696,7 @@ Application
 Dataset
 ```
 
-อีกแบบ:
+Another example:
 
 ```text
 Agent A
@@ -1712,13 +1712,13 @@ Database Y
 
 # 36. Blast Radius
 
-ถ้า:
+If:
 
 ```text
 sap-mcp v3 compromised
 ```
 
-Control Plane ตอบได้ทันที:
+The Control Plane can answer at once:
 
 ```text
 Affected Agents: 41
@@ -1750,9 +1750,9 @@ PostgreSQL
 recursive CTE
 ```
 
-ไม่ใช้ graph database จนมีเหตุผลจริง
+Do not use a graph database until there is a real reason.
 
-ภายหลังอาจเปลี่ยนเป็น:
+Later it may become:
 
 ```text
 Neo4j
@@ -1760,15 +1760,15 @@ Memgraph
 etc.
 ```
 
-เมื่อ graph complexity justify
+once the graph's complexity justifies it.
 
 ---
 
 # 38. Module 6 — Fleet Operations
 
-มอง Agent เป็น fleet
+See agents as a fleet.
 
-Operator ต้อง:
+An operator must be able to:
 
 ```text
 list
@@ -1797,9 +1797,9 @@ Policy Drift          5
 
 # 39. Distributed Kill Switch
 
-ใช้ AGT kill semantics
+Use AGT's kill semantics,
 
-แต่ Control Plane ทำ distributed propagation
+but the Control Plane does the distributed propagation.
 
 scope:
 
@@ -1844,38 +1844,38 @@ listen for live kill event
 cancel context if possible
 ```
 
-แต่:
+But:
 
 ```text
 cancel != external rollback
 ```
 
-ดังนั้น dispatched action อาจต้อง reconcile
+So a dispatched action may need reconciliation.
 
-**Rev 2 (Slice C, Phase 16) — ปิด TOCTOU:**
+**Rev 2 (Slice C, Phase 16) — closing the TOCTOU:**
 
 ```text
-kill_epoch        Postgres เก็บ kill_epoch แบบ monotonic ต่อ scope
-                  เป็น authoritative state
-Fenced check      ตรวจ kill state ใน transaction เดียวกับ dispatch-intent commit (§23.1)
-                  ถ้า kill แล้ว commit ไม่ผ่าน และไม่มี external call
-Backstop          worker poll kill_epoch เป็นระยะ เพราะ NATS event อาจหายหรือช้า
-EXECUTING         kill ระหว่าง EXECUTING → cancel context → UNKNOWN_OUTCOME → reconcile
-                  ไม่ถือว่า FAILED
-Containment       kill / reconcile / cancel ต้องทำงานได้แม้ governance PDP ล่ม
+kill_epoch        Postgres keeps a monotonic kill_epoch per scope
+                  as the authoritative state
+Fenced check      the kill state is checked in the same transaction as the dispatch-intent commit (§23.1);
+                  if killed, the commit fails and there is no external call
+Backstop          the worker polls kill_epoch periodically, because a NATS event may be lost or late
+EXECUTING         a kill during EXECUTING → cancel the context → UNKNOWN_OUTCOME → reconcile;
+                  it is not treated as FAILED
+Containment       kill / reconcile / cancel must work even when the governance PDP is down
 ```
 
-Slice A มีแค่ agent `SUSPENDED` lifecycle ที่ถูกตรวจใน release boundary และ dispatch-intent commit
+Slice A has only the agent `SUSPENDED` lifecycle, checked at the release boundary and the dispatch-intent commit.
 
-Distributed kill switch เต็มรูปแบบอยู่ Slice C
+The full distributed kill switch is in Slice C.
 
 ---
 
 # 41. Module 7 — Agent SRE & Observability
 
-ใช้ AGT SRE + OpenTelemetry
+Use AGT SRE + OpenTelemetry.
 
-Control Plane เพิ่ม fleet-level view
+The Control Plane adds a fleet-level view.
 
 Trace:
 
@@ -1905,7 +1905,7 @@ Outcome
 
 # 42. Execution Evidence vs Governance Evidence
 
-แยกชัด:
+A clear split:
 
 ```text
 Governance Evidence
@@ -1916,7 +1916,7 @@ What approval?
 Why allow?
 ```
 
-กับ:
+from:
 
 ```text
 Execution Evidence
@@ -1929,7 +1929,7 @@ What happened?
 Was reconciliation required?
 ```
 
-เชื่อมกันด้วย:
+Linked by:
 
 ```text
 action_id
@@ -1940,14 +1940,14 @@ trace_id
 **Rev 2 — Evidence journal (Slice A):**
 
 ```text
-append-only       ห้าม UPDATE / DELETE (บังคับที่ DB role)
-hash-chained      แต่ละ event มี prev_hash ต่อ tenant (tamper-evident)
-ครอบคลุม           ทุก state transition, decision evidence, approval vote/grant/consume,
+append-only       no UPDATE / DELETE (enforced by the DB role)
+hash-chained      each event has a prev_hash per tenant (tamper-evident)
+coverage          every state transition, decision evidence, approval vote/grant/consume,
                   dispatch intent, late result evidence, reconciliation evidence,
                   human resolution
 ```
 
-Governance evidence ต้องเก็บ:
+Governance evidence must record:
 
 ```text
 provider
@@ -1961,7 +1961,7 @@ enforced_digest
 evaluated_at
 ```
 
-Execution evidence ต้องเก็บ:
+Execution evidence must record:
 
 ```text
 worker_id
@@ -1972,15 +1972,15 @@ external_reference
 outcome
 ```
 
-OTel trace context (W3C `traceparent`) ต้องส่งต่อผ่าน action row, outbox และ message headers
+The OTel trace context (W3C `traceparent`) must be carried through the action row, the outbox and message headers,
 
-เพื่อให้ trace ไม่ขาดตอนที่ queue
+so that a trace does not break at the queue.
 
 ---
 
 # 43. Outcome Attestation Bridge
 
-Execution Fabric สร้าง verified outcome:
+The Execution Fabric produces a verified outcome:
 
 ```text
 CONFIRMED_SUCCESS
@@ -1989,7 +1989,7 @@ UNKNOWN
 CONFLICT
 ```
 
-แล้ว bridge กลับไป Governance/Audit plane
+and bridges it back to the Governance/Audit plane.
 
 ```text
 Execution Evidence
@@ -2049,17 +2049,17 @@ needs_human_resolution           (Rev 2)
 late_result_evidence_total       (Rev 2)
 ```
 
-**Rev 2 — Label cardinality:** metric labels มีได้เฉพาะมิติที่จำกัดจำนวน เช่น tenant, connector, state, verdict
+**Rev 2 — label cardinality:** metric labels may only be bounded dimensions, such as tenant, connector, state, verdict.
 
-ห้ามใช้ `agent_id` หรือ `action_id` เป็น label
+Never use `agent_id` or `action_id` as a label.
 
-ถ้าต้องดูราย agent ให้ใช้ traces, logs หรือ query จาก Postgres
+To look at a single agent, use traces, logs or a Postgres query.
 
 ---
 
 # 45. Module 8 — Agent FinOps
 
-รวม:
+Including:
 
 ```text
 Cost observation
@@ -2072,18 +2072,18 @@ Chargeback
 
 **Rev 2 — Scope:**
 
-Hard budget reservation สำหรับ tool actions อยู่ Slice B (Phase 11)
+Hard budget reservation for tool actions is in Slice B (Phase 11).
 
-FinOps เต็มรูปแบบอยู่หลัง Slice C (Phase 18)
+Full FinOps comes after Slice C (Phase 18).
 
-EACP ไม่อยู่ใน LLM path (§3.1) ดังนั้น LLM cost มาจากการ **ingest** ไม่ใช่การ proxy:
+EACP is not in the LLM path (§3.1), so LLM cost comes from **ingest**, not from proxying:
 
 ```text
-OTel GenAI spans จาก agent runtime
+OTel GenAI spans from the agent runtime
 provider billing / usage export
 ```
 
-ถ้าเพิ่ม LLM gateway module ภายหลัง จะ reserve budget ต่อ LLM call ได้
+If an LLM gateway module is added later, it can reserve budget per LLM call.
 
 **Delivered (Phase 25b, 2026-09-27, ADR-031):** the LLM gateway reserves a hard budget per LLM call at PostgreSQL's estimate, commits the priced usage and records it as `gateway` usage beside OTel.
 
@@ -2133,7 +2133,7 @@ COMMIT actual
 RELEASE remainder
 ```
 
-ตัวอย่าง:
+For example:
 
 ```text
 Remaining = $10
@@ -2152,19 +2152,19 @@ remaining = $3
 B denied/waits
 ```
 
-ป้องกัน concurrency overspend
+It prevents concurrent overspending.
 
-**Rev 2 — Contention และการรั่ว:**
+**Rev 2 — contention and leaks:**
 
 ```text
-Lock order        lock budget account จาก root → leaf เสมอ (กัน deadlock)
-Escrow            parent จัดสรร quota ให้ child ล่วงหน้า
-                  hot path lock แค่ leaf row ไม่ใช่ Organization row ทุกครั้ง
-Reservation TTL   ทุก reservation มี expires_at
-                  sweeper release reservation ที่ค้างจาก flow ที่ crash
-Hard vs soft      เฉพาะ hard budget ที่อยู่ใน atomic boundary
-                  soft budget คำนวณแบบ async
-UNKNOWN_OUTCOME   reservation ของ action ที่ outcome ไม่ชัดจะไม่ถูก release จนกว่าจะ reconcile
+Lock order        always lock budget accounts from root → leaf (prevents deadlock)
+Escrow            a parent allocates quota to a child in advance;
+                  the hot path locks only the leaf row, not the Organization row every time
+Reservation TTL   every reservation has expires_at;
+                  a sweeper releases reservations left over from crashed flows
+Hard vs soft      only hard budgets are in the atomic boundary;
+                  soft budgets are computed asynchronously
+UNKNOWN_OUTCOME   the reservation of an action with an unclear outcome is not released until it is reconciled
                   (conservative)
 ```
 
@@ -2172,7 +2172,7 @@ UNKNOWN_OUTCOME   reservation ของ action ที่ outcome ไม่ชั
 
 # 48. Chargeback
 
-แสดง:
+Show:
 
 ```text
 Engineering Team
@@ -2184,7 +2184,7 @@ MCP services     $210
 Total          $9,232
 ```
 
-รวม cost ต่อ:
+Aggregate cost per:
 
 ```text
 Agent
@@ -2199,7 +2199,7 @@ Customer
 
 # 49. Module 9 — Release & Evaluation Platform
 
-Agent production deployment ต้องผ่าน pipeline
+A production agent deployment must go through a pipeline.
 
 ```text
 Code
@@ -2247,19 +2247,19 @@ CERTIFIED
 
 # 51. Replay
 
-นำ production trace เก่า:
+Take old production traces:
 
 ```text
 Agent v14
 ```
 
-มา run กับ:
+and run them against:
 
 ```text
 Agent v15
 ```
 
-เปรียบเทียบ:
+Compare:
 
 ```text
 Policy decisions
@@ -2279,11 +2279,11 @@ Errors
 
 **Rev 2 — Research-grade:**
 
-LLM agent ไม่ deterministic
+LLM agents are not deterministic.
 
-ดังนั้น replay ต้องมี record/replay connector ที่ตอบด้วย tool response ที่บันทึกไว้
+So replay needs a record/replay connector that answers with the recorded tool responses.
 
-การเปรียบเทียบต้องดูที่ distribution ไม่ใช่ผลที่ตรงกันทุกตัว
+Comparisons must look at distributions, not at every result matching.
 
 ---
 
@@ -2303,13 +2303,13 @@ v15:
 cannot perform destructive effects
 ```
 
-เก็บเฉพาะ decision/result comparison
+Keep only decision/result comparisons.
 
-**Rev 2:** "ห้ามมี destructive effect" ต้องจริงในเชิง **โครงสร้าง**
+**Rev 2:** "no destructive effect" must hold **structurally**.
 
-Shadow ใช้ connector ที่ไม่มี credential สำหรับเขียน และไม่มี network path ไป system จริง (§3.2)
+Shadow uses a connector with no write credential and no network path to the real system (§3.2).
 
-การพึ่งแค่ flag ถือว่าไม่พอ
+Relying on a flag alone is not enough.
 
 ---
 
@@ -2329,7 +2329,7 @@ Deployment progression:
 100%
 ```
 
-Auto rollback ถ้า:
+Automatic rollback if:
 
 ```text
 SLO drops
@@ -2343,7 +2343,7 @@ latency spikes
 
 # 54. Module 10 — Agent Security Operations Center
 
-Operator UI รวม:
+The operator UI brings together:
 
 ```text
 Inventory
@@ -2363,7 +2363,7 @@ Unknown outcomes
 
 # 55. Agent SOC Dashboard
 
-ตัวอย่าง:
+For example:
 
 ```text
 Enterprise Agent Security
@@ -2399,13 +2399,13 @@ Hard Blocks                 2
 
 # 56. Incident View
 
-หนึ่ง incident:
+One incident:
 
 ```text
 MCP schema changed unexpectedly
 ```
 
-Control Plane แสดง:
+The Control Plane shows:
 
 ```text
 MCP:
@@ -2432,13 +2432,13 @@ Pause affected agents
 Re-run certification
 ```
 
-Operator เป็นคนตัดสินใจ
+The operator makes the decision.
 
 ---
 
 # 57. Human-In-The-Loop
 
-Human intervention ใช้สำหรับ:
+Human intervention is used for:
 
 ```text
 High-risk approval
@@ -2450,7 +2450,7 @@ Production promotion
 Break-glass
 ```
 
-AI อาจช่วย:
+AI may help:
 
 ```text
 summarize
@@ -2459,30 +2459,30 @@ recommend
 explain
 ```
 
-แต่ authoritative control decisions ควร deterministic หรือ authenticated human decision ตาม policy
+but authoritative control decisions should be deterministic, or an authenticated human decision as the policy requires.
 
-**Rev 2 — Privileged control-plane actions ก็ต้องถูก govern:**
+**Rev 2 — privileged control-plane actions must be governed too:**
 
-การกระทำของ operator/admin ที่เปลี่ยน safety state:
+Operator/admin actions that change safety state:
 
 ```text
 resolve NEEDS_HUMAN_RESOLUTION
 approve / deny
-แก้ connector contract
-แก้ allowlist ของ AgentVersion
-เปลี่ยน policy bundle
-ยกเลิก kill
-แก้ budget
+editing a connector contract
+editing an AgentVersion's allowlist
+changing a policy bundle
+lifting a kill
+editing a budget
 ```
 
-ทุกอย่างในรายการนี้ต้อง:
+Everything in this list must have:
 
 ```text
 authenticated principal + role
-reason (บังคับ)
-audit event ใน hash-chained journal
-separation of duties สำหรับ action ที่ high-risk
-break-glass: ทำได้ แต่ต้องมี post-incident review
+a reason (mandatory)
+an audit event in the hash-chained journal
+separation of duties for high-risk actions
+break-glass: allowed, but it requires a post-incident review
 ```
 
 ---
@@ -2514,16 +2514,16 @@ Connector
 Model
 ModelProvider
 
-PolicyBundle            (Rev 2: versioned, สำหรับ local provider)
-GovernanceDecision      (Rev 2: evidence ถูก persist ไม่ใช่แค่ reference)
+PolicyBundle            (Rev 2: versioned, for the local provider)
+GovernanceDecision      (Rev 2: evidence is persisted, not only referenced)
 
 ApprovalRequest         (Rev 2: EACP-owned)
 ApprovalVote
 ApprovalGrant
 
-AgentCredential         (Rev 2: agent → EACP identity เท่านั้น)
-ConnectorContract       (Rev 2: operator-declared, ผูกกับ fingerprint)
-ConnectorSecretRef      (Rev 2: อ้างอิง secret ที่ worker ถือ; ไม่เก็บค่า secret)
+AgentCredential         (Rev 2: agent → EACP identity only)
+ConnectorContract       (Rev 2: operator-declared, bound to the fingerprint)
+ConnectorSecretRef      (Rev 2: refers to a secret the worker holds; never stores the secret value)
 
 BudgetAccount
 BudgetReservation
@@ -2575,9 +2575,9 @@ Kill state
 Incidents
 ```
 
-**Rev 2:** Postgres เป็น **source of truth เพียงแหล่งเดียว** สำหรับ execution state (ADR-014)
+**Rev 2:** Postgres is the **single source of truth** for execution state (ADR-014).
 
-ทุก table ที่ critical มี `tenant_id` และอยู่ภายใต้ Row-Level Security (§69)
+Every critical table has `tenant_id` and is under Row-Level Security (§69).
 
 ---
 
@@ -2592,7 +2592,7 @@ NATS JetStream
 for:
 
 ```text
-work-available hints   (Rev 2: เดิมคือ "action dispatch")
+work-available hints   (Rev 2: formerly "action dispatch")
 execution events
 kill propagation
 registry updates
@@ -2607,17 +2607,17 @@ messages may duplicate
 messages may be lost or delayed   (Rev 2)
 ```
 
-**Rev 2 — NATS ไม่ใช่ execution authority:**
+**Rev 2 — NATS is not an execution authority:**
 
 ```text
-NATS message = hint ที่มีแค่ action_id
-Worker ต้อง claim + fence ผ่าน Postgres เสมอ (§22)
-ถ้าไม่มี NATS → ระบบยังถูกต้อง แค่ช้าลง (worker poll Postgres)
+A NATS message = a hint carrying only the action_id
+The worker must always claim + fence through Postgres (§22)
+Without NATS → the system is still correct, only slower (the worker polls Postgres)
 ```
 
-Slice A ไม่ใช้ NATS: worker poll หรือใช้ Postgres `LISTEN/NOTIFY`
+Slice A does not use NATS: the worker polls, or uses Postgres `LISTEN/NOTIFY`.
 
-NATS JetStream เข้ามาใน Slice B (Phase 10)
+NATS JetStream arrives in Slice B (Phase 10).
 
 ---
 
@@ -2634,7 +2634,7 @@ rate limits where appropriate
 dashboard acceleration
 ```
 
-Redis ไม่ใช่ source of truth สำหรับ correctness-critical execution state
+Redis is not a source of truth for correctness-critical execution state.
 
 ---
 
@@ -2658,9 +2658,9 @@ Postgres
 NATS            (Slice B; Slice A: outbox → log sink / LISTEN-NOTIFY)
 ```
 
-Outbox event ต้องมี trace context (`traceparent`) ติดไปด้วย
+Outbox events must carry the trace context (`traceparent`).
 
-ป้องกัน:
+It prevents:
 
 ```text
 DB committed
@@ -2671,7 +2671,7 @@ but process crashed before publish
 
 # 63. Inbox / Dedup
 
-Consumer เก็บ:
+The consumer stores:
 
 ```text
 message_id
@@ -2717,21 +2717,21 @@ POST /v1/agents
 
 GET /v1/agents/{id}
 
-POST /v1/actions                        (Rev 2: ต้องมี Idempotency-Key; รองรับ ?wait=<duration>)
+POST /v1/actions                        (Rev 2: requires an Idempotency-Key; supports ?wait=<duration>)
 
 GET /v1/actions/{id}
 
-GET /v1/actions/{id}/events             (Rev 2: SSE สำหรับ action ที่ใช้เวลานาน)
+GET /v1/actions/{id}/events             (Rev 2: SSE for long-running actions)
 
 POST /v1/actions/{id}/cancel
 
 POST /v1/actions/{id}/reconcile
 
-POST /v1/actions/{id}/resolve           (Rev 2: human resolution; operator เท่านั้น)
+POST /v1/actions/{id}/resolve           (Rev 2: human resolution; operators only)
 
 GET /v1/approvals?state=pending         (Rev 2)
 
-POST /v1/approvals/{id}/votes           (Rev 2: approver เท่านั้น; ตรวจ SoD)
+POST /v1/approvals/{id}/votes           (Rev 2: approvers only; SoD is checked)
 
 GET /v1/dependencies/blast-radius
 
@@ -2746,19 +2746,19 @@ GET /v1/fleet/health
 
 **Rev 2 — Synchronous result path:**
 
-Agent framework ส่วนใหญ่ต้องการผลของ tool call ทันที
+Most agent frameworks want a tool call's result immediately.
 
 ```text
 POST /v1/actions?wait=30s
-  → 200 + result           ถ้าจบ (terminal) ภายในเวลาที่รอ
-  → 202 + action_id + state ถ้ายังไม่จบ เช่น PENDING_APPROVAL, QUEUED, UNKNOWN_OUTCOME
+  → 200 + result           if it finishes (terminal) within the wait
+  → 202 + action_id + state if it has not, e.g. PENDING_APPROVAL, QUEUED, UNKNOWN_OUTCOME
 ```
 
-Client ติดตามต่อด้วย `GET /v1/actions/{id}` หรือ SSE
+The client follows up with `GET /v1/actions/{id}` or SSE.
 
-Agent SDK/adapter ต้องแปลง `202` เป็นผลที่ agent เข้าใจ เช่น "pending approval" โดยไม่ retry เอง
+The agent SDK/adapter must turn a `202` into a result the agent understands, such as "pending approval", without retrying by itself.
 
-Control-plane overhead SLO จะกำหนดหลังวัดจริง (§105)
+The control-plane overhead SLO will be set after real measurement (§105).
 
 ---
 
@@ -2814,7 +2814,7 @@ External API output is untrusted
 
 # 68. Threat Model
 
-อย่างน้อยต้องครอบคลุม:
+At minimum it must cover:
 
 ```text
 Prompt injection
@@ -2857,7 +2857,7 @@ Supply-chain compromise
 
 Unknown-outcome mishandling
 
-Control-plane bypass (agent ถือ credential / มี network path ตรง)   (Rev 2)
+Control-plane bypass (the agent holds a credential / has a direct network path)   (Rev 2)
 
 Stale-worker duplicate dispatch                                    (Rev 2)
 
@@ -2865,28 +2865,28 @@ False-negative reconciliation ("not found" → retry → duplicate)     (Rev 2)
 
 Approval self-approval / cross-tenant approver                     (Rev 2)
 
-Stale approval หลัง policy เปลี่ยน                                   (Rev 2)
+A stale approval after the policy changed                           (Rev 2)
 
 Forged / replayed governance decision (PDP)                        (Rev 2)
 
 Malicious operator / admin                                         (Rev 2)
 
-Sensitive data ใน trace / audit (PII, secrets)                      (Rev 2)
+Sensitive data in traces / audit (PII, secrets)                     (Rev 2)
 ```
 
-รายละเอียดและ mitigation อยู่ที่ `docs/security/THREAT_MODEL.md` (Phase 0)
+Details and mitigations are in `docs/security/THREAT_MODEL.md` (Phase 0).
 
 ---
 
 # 69. Tenant Isolation
 
-ทุก record critical มี:
+Every critical record has:
 
 ```text
 tenant_id
 ```
 
-ทดสอบ:
+Tests:
 
 ```text
 Tenant A cannot:
@@ -2909,43 +2909,43 @@ consume Tenant B approval grant  (Rev 2)
 **Rev 2 — Mechanism (Slice A, ADR-021):**
 
 ```text
-Postgres Row-Level Security บนทุก table ที่ critical
-แต่ละ transaction ตั้ง SET LOCAL app.tenant_id
-application role ไม่มี BYPASSRLS
-unique key ทุกตัวมี tenant_id อยู่ด้วย:
+Postgres Row-Level Security on every critical table
+each transaction sets SET LOCAL app.tenant_id
+the application role has no BYPASSRLS
+every unique key includes tenant_id:
     (tenant_id, agent_id, idempotency_key)
     (tenant_id, operation_key)
     ...
-test tenant isolation ต้องรันกับ RLS จริง ไม่ใช่แค่ application check
+Tenant isolation tests must run against real RLS, not only application checks.
 ```
 
 Data handling:
 
 ```text
-trace / log / audit ห้ามมี secret
-payload ที่เป็น sensitive ถูก redact ตาม data class ก่อนออกนอก Postgres
+traces / logs / audit must never contain a secret
+sensitive payloads are redacted by data class before leaving Postgres
 ```
 
-Data residency และ legal hold อยู่ §113
+Data residency and legal hold are in §113.
 
 ---
 
 # 70. Credential Architecture
 
-**Rev 2 — Credential custody เป็น requirement ของ Slice A ไม่ใช่ optimization:**
+**Rev 2 — credential custody is a Slice A requirement, not an optimisation:**
 
-> Agent ต้องไม่มี credential สำหรับเรียก privileged external system โดยตรง
+> Agents must hold no credential for calling a privileged external system directly.
 
-(เดิมเขียนว่า "อย่าส่ง static secret เข้า Agent โดยตรงถ้าเลี่ยงได้" ซึ่งอ่อนเกินไป)
+(It used to say "avoid sending static secrets into the agent directly where possible", which was too weak.)
 
 Slice A:
 
 ```text
-Worker ถือ static connector secret (env / mounted file)
-ConnectorSecretRef ใน DB เก็บแค่ reference ไม่เก็บค่า
-ไม่มี API ใดคืน secret
-secret ไม่อยู่ใน action payload, journal, trace หรือ log (มี redaction test)
-Agent ได้แค่ agent credential สำหรับเรียก EACP API
+The worker holds the static connector secret (env / mounted file)
+ConnectorSecretRef in the DB stores only a reference, never the value
+No API returns a secret
+Secrets are never in action payloads, the journal, traces or logs (with redaction tests)
+The agent gets only an agent credential for calling the EACP API
 ```
 
 Phase 24 (JIT credentials):
@@ -3081,18 +3081,18 @@ enterprise-agent-control-plane/
 
 # 72. Service Boundary
 
-อย่าแตก microservice เร็วเกินไป
+Do not split into microservices too early.
 
-เริ่ม (Rev 2 — Slice A):
+Start with (Rev 2 — Slice A):
 
 ```text
 Control Plane API
 Worker
 Postgres
-Fake ERP        (demo target, คนละ network กับ agent)
+Fake ERP        (the demo target, on a different network from the agent)
 ```
 
-Slice B เพิ่ม:
+Slice B adds:
 
 ```text
 Scheduler
@@ -3100,7 +3100,7 @@ NATS
 AGT sidecar PDP
 ```
 
-เมื่อ scale justify ค่อยแยก:
+Split further once scale justifies it:
 
 ```text
 Registry Service
@@ -3118,12 +3118,12 @@ Release Service
 
 # 73. Phase 0 — Research & Architecture
 
-ก่อนเขียน production code:
+Before writing production code:
 
-ศึกษา:
+Study:
 
 ```text
-Microsoft Agent Governance Toolkit   (pin version; ยืนยัน Python SDK / ACS API ที่ sidecar ใช้)
+Microsoft Agent Governance Toolkit   (pin the version; confirm the Python SDK / ACS API the sidecar uses)
 Agent Control Specification
 Temporal
 River
@@ -3135,7 +3135,7 @@ RFC 8785 (JCS) Go implementations
 PostgreSQL Row-Level Security
 ```
 
-สร้าง:
+Create:
 
 ```text
 research/REFERENCES.md
@@ -3150,9 +3150,9 @@ docs/security/THREAT_MODEL.md
 
 **Rev 2 — Phase 0 gate:**
 
-ห้ามเริ่ม Phase 1 จนกว่า ADR-001, ADR-002, ADR-004 และ ADR-005 จะ **Accepted**
+Do not start Phase 1 until ADR-001, ADR-002, ADR-004 and ADR-005 are **Accepted**.
 
-ADR-004 (state machine) เป็น hard gate เพราะเป็น correctness boundary ของ approval, retry, reconciliation และ audit
+ADR-004 (the state machine) is a hard gate, because it is the correctness boundary for approval, retry, reconciliation and audit.
 
 ---
 
@@ -3202,7 +3202,7 @@ ADR-020 Build vs Adopt Execution Engine (Temporal / River)  (Rev 2)
 ADR-021 Tenant Isolation & Data Handling               (Rev 2)
 ```
 
-ADR-007 ถึง ADR-010 ต้องสอดคล้องกับ ADR-004 ซึ่งเป็นตัวกำหนดหลัก
+ADR-007 to ADR-010 must agree with ADR-004, which is the one that decides.
 
 ---
 
@@ -3217,24 +3217,24 @@ Slice C — Fleet safety                           Phase 14–17
 Later   — Operations & ecosystem                 Phase 18–25
 ```
 
-แต่ละ slice จบด้วย demo ที่ใช้ **เฉพาะ capability ที่มีอยู่ใน slice นั้นหรือก่อนหน้า**
+Each slice ends with a demo that uses **only capabilities that exist in that slice or earlier**.
 
 Build:
 
 ```text
 Go module + services (controlplane-api, execution-worker)
 PostgreSQL + migration system
-RLS scaffolding (tenant_id + policies ตั้งแต่ migration แรก)
+RLS scaffolding (tenant_id + policies from the first migration)
 configuration
 structured logging (slog) + secret redaction
 OpenTelemetry
 health endpoints
 graceful shutdown
 docker-compose: postgres, api, worker, fakeerp
-    network แยก: agent network ไม่มี route ไป fakeerp
+    separate networks: the agent network has no route to fakeerp
 ```
 
-ยังไม่ใช้ NATS ใน Slice A (§60)
+No NATS yet in Slice A (§60)
 
 ---
 
@@ -3248,23 +3248,23 @@ AgentVersion
 Owner
 Environment
 Risk class
-Lifecycle (อย่างน้อย REGISTERED / ACTIVE / SUSPENDED / RETIRED)
-Tool allowlist ต่อ AgentVersion
+Lifecycle (at least REGISTERED / ACTIVE / SUSPENDED / RETIRED)
+Tool allowlist per AgentVersion
 
-Agent identity / credential สำหรับเรียก EACP (Slice A: per-agent API key, hashed at rest)
+Agent identity / credential for calling EACP (Slice A: a per-agent API key, hashed at rest)
 Operator / approver principals + roles
 
 Connector registry + operator-declared ConnectorContract (§31)
-ConnectorSecretRef (secret อยู่ที่ worker เท่านั้น)
+ConnectorSecretRef (the secret is held by the worker only)
 ```
 
 Enforce:
 
 ```text
-production agent ที่ไม่มี owner → register/activate ไม่ได้ (§9)
-capability check: tool ต้องอยู่ใน allowlist ของ ACTIVE AgentVersion
-    → ถ้าไม่ผ่าน DENIED ก่อนถึง governance
-tool ที่ไม่มี ConnectorContract → execute ไม่ได้
+a production agent without an owner → cannot be registered/activated (§9)
+capability check: the tool must be in the ACTIVE AgentVersion's allowlist
+    → if not, DENIED before governance
+a tool with no ConnectorContract → cannot execute
 ```
 
 CLI:
@@ -3293,27 +3293,27 @@ Implement:
 
 ```text
 GovernanceProvider interface (ADR-002)
-local provider: deterministic rules จาก versioned policy bundle
+local provider: deterministic rules from a versioned policy bundle
     verdicts: allow / warn / deny / escalate / transform
 digest: JCS (RFC 8785) + SHA-256, input_digest + enforced_digest
 decision evidence persistence
 approval store (ADR-005): request, vote, grant, consume
 approver eligibility + separation of duties + quorum + expiry
-policy-version binding ของ grant
+policy-version binding of grants
 ```
 
 Tests:
 
 ```text
-approval replay (consume สองครั้ง) → ครั้งที่สองล้มเหลว
-parameter substitution → digest ไม่ตรง → ใช้ไม่ได้
-transform-then-approve → bind กับ enforced payload
-self-approval / cross-tenant approval → ถูกปฏิเสธ
-policy เปลี่ยนหลัง grant → grant ใช้ไม่ได้
+approval replay (consumed twice) → the second fails
+parameter substitution → the digest does not match → cannot be used
+transform-then-approve → bound to the enforced payload
+self-approval / cross-tenant approval → refused
+the policy changes after the grant → the grant cannot be used
 PDP error → fail closed
 ```
 
-AGT sidecar **ยังไม่ทำ** ใน Phase นี้ ไปทำที่ Phase 9
+The AGT sidecar is **not built yet** in this phase; it comes in Phase 9.
 
 **Status (2026-09-23): delivered.** `internal/governance` implements the local provider and binding digests. Migration 00004 and `internal/approval` implement policy versions, evidence, requests, votes and grants under tenant RLS. The API exposes policy administration and approver queue/voting. Phase 4 still owns action creation, atomic release and worker execution. The Phase 3 review is in `docs/reviews/2026-09-23-phase3-code-review.md`.
 
@@ -3325,10 +3325,10 @@ Implement:
 
 ```text
 POST /v1/actions (Idempotency-Key, ?wait=)
-Action state machine ตาม ADR-004
-Idempotency (tenant, agent, key) + 409 เมื่อ input_digest ต่างกัน
+The action state machine per ADR-004
+Idempotency (tenant, agent, key) + 409 when the input_digest differs
 Release boundary (§15): revalidate → consume grant → QUEUED → journal → outbox
-Budget reservation hook (no-op ใน Slice A)
+Budget reservation hook (a no-op in Slice A)
 Static admission limits (§26)
 Hash-chained audit journal
 Outbox table
@@ -3351,21 +3351,21 @@ PostgreSQL triggers enforce every guard for raw SQL as `eacp_app`. The API adds 
 Implement:
 
 ```text
-claim จาก Postgres (FOR UPDATE SKIP LOCKED, FIFO)
+claim from Postgres (FOR UPDATE SKIP LOCKED, FIFO)
 heartbeat
-lease expire / reclaim ตามกฎ §22
-generation fencing บน DB write ทุกตัว
-fenced dispatch-intent commit ก่อน external call (§23.1)
+lease expiry / reclaim per the rules of §22
+generation fencing on every DB write
+a fenced dispatch-intent commit before the external call (§23.1)
 late result evidence
-credential custody: worker โหลด connector secret; agent ไม่มี
+credential custody: the worker loads the connector secret; the agent has none
 ```
 
-Concurrency tests บังคับ:
+Mandatory concurrency tests:
 
 ```text
 lease race
-stale worker commit ถูก reject
-stale worker ไม่ทำให้เกิด dispatch ครั้งที่สอง (non-idempotent)
+a stale worker's commit is rejected
+a stale worker never causes a second dispatch (non-idempotent)
 ```
 
 **Status (2026-09-23): delivered.** Migration 00006 and `internal/worker` implement ADR-004 T14 and T16–T27:
@@ -3394,7 +3394,7 @@ Build:
 ```text
 Connector interface: Execute(operation_key, enforced_payload) / Lookup(operation_key)
 HTTP connector
-Fake ERP (ต้องใช้ credential; รู้จัก operation key; มี lookup API)
+Fake ERP (requires a credential; knows operation keys; has a lookup API)
 ```
 
 Fake ERP supports:
@@ -3409,7 +3409,7 @@ slow response
 5xx before effect
 5xx after effect
 outage
-delayed visibility (record สร้างแล้วแต่ lookup ยังไม่เจอ)
+delayed visibility (the record exists but a lookup does not find it yet)
 ```
 
 ---
@@ -3421,20 +3421,20 @@ delayed visibility (record สร้างแล้วแต่ lookup ยัง
 Implement:
 
 ```text
-UNKNOWN_OUTCOME จากทุกสาเหตุใน §19
+UNKNOWN_OUTCOME from every cause in §19
 reconciler lease
-proof standard ต่อ connector (§20.2)
-"not found" แบบ BEST_EFFORT → STILL_UNKNOWN (ไม่ retry)
+a proof standard per connector (§20.2)
+"not found" under BEST_EFFORT → STILL_UNKNOWN (no retry)
 NEEDS_HUMAN_RESOLUTION + operator resolve API/CLI (§20.3)
 ```
 
 Flagship tests:
 
 ```text
-Fake ERP executes → response หาย → UNKNOWN_OUTCOME → lookup เจอ → SUCCEEDED
-Fake ERP executes → delayed visibility → lookup ไม่เจอ → ไม่ retry
-    → NEEDS_HUMAN_RESOLUTION หรือเจอภายหลัง → SUCCEEDED
-worker ถูก kill ระหว่าง EXECUTING → UNKNOWN_OUTCOME (ไม่ re-dispatch)
+Fake ERP executes → the response is lost → UNKNOWN_OUTCOME → the lookup finds it → SUCCEEDED
+Fake ERP executes → delayed visibility → the lookup does not find it → no retry
+    → NEEDS_HUMAN_RESOLUTION, or found later → SUCCEEDED
+the worker is killed during EXECUTING → UNKNOWN_OUTCOME (no re-dispatch)
 ```
 
 ---
@@ -3453,15 +3453,15 @@ Two findings changed behaviour. Cancelling a `RECEIVED` action (T5a, ADR-004 Rev
 Build:
 
 ```text
-bypass tests (§3.2): direct call ไป Fake ERP ล้มเหลว; ไม่มี secret รั่ว
-tenant isolation tests กับ RLS
+bypass tests (§3.2): a direct call to the Fake ERP fails; no secret leaks
+tenant isolation tests against RLS
 chaos: worker crash, DB restart, duplicate submission
-race detector บน test suite ทั้งหมด
-evidence reconstruction: จาก action_id ต้องได้ governance + approval + execution + outcome
+the race detector over the whole test suite
+evidence reconstruction: from an action_id you must get governance + approval + execution + outcome
 Slice A demo script (§110)
 ```
 
-Slice A exit criteria = ทุก invariant ใน §103 ที่ติดป้าย [A] มี automated test ที่ผ่าน
+Slice A's exit criteria = every invariant in §103 labelled [A] has a passing automated test
 
 ---
 
@@ -3472,14 +3472,14 @@ Slice A exit criteria = ทุก invariant ใน §103 ที่ติดป�
 Implement:
 
 ```text
-sidecars/agt-pdp: Python service ห่อ AGT/ACS (pinned version)
+sidecars/agt-pdp: a Python service wrapping AGT/ACS (a pinned version)
     HTTP API: Evaluate → verdict + enforced payload + policy version + evidence
-integrations/governance/microsoftagt: Go client ที่ implement GovernanceProvider
+integrations/governance/microsoftagt: a Go client implementing GovernanceProvider
 loopback / mTLS, timeout, fail closed
-conformance tests: local provider vs AGT provider ต้องได้ verdict เดียวกันบน policy set อ้างอิง
+conformance tests: the local provider and the AGT provider must give the same verdict on a reference policy set
 ```
 
-ไม่มีการเปลี่ยน approval store หรือ action core (ADR-002)
+No change to the approval store or the action core (ADR-002)
 
 ---
 
@@ -3493,10 +3493,10 @@ Implement:
 outbox → NATS relay
 inbox dedup
 work-available hints (action_id only)
-event stream สำหรับ dashboards
+an event stream for dashboards
 ```
 
-Correctness ต้องไม่ขึ้นกับ NATS (§60)
+Correctness must not depend on NATS (§60).
 
 ---
 
@@ -3520,7 +3520,7 @@ Concurrency test:
 
 must never oversubscribe hard budget
 
-รวมถึง lock ordering, escrow, reservation TTL (§47) และวัด p99 ภายใต้ contention
+including lock ordering, escrow, reservation TTL (§47), and measuring p99 under contention
 
 ---
 
@@ -3538,7 +3538,7 @@ aging
 connector capacity
 ```
 
-Scheduler เลือกลำดับ claim ใน Postgres (§24)
+The scheduler chooses the claim order in Postgres (§24)
 
 Benchmark fairness
 
@@ -3551,7 +3551,7 @@ Benchmark fairness
 ```text
 global / tenant / connector / queue / worker limits
 bulkhead per connector group
-circuit breaker (per-worker ก่อน + shared "connector disabled" flag)
+circuit breaker (per worker first + a shared "connector disabled" flag)
 backoff + jitter
 retry budget
 ```
@@ -3567,7 +3567,7 @@ discovery
 fingerprint
 schema tracking
 risk metadata
-contract invalidation เมื่อ fingerprint เปลี่ยน
+contract invalidation when the fingerprint changes
 quarantine
 ```
 
@@ -3593,9 +3593,9 @@ Agent → Agent
 
 Implement blast radius queries
 
-Rev 2: edge มี source, freshness และ confidence
+Rev 2: edges have a source, freshness and confidence.
 
-ถ้า edge unknown หรือ stale → ถือว่า blast radius **กว้างขึ้น** ไม่ใช่แคบลง
+If an edge is unknown or stale → the blast radius is taken to be **wider**, not narrower.
 
 ---
 
@@ -3760,9 +3760,9 @@ Cloud identities
 Vault
 ```
 
-Credential custody (agent ไม่มี credential) บังคับตั้งแต่ Slice A แล้ว
+Credential custody (agents hold no credentials) has been enforced since Slice A.
 
-Phase นี้แค่เปลี่ยนจาก static secret เป็น short-lived credential
+This phase only moves from static secrets to short-lived credentials.
 
 ---
 
@@ -3784,7 +3784,7 @@ execution remains observable
 
 **Delivered (Phase 25a, 2026-09-27, ADR-030):** outbound A2A 1.0 delegation as a connector. A remote agent is a connector with protocol `a2a` whose one tool, `delegate`, is discovered from its Agent Card and certified over the whole card; a delegation is an ordinary action sent at most once by the execution worker, followed with `GetTask`, cancelled when EACP stops following it, and settled by a human when its outcome is unknown. Inbound A2A and the LLM Gateway (25b) remain.
 
-LLM Gateway (optional): ingress ใหม่ที่ใช้ shared core เดิม (§3.1)
+LLM Gateway (optional): a new ingress on the same shared core (§3.1)
 
 ```text
 identity + capability + GovernanceProvider + audit + budget
@@ -3796,14 +3796,14 @@ identity + capability + GovernanceProvider + audit + budget
 
 # 98. Flagship Demo — Procurement
 
-**Rev 2 — มีสองระดับ ระดับแรกต้องใช้เฉพาะ Slice A**
+**Rev 2 — there are two levels; the first must use Slice A only**
 
 Slice A demo (Phase 8):
 
 ```text
 Employee
  ↓
-Procurement Agent            (ไม่มี credential ของ ERP และไม่มี network path ไป ERP)
+Procurement Agent            (no ERP credential and no network path to the ERP)
  ↓
 EACP Action API              (agent identity + capability allowlist)
  ↓
@@ -3815,12 +3815,12 @@ Release boundary             (revalidate → consume grant → QUEUED)
  ↓
 Worker                       (lease + fenced dispatch intent + operation key)
  ↓
-Fake ERP                     (credential อยู่ที่ worker เท่านั้น)
+Fake ERP                     (the credential is held by the worker only)
  ↓
 Create PO 2.4M THB
 ```
 
-Full demo (หลัง Slice B/C):
+Full demo (after Slice B/C):
 
 ```text
 ... → AGT / ACS sidecar → ... → Budget reserve → Fair scheduler → Worker → SAP MCP → ...
@@ -3858,27 +3858,27 @@ CONFIRMED_SUCCESS
 SUCCEEDED + outcome evidence
 ```
 
-**Rev 2 — Variant ที่ต้อง demo ด้วย:**
+**Rev 2 — variants that must be demonstrated too:**
 
 ```text
-Delayed visibility: PO สร้างแล้วแต่ lookup ยังไม่เจอ
+Delayed visibility: the PO exists but a lookup does not find it yet
  ↓
-"not found" แต่ BEST_EFFORT → STILL_UNKNOWN → ไม่ retry
+"not found" but BEST_EFFORT → STILL_UNKNOWN → no retry
  ↓
-lookup ครั้งต่อมาเจอ → SUCCEEDED
-หรือ attempts หมด → NEEDS_HUMAN_RESOLUTION → operator resolve พร้อม evidence
+a later lookup finds it → SUCCEEDED
+or the attempts run out → NEEDS_HUMAN_RESOLUTION → an operator resolves it with evidence
 ```
 
 ```text
 Kill worker mid-dispatch
  ↓
-lease หมด ขณะ EXECUTING
+the lease expires during EXECUTING
  ↓
-UNKNOWN_OUTCOME (ไม่ re-dispatch)
+UNKNOWN_OUTCOME (no re-dispatch)
  ↓
 reconcile → SUCCEEDED
  ↓
-Fake ERP มี PO แค่ใบเดียว
+The Fake ERP has exactly one PO
 ```
 
 ---
@@ -3937,7 +3937,7 @@ Monitor SLO + cost + policy
 Promote
 ```
 
-หรือ:
+Or:
 
 ```text
 Rollback
@@ -3950,7 +3950,7 @@ Rollback
 Unit:
 
 ```text
-domain state machines (property-based: ไม่มี path ที่ผิด ADR-004)
+domain state machines (property-based: no path that breaks ADR-004)
 scheduler
 budget
 retry
@@ -3962,7 +3962,7 @@ approval eligibility / SoD
 Integration:
 
 ```text
-PostgreSQL (รวม RLS)
+PostgreSQL (including RLS)
 NATS (Slice B)
 AGT adapter (Slice B, conformance vs local provider)
 Fake ERP
@@ -4012,9 +4012,9 @@ delayed visibility at external system
 
 # 103. Critical Invariants
 
-ป้าย [A]/[B]/[C] คือ slice ที่ invariant นั้นต้องมี automated test ที่ผ่าน
+The labels [A]/[B]/[C] name the slice by which the invariant must have a passing automated test.
 
-Invariant เดิม (Rev 1) คงไว้ทั้งหมด และเพิ่มคำอธิบายให้ชัดขึ้น:
+Every original (Rev 1) invariant is kept, with clearer explanations:
 
 ```text
 1. [A] A stale worker cannot commit.
@@ -4040,7 +4040,7 @@ Invariant เดิม (Rev 1) คงไว้ทั้งหมด และเ
 10. [A] Audit/evidence references remain reconstructible end-to-end.
 ```
 
-เพิ่มใน Rev 2:
+Added in Rev 2:
 
 ```text
 11. [A] Agents never hold credentials for privileged external systems;
@@ -4137,15 +4137,15 @@ Not yet measured: several tenants, several workers or replicas, Kubernetes.
 
 # 105. Never Fake Benchmarks
 
-README ห้ามเขียน:
+The README must never say:
 
 ```text
 100k actions/sec
 ```
 
-จนกว่าจะวัดจริง
+until it is measured.
 
-แยก:
+Separate:
 
 ```text
 Control Plane overhead
@@ -4161,7 +4161,7 @@ LLM latency
 
 # 106. Development Rules for Codex / Claude Code
 
-ทุก phase:
+Every phase:
 
 ```text
 READ MASTER PLAN
@@ -4207,7 +4207,7 @@ UPDATE docs
 
 # 107. AI Development Rule
 
-Codex/Claude ห้าม:
+Codex/Claude must never:
 
 ```text
 invent API without verifying upstream
@@ -4222,18 +4222,18 @@ claim exactly-once without proof
 
 implement next phase automatically
 
-resolve an ambiguous safety/correctness assumption optimistically   (Rev 2: เลือก conservative ก่อนเสมอ)
+resolve an ambiguous safety/correctness assumption optimistically   (Rev 2: always choose the conservative option first)
 ```
 
 ---
 
 # 108. Upstream Contribution Strategy
 
-Execution Fabric / Control Plane เป็น independent project ก่อน
+The Execution Fabric / Control Plane is an independent project first,
 
-จากนั้น integration กับ AGT
+then integrates with AGT.
 
-เส้นทาง:
+The path:
 
 ```text
 Standalone Control Plane
@@ -4267,10 +4267,10 @@ Possible provider / protocol proposal
 
 # 109. Potential Microsoft Contributions
 
-ถ้า maintainers สนใจ:
+If the maintainers are interested:
 
 ```text
-PostgreSQL ApprovalStore (Rev 2: สำคัญขึ้น เพราะ ACS stateless และ Go SDK ยังไม่มี approval chain — issue #3083)
+PostgreSQL ApprovalStore (Rev 2: more important, because ACS is stateless and the Go SDK has no approval chain yet — issue #3083)
 
 Distributed execution integration example
 
@@ -4283,19 +4283,19 @@ Conformance tests
 Go parity fixes
 ```
 
-อย่าเสนอ massive PR ก่อน discussion
+Do not propose a massive PR before a discussion.
 
 ---
 
 # 110. MVP Definition
 
-MVP ไม่ใช่ทั้งระบบ
+The MVP is not the whole system.
 
-**Rev 2 — MVP คือ Slice A ต่อด้วย Slice B และ C:**
+**Rev 2 — the MVP is Slice A, followed by Slices B and C:**
 
 ## Slice A — Correct, non-bypassable execution (Phase 1–8)
 
-Goal statement ที่ต้องพิสูจน์ได้ด้วย automated tests และ demo:
+The goal statement that automated tests and the demo must prove:
 
 > Privileged agent actions cannot bypass the control plane, approvals are durable, retries cannot casually duplicate irreversible side effects, and ambiguous execution outcomes are handled explicitly rather than guessed.
 
@@ -4315,7 +4315,7 @@ Hash-chained audit / evidence journal
 OpenTelemetry (basic)
 ```
 
-ไม่อยู่ใน Slice A: AGT sidecar, NATS, budget, fair scheduler, dependency graph, distributed kill switch, FinOps
+Not in Slice A: the AGT sidecar, NATS, budgets, the fair scheduler, the dependency graph, the distributed kill switch, FinOps
 
 ## Slice B — Enterprise governance & capacity (Phase 9–13)
 
@@ -4336,13 +4336,13 @@ Distributed kill switch
 Fleet operations
 ```
 
-แต่ละ slice ต้องผ่าน invariant ที่ติดป้าย slice นั้นใน §103 ก่อนจึงเริ่ม slice ถัดไปได้
+Each slice must pass the invariants labelled with that slice in §103 before the next slice can start.
 
 ---
 
 # 111. Portfolio-Ready Definition
 
-**Rev 2 — แบ่งตาม slice โดย demo ของแต่ละ slice ใช้เฉพาะ capability ที่มีแล้วจริง**
+**Rev 2 — phases are grouped by slice, and each slice's demo uses only capabilities that really exist**
 
 Slice A demo:
 
@@ -4427,7 +4427,7 @@ Release process
 
 # 113. Enterprise-Ready Direction
 
-ภายหลัง:
+Later:
 
 ```text
 Kubernetes HA
@@ -4461,21 +4461,21 @@ LLM Gateway module (optional, §3.1)
 
 # 114. Main Differentiator
 
-อย่าแข่งขันว่า:
+Do not compete on:
 
 ```text
-เรามี policy มากกว่า AGT
+we have more policies than AGT
 
-เรามี Agent framework ดีกว่า LangGraph
+we have a better agent framework than LangGraph
 
-เรามี workflow engine ดีกว่า Temporal
+we have a better workflow engine than Temporal
 ```
 
-สิ่งที่ Control Plane ของเราควรเด่นคือ:
+What our Control Plane should stand out for:
 
 > **Unified enterprise operations for governed autonomous agents.**
 
-รวม:
+Including:
 
 ```text
 Who owns the agent?
@@ -4529,7 +4529,7 @@ release management
 dependency intelligence
 ```
 
-รวมกันเป็น:
+Together they form:
 
 ```text
 Enterprise Autonomous Agent Infrastructure
@@ -4612,28 +4612,28 @@ Enterprise Autonomous Agent Infrastructure
 
 # 119. Final Goal
 
-ระยะเริ่มต้น:
+Early stage:
 
 ```text
 Strong Go portfolio project
 ```
 
-ระยะกลาง:
+Middle stage:
 
 ```text
 Real open-source project
 ```
 
-ระยะยาว:
+Long term:
 
 ```text
 Enterprise Agent Infrastructure Platform
 ```
 
-หัวใจของระบบไม่ใช่การสร้าง Agent เพิ่มอีกตัว
+The heart of the system is not building one more agent,
 
-แต่คือ:
+but:
 
-> **สร้าง infrastructure ที่ทำให้องค์กรสามารถปล่อย Agent จำนวนมากเข้าสู่ production ได้โดยยังควบคุมความเสี่ยง การทำงาน ค่าใช้จ่าย และผลกระทบได้**
+> **Building infrastructure that lets an organisation put large numbers of agents into production while still controlling their risk, behaviour, cost and impact.**
 
-นั่นคือ Enterprise Agent Control Plane
+That is Enterprise Agent Control Plane.
