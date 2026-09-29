@@ -20,6 +20,7 @@ var checklist = []string{
 	"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md",
 	".github/ISSUE_TEMPLATE/",
 	"docs/RELEASING.md", "docs/RELEASING.th.md",
+	"docs/USER_GUIDE.md", "docs/USER_GUIDE.th.md",
 	"CHANGELOG.md",
 	"SECURITY.md", "SECURITY.th.md",
 	"CODE_OF_CONDUCT.md",

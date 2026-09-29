@@ -14,6 +14,7 @@ how to set up, what the rules are and how to run each tier of tests.
   [`docs/adr/`](docs/adr/README.md) before the code, and it is easier to agree on the ADR before anyone writes it.
 - Read [AGENTS.md](AGENTS.md). It is written for AI coding assistants and for people alike, and it lists the rules
   every change must keep.
+- To learn how EACP is used before changing it, read the [user guide](docs/USER_GUIDE.md).
 
 ## Setup
 

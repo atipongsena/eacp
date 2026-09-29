@@ -29,6 +29,25 @@ holds them. Every action passes one state machine in PostgreSQL. An approval is 
 once. An outcome that is not known is reconciled against the target system, or handed to a person with the
 evidence, never guessed.
 
+The difference in one picture:
+
+```mermaid
+flowchart LR
+  subgraph with["With EACP"]
+    direction LR
+    a2["AI agent<br/>holds only its own EACP key"] -->|"asks"| c2["EACP<br/>checks the policy,<br/>waits for approvers,<br/>records every step"]
+    c2 -->|"exactly what was approved"| w2["EACP worker<br/>holds the ERP password"]
+    w2 --> e2["ERP"]
+  end
+  subgraph without["Without EACP"]
+    direction LR
+    a1["AI agent<br/>holds the ERP password"] -->|"any call, at any time"| e1["ERP"]
+  end
+```
+
+The agent can still ask for anything, but it can only *get* what the policy and the approvers allow, and it never
+touches the password that would let it go around them.
+
 ![The EACP operator console overview: SOC counters and open incidents](docs/images/console-overview.png)
 
 ## Guarantees and where they stop
@@ -50,19 +69,26 @@ EACP bounds but does not prevent.
 
 ## Architecture
 
+EACP sits between two zones it keeps apart: where agents run, and the systems they act on. The labels say which key
+each part holds.
+
 ```mermaid
 flowchart LR
-  agent["AI agent<br/>(any framework)"]
-  people["People<br/>approvers, operators"]
+  subgraph agents["Where agents run"]
+    agent["AI agent<br/>(any framework)<br/>holds: its own EACP key"]
+  end
+  people["People<br/>admins, approvers, operators"]
   subgraph eacp["EACP"]
     api["Control plane API<br/>and console"]
-    gateway["LLM gateway"]
-    worker["Execution worker"]
-    pg[("PostgreSQL<br/>the only authority")]
+    gateway["LLM gateway<br/>holds: model provider keys"]
     pdp["Policy decision point<br/>(AGT sidecar)"]
-    nats["NATS<br/>signals only"]
+    pg[("PostgreSQL<br/>decides and records")]
+    worker["Execution worker<br/>holds: system credentials"]
+    nats["NATS<br/>wake-up signals only"]
   end
-  erp["Enterprise systems<br/>ERP, MCP servers, A2A agents"]
+  subgraph systems["Enterprise systems"]
+    erp["ERP, MCP servers,<br/>other agents (A2A)"]
+  end
   llm["Model providers"]
   agent -->|"its own EACP key"| api
   agent -->|"its own EACP key"| gateway
@@ -73,8 +99,8 @@ flowchart LR
   worker --> pg
   api -.-> nats
   nats -.-> worker
-  worker -->|"credentials only here"| erp
-  gateway -->|"provider keys only here"| llm
+  worker --->|"credentials only here"| erp
+  gateway --->|"provider keys only here"| llm
 ```
 
 - **Control plane API** ([`cmd/controlplane-api`](cmd/controlplane-api)) serves the `/v1` API and the operator
@@ -96,6 +122,40 @@ flowchart LR
 availability in detail.
 
 ## The life of an action
+
+Every request an agent sends ends in one of a few places. In words, with the real state names in brackets:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "Checking<br/>(RECEIVED)" as checking
+  state "Waiting for approvers<br/>(PENDING_APPROVAL)" as waiting
+  state "Queued<br/>(QUEUED)" as queued
+  state "Running<br/>(EXECUTING)" as running
+  state "Done<br/>(SUCCEEDED)" as done
+  state "Refused<br/>(DENIED)" as denied
+  state "Failed, nothing happened<br/>(FAILED)" as failed
+  state "Result unknown<br/>(UNKNOWN_OUTCOME)" as unknown
+  state "A person decides<br/>(NEEDS_HUMAN_RESOLUTION)" as human
+  [*] --> checking: agent sends
+  checking --> denied: policy says no
+  checking --> waiting: policy says ask people
+  checking --> queued: policy says yes
+  waiting --> queued: enough approvals
+  waiting --> denied: someone votes no
+  queued --> running: a worker picks it up
+  running --> done: the system confirms
+  running --> failed: refused, provably no effect
+  running --> unknown: no clear answer
+  unknown --> done: a lookup finds it
+  unknown --> queued: a lookup proves it never happened
+  unknown --> human: no proof either way
+  human --> done: operator decides
+  human --> failed: operator decides
+```
+
+The one path EACP never takes is guessing: a result nobody can prove goes to a person, with the evidence. The
+sequence below follows a purchase that needs two approvers, step by step.
 
 ```mermaid
 sequenceDiagram
@@ -242,6 +302,10 @@ To look around in the console, open `http://localhost:8080/ui/` and sign in with
 `examples/.env`. [examples/](examples/README.md) also has an LLM call through the gateway with the official Anthropic
 SDK, and a Governance-as-Code bundle approved by a second person. [DEMO.md](docs/DEMO.md) describes the longer demos:
 killed workers, PDP and NATS outages, MCP drift, kill switches and just-in-time credentials.
+
+To use EACP for your own agents, read the [user guide](docs/USER_GUIDE.md). It is organised by role: administrators
+set up people, systems, agents, policies and budgets; agent developers send actions and call models; approvers vote;
+operators settle unknown outcomes, stop things with the kill switch and work incidents.
 
 ## The ten modules
 
