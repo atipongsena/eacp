@@ -7,6 +7,7 @@ schemas; each change says so.
 
 ## [Unreleased]
 
+- MCP `tools/call` (Phase 26a, ADR-032): the execution worker calls a certified MCP tool at most once per action, after checking that the server's current definition is byte-equal to the certified one (`definition_changed`, `tool_missing`, `definition_unverified`; nothing is sent otherwise). Tools using `x-mcp-header` are refused. A success's reference is a digest of the result; the tool's output is never stored, journaled or logged. MCP contracts are single-attempt (migration 00025). The Slice C demo calls a tool and refuses a rug pull.
 - Operator console: a redesigned interface (semantic light and dark tokens checked for WCAG AA contrast, grouped navigation, KPI cards, banners, empty states) and Thai alongside English, chosen with `?lang=` and never stored (ADR-028 Rev 1.1). No API route, table or migration changes.
 
 ## [0.1.0]

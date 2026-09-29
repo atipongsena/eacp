@@ -1,6 +1,6 @@
 # Phase 26a: MCP `tools/call` (design)
 
-Status: draft for the owner's review, 2026-09-29. It becomes ADR-032 when accepted.
+Status: Accepted 2026-09-29; implemented as ADR-032.
 Parent: [the Agent Studio program design](2026-09-29-agent-studio-program-design.md), section 8.
 Inputs: ADR-023 (MCP registry), ADR-030 (A2A delegation, the closest pattern), ADR-004 (unknown outcomes),
 `research/STUDIO_REFERENCES.md` section 2 (verified facts about `tools/call`).

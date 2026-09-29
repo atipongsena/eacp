@@ -3700,6 +3700,8 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 >
 > **Phase 26-UI delivered (2026-09-29, ADR-028 Rev 1.1):** the console has a design system (semantic light/dark tokens contrast-tested to WCAG AA, KPI cards, banners, empty states, CSS-only icons) and speaks English and Thai, chosen with `?lang=` and never stored. It adds no route, table or migration.
 
+> **Phase 26a delivered (2026-09-30, ADR-032):** the execution worker calls a certified MCP tool at most once per action after comparing the server's current definition with the certified one byte for byte; tools with `x-mcp-header` are refused; the reference is a digest of the result and the output is never stored (returning it is Phase 26b). Migration 00025 makes MCP contracts single-attempt.
+
 Operator UI:
 
 ```text

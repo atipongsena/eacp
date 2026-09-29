@@ -76,31 +76,37 @@ The narrative is printed by `go test -v`. For example:
 
 ## Slice C demo
 
-`TestSliceCDemo` follows the §111 Slice C script: trigger MCP drift, show the blast radius, kill the affected agent version, show trace and audit evidence. It adds one service to the stack, `fakemcp`: a stateless MCP server (modern revision `2026-07-28`, Streamable HTTP) on the worker-only `erp` network. Its bearer token is held by the worker's connector-secret manifest; the server holds only a verifier. It lists its tools from `/data/tools.json`. The demo replaces that file with `docker compose cp` to play a vendor release.
+`TestSliceCDemo` follows the §111 Slice C script: call a certified MCP tool, trigger MCP drift (the worker refuses the changed tool), show the blast radius, kill the affected agent version, show trace and audit evidence. It adds one service to the stack, `fakemcp`: a stateless MCP server (modern revision `2026-07-28`, Streamable HTTP) on the worker-only `erp` network. Its bearer token is held by the worker's connector-secret manifest; the server holds only a verifier. It lists its tools from `/data/tools.json`. The demo replaces that file with `docker compose cp` to play a vendor release.
 
 | Step | What happens | What it proves |
 |---|---|---|
 | C0 | `eacpctl tenant create` for Globex with admins alice and bob; every person, grant and key is approved by the second admin; a policy allows routine ERP work | Two-person administration, in a second tenant on the same stack |
 | C1 | Erin registers the MCP connector `sap-mcp`. Declaring a tool by hand is refused (409). The worker's scanner discovers `get_po`: definition #1, risk `initial`, read-only, with a fingerprint computed by PostgreSQL | Tools are discovered, never declared (ADR-023) |
 | C2 | Erin certifies `get_po` as `READ_ONLY`, pinned to definition #1, and rita activates it. `po-assistant` (team procurement) may call `erp.create_po` and `sap-mcp.get_po`; `invoice-bot` (team finance) only `erp.create_po`. A routine purchase executes | One PO in the ERP |
-| C3 | The server now lists `get_po` with a new description, an `approve` argument and `destructiveHint: true`. Operator otto requests a rescan. Definition #2 is `high` risk; the contract no longer matches the fingerprint and the tool is quarantined. po-assistant's lookup is `DENIED tool_quarantined` | MCP drift is detected and contained before governance (ADR-023 §6–7) |
-| C4 | Blast radius of `sap-mcp`: po-assistant is confirmed, team procurement is affected, invoice-bot is not; coverage `observed_only` | Blast radius from capability edges (ADR-015) |
-| C5 | Otto kills po-assistant's version (`security_incident`). Its next purchase uses `erp.create_po`, which did not drift: it stays `QUEUED`, is never attempted and reaches no ERP. invoice-bot keeps working. Otto cannot clear their own kill (403). The held action is cancelled | Kill fencing in PostgreSQL, two-person clear, cancellation never blocked (ADR-016) |
-| C6 | The held action and its outbox events carry the agent's W3C trace context. The journal since the drift shows the rescan request, the quarantine (`tools.update` by the scanner), the new definition, the scan, the denied lookup, the kill and the cancellation. Auditor audra verifies the tenant's hash chain | Trace and audit evidence |
-| C7 | Otto sees the evaluator's MCP drift incident (critical, po-assistant affected) and the kill incident, acknowledges the drift and links his kill, and cannot resolve it himself; opal resolves it. Audra reads the SOC summary (ADR-027) | Incidents observe; resolving a critical incident takes two people |
-| C8 | Erin plans a bundle declaring a `ledger` connector and a `ledger-bot` agent (the plan writes nothing), submits it, cannot approve it herself; rita approves. A replan finds no changes and drift is in sync. Alice then declares dana (auditor) and a funded `ledger` budget; she cannot approve, bob does (ADR-026 Rev 1.1) | Two-person Governance-as-Code for the registry, people and budgets |
-| C9 | Search every API response, every service log (including `fakemcp`'s) and a database dump for the ERP and MCP credentials | Not found anywhere |
+| C3 | po-assistant asks for `sap-mcp.get_po` with `{"id": "PO-1"}`. The worker lists the server's tools, finds the definition byte-equal to the certified one and sends one `tools/call`. The action succeeds and its reference is `mcp:sha256:<digest of the result>`; the server's call log holds one entry (a tool name and a time, no argument, no result) | An MCP tool is called at most once after a definition check, and its output is never stored (ADR-032) |
+| C4 | The server now lists `get_po` with a new description, an `approve` argument and `destructiveHint: true`. Before any rescan, po-assistant calls `get_po` again: the worker compares the server's definition with the certified one, finds a difference, sends nothing, and the action fails as `no_effect` `definition_changed` (the call log stays at one entry). Operator otto then requests a rescan. Definition #2 is `high` risk; the contract no longer matches the fingerprint and the tool is quarantined. po-assistant's lookup is `DENIED tool_quarantined` | A rug pull is refused at the worker before any scan sees it, then detected and contained before governance (ADR-032, ADR-023 §6–7) |
+| C5 | Blast radius of `sap-mcp`: po-assistant is confirmed, team procurement is affected, invoice-bot is not; coverage `observed_only` | Blast radius from capability edges (ADR-015) |
+| C6 | Otto kills po-assistant's version (`security_incident`). Its next purchase uses `erp.create_po`, which did not drift: it stays `QUEUED`, is never attempted and reaches no ERP. invoice-bot keeps working. Otto cannot clear their own kill (403). The held action is cancelled | Kill fencing in PostgreSQL, two-person clear, cancellation never blocked (ADR-016) |
+| C7 | The held action and its outbox events carry the agent's W3C trace context. The journal since the drift shows the rescan request, the quarantine (`tools.update` by the scanner), the new definition, the scan, the denied lookup, the kill and the cancellation. Auditor audra verifies the tenant's hash chain | Trace and audit evidence |
+| C8 | Otto sees the evaluator's MCP drift incident (critical, po-assistant affected) and the kill incident, acknowledges the drift and links his kill, and cannot resolve it himself; opal resolves it. Audra reads the SOC summary (ADR-027) | Incidents observe; resolving a critical incident takes two people |
+| C9 | Erin plans a bundle declaring a `ledger` connector and a `ledger-bot` agent (the plan writes nothing), submits it, cannot approve it herself; rita approves. A replan finds no changes and drift is in sync. Alice then declares dana (auditor) and a funded `ledger` budget; she cannot approve, bob does (ADR-026 Rev 1.1) | Two-person Governance-as-Code for the registry, people and budgets |
+| C10 | Search every API response, every service log (including `fakemcp`'s) and a database dump for the ERP and MCP credentials | Not found anywhere |
 
 ```text
-=== C3. Trigger MCP drift: the server now advertises a different get_po
+=== C3. po-assistant calls the certified MCP tool: one tools/call, a digest of the result as its reference
+    po-assistant calls sap-mcp.get_po: SUCCEEDED, reference mcp:sha256:<digest> (the result's digest, never its content)
+    Fake MCP call log: 1 tools/call (a tool name and a time; no argument, no result)
+=== C4. Trigger MCP drift: the server now advertises a different get_po
     fakemcp now lists get_po with a new description, an "approve" argument and destructiveHint: true
+    po-assistant calls sap-mcp.get_po again, before any rescan: FAILED, no_effect definition_changed
+    the worker compared the server's definition with the certified one and sent nothing; Fake MCP call log: still 1 tools/call
     otto requests a rescan: "vendor released sap-mcp 2.1"
     definition #2: risk high, changed [annotations description inputSchema], destructive true
     get_po: contract no longer matches its fingerprint; quarantined (definition 2 changed: annotations, description, inputSchema); executable false
     po-assistant asks for sap-mcp.get_po: DENIED tool_quarantined, before governance
 ```
 
-No worker calls an MCP tool yet (`tools/call` needs its own ADR). The quarantine therefore shows up as a denial at submission. The kill is shown on an ERP purchase, which is the path a worker can dispatch.
+The worker calls an MCP tool at most once (ADR-032). After a rescan has quarantined the tool, a new action on it is denied at submission. The kill is shown on an ERP purchase, which keeps working for the other agents.
 
 ### The operator console
 

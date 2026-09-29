@@ -88,7 +88,7 @@ break-glass ของเจ้าของ คำขอของ agent มาจ
 
 ## Slice C demo
 
-`TestSliceCDemo` ทำตามสคริปต์ Slice C ของ §111 คือทำให้เกิด MCP drift, แสดง blast radius, kill agent version ที่ได้รับผลกระทบ และแสดงหลักฐานจาก
+`TestSliceCDemo` ทำตามสคริปต์ Slice C ของ §111 คือเรียก MCP tool ที่รับรองแล้ว, ทำให้เกิด MCP drift (worker ปฏิเสธ tool ที่เปลี่ยน), แสดง blast radius, kill agent version ที่ได้รับผลกระทบ และแสดงหลักฐานจาก
 trace และ audit demo นี้เพิ่ม service หนึ่งตัวใน stack คือ `fakemcp` ซึ่งเป็น MCP server ที่ไม่มี state (revision ใหม่ `2026-07-28`, Streamable HTTP)
 บนเครือข่าย `erp` ที่มีเพียง worker เข้าได้ bearer token ของมันอยู่ใน manifest ของ connector secret ของ worker ส่วน server ถือเพียงตัวตรวจสอบ
 มันแสดงรายการ tool จาก `/data/tools.json` และ demo แทนที่ไฟล์นั้นด้วย `docker compose cp` เพื่อจำลองการออกเวอร์ชันใหม่ของผู้ขาย
@@ -98,25 +98,31 @@ trace และ audit demo นี้เพิ่ม service หนึ่งต�
 | C0 | `eacpctl tenant create` สำหรับ Globex พร้อม admin alice และ bob ทุกคน, การมอบสิทธิ์ และ key อนุมัติโดย admin คนที่สอง policy อนุญาตงาน ERP ปกติ | การบริหารแบบสองคนใน tenant ที่สองบน stack เดียวกัน |
 | C1 | erin ลงทะเบียน MCP connector `sap-mcp` การประกาศ tool เองถูกปฏิเสธ (409) scanner ของ worker ค้นพบ `get_po`: นิยาม #1, ความเสี่ยง `initial`, อ่านอย่างเดียว พร้อม fingerprint ที่ PostgreSQL คำนวณ | tool ถูกค้นพบ ไม่ได้ถูกประกาศ (ADR-023) |
 | C2 | erin รับรอง `get_po` เป็น `READ_ONLY` โดย pin กับนิยาม #1 แล้ว rita เปิดใช้ `po-assistant` (team procurement) เรียก `erp.create_po` และ `sap-mcp.get_po` ได้ ส่วน `invoice-bot` (team finance) เรียกได้เฉพาะ `erp.create_po` การซื้อปกติทำงานสำเร็จ | ใบสั่งซื้อหนึ่งใบใน ERP |
-| C3 | ตอนนี้ server แสดง `get_po` พร้อมคำอธิบายใหม่, argument `approve` และ `destructiveHint: true` operator otto ขอ scan ใหม่ นิยาม #2 มีความเสี่ยง `high` contract ไม่ตรงกับ fingerprint อีกต่อไปและ tool ถูกกักกัน การค้นหาของ po-assistant เป็น `DENIED tool_quarantined` | MCP drift ถูกตรวจพบและกักไว้ก่อนถึง governance (ADR-023 §6–7) |
-| C4 | blast radius ของ `sap-mcp`: po-assistant ได้รับผลแบบยืนยัน, team procurement ได้รับผล, invoice-bot ไม่ได้รับผล coverage เป็น `observed_only` | blast radius จากเส้น capability (ADR-015) |
-| C5 | otto kill version ของ po-assistant (`security_incident`) การซื้อครั้งถัดไปใช้ `erp.create_po` ซึ่งไม่ได้ drift แต่ค้างอยู่ที่ `QUEUED` ไม่เคยถูกลอง และไม่ถึง ERP invoice-bot ยังทำงานต่อได้ otto ยกเลิก kill ของตัวเองไม่ได้ (403) action ที่ถูกพักไว้ถูกยกเลิก | kill ถูก fence ใน PostgreSQL, การยกเลิก kill ใช้สองคน, การยกเลิก action ไม่เคยถูกขวาง (ADR-016) |
-| C6 | action ที่ถูกพักและ outbox event ของมันมี W3C trace context ของ agent journal ตั้งแต่ drift แสดงคำขอ scan ใหม่, การกักกัน (`tools.update` โดย scanner), นิยามใหม่, การ scan, การค้นหาที่ถูกปฏิเสธ, kill และการยกเลิก auditor audra ตรวจสอบ hash chain ของ tenant | หลักฐานจาก trace และ audit |
-| C7 | otto เห็น incident ของ MCP drift จากตัวประเมิน (critical, po-assistant ได้รับผล) และ incident ของ kill รับทราบ drift และเชื่อม kill ของตัวเองเข้าไป แต่ปิด incident เองไม่ได้ opal เป็นผู้ปิด audra อ่าน SOC summary (ADR-027) | incident มีหน้าที่สังเกต การปิด incident ระดับ critical ต้องใช้สองคน |
-| C8 | erin วางแผน bundle ที่ประกาศ connector `ledger` และ agent `ledger-bot` (แผนไม่เขียนอะไร) แล้ว submit อนุมัติเองไม่ได้ rita เป็นผู้อนุมัติ การวางแผนซ้ำไม่พบการเปลี่ยนแปลงและ drift เป็น in sync จากนั้น alice ประกาศ dana (auditor) และงบประมาณ `ledger` ที่มีเงิน เธออนุมัติไม่ได้ bob อนุมัติ (ADR-026 Rev 1.1) | Governance-as-Code แบบสองคนสำหรับ registry, คน และงบประมาณ |
-| C9 | ค้นหา credential ของ ERP และ MCP ในทุกคำตอบของ API, ทุก log ของ service (รวม `fakemcp`) และ dump ของฐานข้อมูล | ไม่พบที่ไหนเลย |
+| C3 | po-assistant ขอ `sap-mcp.get_po` ด้วย `{"id": "PO-1"}` worker แสดงรายการ tool ของ server พบว่านิยามตรงกับที่รับรองไว้ทุกไบต์ แล้วส่ง `tools/call` หนึ่งครั้ง action สำเร็จและ reference คือ `mcp:sha256:<digest ของผลลัพธ์>` บันทึกการเรียกของ server มีหนึ่งรายการ (ชื่อ tool กับเวลา ไม่มี argument และไม่มีผลลัพธ์) | MCP tool ถูกเรียกอย่างมากที่สุดหนึ่งครั้งหลังตรวจนิยาม และผลลัพธ์ของมันไม่ถูกเก็บ (ADR-032) |
+| C4 | ตอนนี้ server แสดง `get_po` พร้อมคำอธิบายใหม่, argument `approve` และ `destructiveHint: true` ก่อน scan ใหม่ po-assistant เรียก `get_po` อีกครั้ง: worker เทียบนิยามของ server กับที่รับรองไว้ พบว่าต่างกัน จึงไม่ส่งอะไรเลย และ action ล้มเป็น `no_effect` `definition_changed` (บันทึกการเรียกยังมีหนึ่งรายการ) จากนั้น operator otto ขอ scan ใหม่ นิยาม #2 มีความเสี่ยง `high` contract ไม่ตรงกับ fingerprint อีกต่อไปและ tool ถูกกักกัน การค้นหาของ po-assistant เป็น `DENIED tool_quarantined` | rug pull ถูก worker ปฏิเสธก่อนที่ scan ใดจะเห็น แล้วจึงถูกตรวจพบและกักไว้ก่อนถึง governance (ADR-032, ADR-023 §6–7) |
+| C5 | blast radius ของ `sap-mcp`: po-assistant ได้รับผลแบบยืนยัน, team procurement ได้รับผล, invoice-bot ไม่ได้รับผล coverage เป็น `observed_only` | blast radius จากเส้น capability (ADR-015) |
+| C6 | otto kill version ของ po-assistant (`security_incident`) การซื้อครั้งถัดไปใช้ `erp.create_po` ซึ่งไม่ได้ drift แต่ค้างอยู่ที่ `QUEUED` ไม่เคยถูกลอง และไม่ถึง ERP invoice-bot ยังทำงานต่อได้ otto ยกเลิก kill ของตัวเองไม่ได้ (403) action ที่ถูกพักไว้ถูกยกเลิก | kill ถูก fence ใน PostgreSQL, การยกเลิก kill ใช้สองคน, การยกเลิก action ไม่เคยถูกขวาง (ADR-016) |
+| C7 | action ที่ถูกพักและ outbox event ของมันมี W3C trace context ของ agent journal ตั้งแต่ drift แสดงคำขอ scan ใหม่, การกักกัน (`tools.update` โดย scanner), นิยามใหม่, การ scan, การค้นหาที่ถูกปฏิเสธ, kill และการยกเลิก auditor audra ตรวจสอบ hash chain ของ tenant | หลักฐานจาก trace และ audit |
+| C8 | otto เห็น incident ของ MCP drift จากตัวประเมิน (critical, po-assistant ได้รับผล) และ incident ของ kill รับทราบ drift และเชื่อม kill ของตัวเองเข้าไป แต่ปิด incident เองไม่ได้ opal เป็นผู้ปิด audra อ่าน SOC summary (ADR-027) | incident มีหน้าที่สังเกต การปิด incident ระดับ critical ต้องใช้สองคน |
+| C9 | erin วางแผน bundle ที่ประกาศ connector `ledger` และ agent `ledger-bot` (แผนไม่เขียนอะไร) แล้ว submit อนุมัติเองไม่ได้ rita เป็นผู้อนุมัติ การวางแผนซ้ำไม่พบการเปลี่ยนแปลงและ drift เป็น in sync จากนั้น alice ประกาศ dana (auditor) และงบประมาณ `ledger` ที่มีเงิน เธออนุมัติไม่ได้ bob อนุมัติ (ADR-026 Rev 1.1) | Governance-as-Code แบบสองคนสำหรับ registry, คน และงบประมาณ |
+| C10 | ค้นหา credential ของ ERP และ MCP ในทุกคำตอบของ API, ทุก log ของ service (รวม `fakemcp`) และ dump ของฐานข้อมูล | ไม่พบที่ไหนเลย |
 
 ```text
-=== C3. Trigger MCP drift: the server now advertises a different get_po
+=== C3. po-assistant calls the certified MCP tool: one tools/call, a digest of the result as its reference
+    po-assistant calls sap-mcp.get_po: SUCCEEDED, reference mcp:sha256:<digest> (the result's digest, never its content)
+    Fake MCP call log: 1 tools/call (a tool name and a time; no argument, no result)
+=== C4. Trigger MCP drift: the server now advertises a different get_po
     fakemcp now lists get_po with a new description, an "approve" argument and destructiveHint: true
+    po-assistant calls sap-mcp.get_po again, before any rescan: FAILED, no_effect definition_changed
+    the worker compared the server's definition with the certified one and sent nothing; Fake MCP call log: still 1 tools/call
     otto requests a rescan: "vendor released sap-mcp 2.1"
     definition #2: risk high, changed [annotations description inputSchema], destructive true
     get_po: contract no longer matches its fingerprint; quarantined (definition 2 changed: annotations, description, inputSchema); executable false
     po-assistant asks for sap-mcp.get_po: DENIED tool_quarantined, before governance
 ```
 
-ยังไม่มี worker ใดเรียก MCP tool (`tools/call` ต้องมี ADR ของตัวเอง) การกักกันจึงปรากฏเป็นการปฏิเสธตอนส่งคำขอ ส่วน kill แสดงบนการซื้อผ่าน ERP
-ซึ่งเป็นเส้นทางที่ worker dispatch ได้
+worker เรียก MCP tool อย่างมากที่สุดหนึ่งครั้ง (ADR-032) หลังจาก scan ใหม่กักกัน tool แล้ว action ใหม่บน tool นั้นจะถูกปฏิเสธตอนส่งคำขอ ส่วน kill แสดงบนการซื้อผ่าน ERP
+ซึ่งยังทำงานได้สำหรับ agent ตัวอื่น
 
 ### operator console
 

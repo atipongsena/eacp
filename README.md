@@ -372,7 +372,7 @@ EACP is under active development. Everything described above exists and is teste
 yet. Not built yet:
 
 - **Inbound A2A.** EACP delegates to remote agents but does not yet accept delegations from them.
-- **Executing MCP tools.** Tools are discovered, certified and quarantined, but no worker calls `tools/call` yet.
+- **Returning MCP tool output.** A worker calls a certified MCP tool at most once and records a digest of the result, but never stores or returns the output.
 - **Global and run kill scopes.** They wait for platform authority and authenticated run bindings. Tenant, team,
   agent, version, action, connector, tool and model kills work.
 - **Multi-region.** One PostgreSQL is the authority; replicas share it.

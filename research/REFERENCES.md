@@ -7,7 +7,7 @@ Facts here were checked against the released artifacts, not the docs alone
 
 Checked on 2026-09-29 against the raw `docs/specification/2026-07-28/server/tools.mdx` on the main branch of the `modelcontextprotocol` repository. ADR-032 relies on this.
 
-- **`x-mcp-header` encoding is not specified.** The page states the constraints on the `x-mcp-header` annotation itself, but not how a value is encoded into the `Mcp-Param-{name}` header, nor when the header is required, nor the error a server returns on a mismatch. `basic/transports.mdx` was not found at that path.
+- **`x-mcp-header` encoding is not specified.** The page states the constraints on the `x-mcp-header` annotation itself, but not how a value is encoded into the `Mcp-Param-{name}` header, nor when the header is required, nor the error a server returns on a mismatch. `docs/specification/2026-07-28/basic/transports.mdx` was not found at that path.
 - **Consequence.** Phase 26a refuses such a tool at call time (`unsupported_header_mirroring`, nothing sent, certifiable as no effect) instead of guessing an encoding. Lift the refusal only after the encoding is verified against the specification source and an ADR records it.
 
 ## Phase 25b — Anthropic Messages and OpenAI Chat Completions, via the official Go SDKs (2026-09-27)
