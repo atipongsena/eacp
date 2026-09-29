@@ -113,10 +113,15 @@ func TestTranslationsMatch(t *testing.T) {
 
 func isThai(r rune) bool { return r >= 0x0E00 && r <= 0x0E7F }
 
+// thaiProductFiles are the product's own Thai texts, not documents: the console's
+// Thai message catalogue (ADR-028 Rev 1.1). Each is named exactly; a new one
+// needs a decision, not a pattern.
+var thaiProductFiles = map[string]bool{"internal/ui/static/messages.th.js": true}
+
 func TestThaiOnlyInThaiFiles(t *testing.T) {
 	root := repoRoot(t)
 	for _, f := range trackedFiles(t) {
-		if strings.HasSuffix(f, ".th.md") {
+		if strings.HasSuffix(f, ".th.md") || thaiProductFiles[f] {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f)))

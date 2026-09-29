@@ -46,6 +46,7 @@ Success:
 | Using a Hub agent | Both. **Run** uses the published version. **Clone** makes an editable copy with its own approvals. |
 | Architecture | Data and rules in `controlplane-api` (`internal/studio`, migrations, triggers). A new binary, `agent-runtime`, runs agents. |
 | Missing pieces in scope | `tools/call` (Phase 26), the `run` kill scope (after 27a), inbound A2A. |
+| Order | A thin slice first (27a), a trial with departments (the gate), then the Hub and the full builder (section 8). |
 
 ## 4. The agent definition
 
@@ -163,19 +164,60 @@ exist yet and are a later phase (open point 2).
 
 ## 8. The phases
 
-| Phase | Content | ADR |
-|---|---|---|
-| 26 | **MCP `tools/call`:** the execution worker calls an MCP tool under the contract that pins `definition_id`, re-checking the fingerprint before every dispatch | 032 (new) |
-| 27a | Studio core: definition, versions, derived capability, `agent-runtime`, agent credentials | 033 (new) |
-| 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads | 033 Rev 1.1 |
-| 26-UI | Console design system and a redesign of every existing view (section 8.2) | 028 Rev 1.1 |
-| 27c | Builder UI, templates, the end-to-end demo | 033 Rev 1.2 |
-| 28 | The `run` kill scope, using the authenticated run binding a Studio run provides | 016 revision |
-| 29 | Inbound A2A: accept delegations from remote agents | 030 revision |
+Revised 2026-09-29 (the thin slice). The first version of this plan built the Studio, the Hub and the full builder
+in order, all from reading and no user feedback. The risk is a large build that departments then want done another
+way. The plan now proves one narrow path end to end, puts it in front of real departments, and only then builds
+the wider parts.
+
+| Phase | Content | ADR | State |
+|---|---|---|---|
+| 26 | **MCP `tools/call`:** the execution worker calls an MCP tool under the contract that pins `definition_id`, re-checking the fingerprint before every dispatch | 032 (new) | next |
+| 26-UI | Console design system and a redesign of every existing view (section 8.2) | 028 Rev 1.1 | done (`e275c4a`) |
+| 27-0 | **Credential ADR first:** how `agent-runtime` obtains an agent's credential (section 5.1), its threat model, custody of the master secret, rotation and the privilege it holds. Written and reviewed before any 27a code | 033 (new) | before 27a |
+| 27a | **The thin slice** (section 8.3): definition, immutable versions, derived capability, `agent-runtime`, agent credentials, and one form with one template, from creation through approval to a run | 033 Rev 1.1 | after 26 and 27-0 |
+| **Gate** | Two or three departments try the thin slice (section 8.4). What they say decides what 27b and 27c contain | none | required |
+| 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads. Reordered or reshaped by the gate | 033 Rev 1.2 | after the gate |
+| 27c | The full builder, more templates and the end-to-end demo on compose and Kubernetes | 033 Rev 1.3 | after the gate |
+| 28 | The `run` kill scope, using the authenticated run binding a Studio run provides | 016 revision | after 27a |
+| 29 | Inbound A2A: accept delegations from remote agents | 030 revision | independent, can move |
 
 Phase 26 comes first because most enterprise integrations an employee will pick are MCP tools, and today an action
 on one expires unclaimed. Phase 29 does not depend on Studio and can move. **The `global` scope** stays out: it
-waits for platform authority, not for run bindings.
+waits for platform authority, not for run bindings. Each phase still gets its own brainstorm, ADR and plan, and
+the repository rule stands: stop and report after every phase.
+
+### 8.3 What the thin slice contains
+
+One path, complete, and nothing beside it:
+
+- **Steps:** `tool_call` and `respond` only. The `llm` and `branch` kinds wait for the gate, so the first proof has
+  no model in it and every step is deterministic and testable.
+- **One form**, not the full builder: name, department, the tools it may use, the steps in order, and a Save that
+  makes an immutable version. It lives at `/studio/` under the same rules as the console (ADR-028).
+- **The approval path is part of the slice, not an afterthought.** After Save the page shows where the agent is:
+  waiting for a capability request, waiting for a second approver (named by role), approved, active. A refusal shows
+  the server's reason. The two-person rule stays; the employee is never left guessing (this is the largest UX risk
+  the review found).
+- **One template**, chosen for a real department with one MCP or HTTP tool (for example a leave-balance lookup for
+  HR), used to run the slice in the demo.
+- **Run and see:** start a run, follow its steps from the journal, see a `NEEDS_HUMAN` or `DENIED` outcome plainly.
+- **Left out on purpose:** the Hub, listings, clone, department leads, the `llm` step, branches, schedules,
+  webhooks, the canvas, and any second template.
+
+### 8.4 The gate
+
+After 27a, before 27b or 27c, run the slice with two or three departments the owner picks (the demo stack with
+their own tool, or a staging tenant). It passes when:
+
+1. an employee who did not build the platform creates an agent from the form without help;
+2. they understand where it is in the approval path without asking;
+3. the approver understands what they are approving (the derived capability list, in plain words);
+4. we have written down what they wanted that the slice does not do.
+
+The notes go into an amendment of this spec. If departments want a template gallery before sharing, 27b shrinks to
+a curated list; if they want an LLM step first, that moves ahead of the Hub. Nothing after the gate is fixed until
+this is done. If the owner cannot arrange a trial, the fallback is the demo scenario of section 9 run by the owner
+alone, and the gate is recorded as not met.
 
 ### 8.1 Phase 26 constraints already known (ADR-023, AGENTS.md, `research/STUDIO_REFERENCES.md` section 2)
 
@@ -193,7 +235,7 @@ The console is plain today (`internal/ui/static/app.css` is 5.8 KB: no icons, no
 underlined links). Studio's builder will live beside it, so the two share one design system, built first:
 semantic token pairs, the 12-step colour meaning, type by role, system fonts only, inline SVG icons through `dom.js`
 (`research/STUDIO_REFERENCES.md` section 3). It changes no route, permission or security rule (ADR-028). It is its
-own phase, **Phase 26-UI**, and runs before 27c. Its own short design is agreed in chat first.
+own phase, **Phase 26-UI**, and is delivered (`e275c4a`, ADR-028 Rev 1.1).
 
 ## 9. Testing
 
@@ -227,5 +269,7 @@ chooses tools, multi-region, bypass detection and personal-data classification.
 5. **`started_by` and authority.** The caller's identity is evidence and never widens what the agent may do; the
    agent's own allowlist is the only authority. Whether the policy (PDP) should also see the caller is decided in
    the phase 27a spec.
+7. **Who joins the gate.** The owner names the two or three departments and the tool each will use. Default: HR
+   with a leave-balance lookup, plus one department that uses an MCP tool. Without them the gate is recorded as not met.
 6. **Numbers.** ADR-032 and ADR-033 are the next free numbers on `main` (ADR-031 is the LLM gateway; migrations
    run to 00024). They are assigned when the ADRs are written.
