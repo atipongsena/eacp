@@ -57,9 +57,14 @@ func TestSliceCDemo(t *testing.T) {
 	d.until(routine, "SUCCEEDED")
 	d.onePO(routine)
 
-	d.step("C3. Trigger MCP drift: the server now advertises a different get_po")
+	d.step("C3. po-assistant calls the certified MCP tool: one tools/call, a digest of the result as its reference")
+	d.callGetPO()
+
+	d.step("C4. Trigger MCP drift: the server now advertises a different get_po")
 	before := d.sql(`SELECT max(seq) FROM eacp.audit_events WHERE tenant_id = '` + d.tenant + `'`)
-	d.drift(mcpID, getPO)
+	d.replaceTools()
+	d.refuseRugPull()
+	d.rescan(mcpID, getPO)
 	lookup := d.submitAs("po-assistant", "c-lookup-1", "lookup", "sap-mcp.get_po", map[string]any{"id": "PO-1"})
 	d.until(lookup, "DENIED")
 	if reason := d.action(lookup)["state_reason"]; reason != "tool_quarantined" {
@@ -67,22 +72,22 @@ func TestSliceCDemo(t *testing.T) {
 	}
 	d.logf("po-assistant asks for sap-mcp.get_po: DENIED tool_quarantined, before governance")
 
-	d.step("C4. Show the blast radius of the drifted MCP server")
+	d.step("C5. Show the blast radius of the drifted MCP server")
 	version := d.blastRadius(mcpID)
 
-	d.step("C5. Kill the affected agent version")
+	d.step("C6. Kill the affected agent version")
 	held := d.contain(version)
 
-	d.step("C6. Trace and audit evidence")
+	d.step("C7. Trace and audit evidence")
 	d.incidentEvidence(before, held)
 
-	d.step("C7. Incidents: the SOC shows the drift and the kill; otto acknowledges, opal resolves")
+	d.step("C8. Incidents: the SOC shows the drift and the kill; otto acknowledges, opal resolves")
 	d.incidents(version)
 
-	d.step("C8. Governance-as-Code: registry (erin, rita), people and budgets (alice, bob), drift")
+	d.step("C9. Governance-as-Code: registry (erin, rita), people and budgets (alice, bob), drift")
 	d.governanceAsCode()
 
-	d.step("C9. Scan responses, logs and the database for the ERP and MCP credentials")
+	d.step("C10. Scan responses, logs and the database for the ERP and MCP credentials")
 	d.secretScan()
 
 	d.step("Slice C demo complete")
@@ -154,13 +159,14 @@ func (d *demo) certifyAndRegister(getPO map[string]any) {
 	path := "/v1/tools/" + getPO["id"].(string)
 	c := d.must(201, "erin", "POST", path+"/contracts", map[string]any{"definition_id": def["id"],
 		"side_effects": []string{"READ_ONLY"}, "idempotency_mode": "none", "reconciliation_lookup": "none",
-		"reconciliation_consistency": "none", "proof_standard": "none", "max_attempts": 1})
+		"reconciliation_consistency": "none", "proof_standard": "none", "no_effect_errors": []string{"definition_changed"},
+		"max_attempts": 1})
 	d.must(204, "rita", "POST", path+"/contract", map[string]any{"contract_id": c["id"]})
 	tool := d.must(200, "audra", "GET", path, nil)
 	if tool["contract_matches"] != true {
 		d.t.Fatalf("certified tool = %v", tool)
 	}
-	d.logf("erin certifies get_po as READ_ONLY, pinned to definition #%v; rita activates the contract", def["seq"])
+	d.logf("erin certifies get_po as READ_ONLY, one attempt, pinned to definition #%v, with definition_changed as a certified no-effect; rita activates the contract", def["seq"])
 	d.ids["tool get_po"] = getPO["id"].(string)
 
 	erp := d.must(201, "erin", "POST", "/v1/connectors", map[string]any{"name": "erp", "protocol": "http",
@@ -199,10 +205,81 @@ func (d *demo) certifyAndRegister(getPO map[string]any) {
 	}
 }
 
-// drift replaces the server's tool list and has an operator request a
-// rescan. The scanner records the new definition; PostgreSQL classifies it
-// as high risk, invalidates the contract and quarantines the tool.
-func (d *demo) drift(mcpID string, getPO map[string]any) {
+// callGetPO is the approved call: po-assistant reads a purchase order
+// through the certified tool. The worker lists the server's tools, finds the
+// definition byte-equal to the certified one and sends one tools/call; the
+// action's reference is a digest of the result, and the server's call log
+// holds one entry that names no argument and no result.
+func (d *demo) callGetPO() {
+	d.t.Helper()
+	id := d.submitAs("po-assistant", "c-call-1", "lookup", "sap-mcp.get_po", map[string]any{"id": "PO-1"})
+	d.until(id, "SUCCEEDED")
+	ref, _ := d.action(id)["external_reference"].(string)
+	digest, ok := strings.CutPrefix(ref, "mcp:sha256:")
+	if !ok || len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
+		d.t.Fatalf("MCP call reference = %q, want mcp:sha256:<64 hex>", ref)
+	}
+	if calls := d.mcpCalls(); len(calls) != 1 || calls[0].Tool != "get_po" {
+		d.t.Fatalf("Fake MCP call log = %+v, want one get_po call", calls)
+	}
+	d.logf("po-assistant calls sap-mcp.get_po: SUCCEEDED, reference %.28s… (the result's digest, never its content)", ref)
+	d.logf("Fake MCP call log: 1 tools/call (a tool name and a time; no argument, no result)")
+}
+
+// refuseRugPull is the rug pull's second call: the server already advertises
+// the drifted get_po but no scan has recorded it, so the tool is still
+// executable. The worker compares the server's current definition with the
+// certified one before it calls, finds them different and sends nothing: a
+// certified no-effect, the action fails and the call log stays at one.
+func (d *demo) refuseRugPull() {
+	d.t.Helper()
+	id := d.submitAs("po-assistant", "c-call-2", "lookup", "sap-mcp.get_po", map[string]any{"id": "PO-2"})
+	d.until(id, "FAILED")
+	ev := d.must(200, "audra", "GET", "/v1/actions/"+id+"/evidence", nil)
+	attempts := ev["attempts"].([]any)
+	if len(attempts) != 1 || attempts[0].(map[string]any)["outcome"] != "no_effect" ||
+		attempts[0].(map[string]any)["error_class"] != "definition_changed" {
+		d.t.Fatalf("the call on a changed definition: attempts %v", attempts)
+	}
+	if calls := d.mcpCalls(); len(calls) != 1 {
+		d.t.Fatalf("Fake MCP call log = %+v after the refused call, want exactly the one earlier call", calls)
+	}
+	d.logf("po-assistant calls sap-mcp.get_po again, before any rescan: FAILED, no_effect definition_changed")
+	d.logf("the worker compared the server's definition with the certified one and sent nothing; Fake MCP call log: still 1 tools/call")
+}
+
+// mcpCall is one entry of the Fake MCP call log.
+type mcpCall struct {
+	Tool string `json:"tool"`
+}
+
+// mcpCalls reads the Fake MCP call log with the MCP credential, as the
+// server's own operator would.
+func (d *demo) mcpCalls() []mcpCall {
+	d.t.Helper()
+	out, err := d.p.mcpCalls(d.mcpToken())
+	if err != nil {
+		d.t.Fatalf("reading the Fake MCP call log: %v", err)
+	}
+	var calls []mcpCall
+	if err := json.Unmarshal(out, &calls); err != nil {
+		d.t.Fatalf("Fake MCP call log: %v", err)
+	}
+	return calls
+}
+
+// mcpToken reads the development MCP credential the demo stack was given.
+func (d *demo) mcpToken() string {
+	d.t.Helper()
+	b, err := os.ReadFile(filepath.Join(d.root, "deployments", "docker", "secrets", "fakemcp-token.dev"))
+	if err != nil {
+		d.t.Fatalf("reading the MCP credential: %v", err)
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// replaceTools makes the Fake MCP server advertise the drifted tool list.
+func (d *demo) replaceTools() {
 	d.t.Helper()
 	dir, err := os.MkdirTemp(filepath.Join(d.root, "test", "demo"), ".drift-")
 	if err != nil {
@@ -221,6 +298,13 @@ func (d *demo) drift(mcpID string, getPO map[string]any) {
 		d.t.Fatalf("replacing the Fake MCP tool list: %v", err)
 	}
 	d.logf("fakemcp now lists get_po with a new description, an \"approve\" argument and destructiveHint: true")
+}
+
+// rescan has an operator request a rescan. The scanner records the new
+// definition; PostgreSQL classifies it as high risk, invalidates the
+// contract and quarantines the tool.
+func (d *demo) rescan(mcpID string, getPO map[string]any) {
+	d.t.Helper()
 	d.must(200, "otto", "POST", "/v1/connectors/"+mcpID+"/mcp/scan", map[string]any{"reason": "vendor released sap-mcp 2.1"})
 	d.logf("otto requests a rescan: \"vendor released sap-mcp 2.1\"")
 

@@ -9,13 +9,17 @@
 package fakemcp
 
 import (
+	"bufio"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 )
 
 // Version is the MCP revision served.
@@ -30,10 +34,28 @@ const Default = `[{"name":"get_po","title":"Get purchase order",
 // maxRequest bounds a JSON-RPC request body.
 const maxRequest = 64 << 10
 
+// Path is where the server speaks MCP; CallsPath serves the call log.
+const (
+	Path      = "/mcp"
+	CallsPath = "/v1/calls"
+)
+
+// Call is one answered tools/call in the durable log. It names the tool and
+// the time and nothing else: never an argument value or a result.
+type Call struct {
+	At   time.Time `json:"at"`
+	Tool string    `json:"tool"`
+}
+
 // Server serves /mcp.
 type Server struct {
 	token     []byte
 	toolsFile string
+
+	mu       sync.Mutex
+	callsLog string
+	calls    []Call
+	failed   bool
 }
 
 // New returns a server that requires token as its bearer token and lists
@@ -57,13 +79,21 @@ type rpcRequest struct {
 // POST carrying the protocol version in _meta and in the MCP-Protocol-Version
 // and Mcp-Method headers.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/mcp" {
+	if r.URL.Path != Path && r.URL.Path != CallsPath {
 		http.NotFound(w, r)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), s.token) != 1 {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="fakemcp"`)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Path == CallsPath {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		write(w, http.StatusOK, s.Calls())
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -88,6 +118,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rpcError(w, http.StatusBadRequest, req.ID, -32020, "Header mismatch", nil)
 		return
 	}
+	if req.Method == "tools/call" {
+		// From 2026-07-28 a tools/call mirrors params.name in Mcp-Name.
+		var name string
+		_ = json.Unmarshal(req.Params["name"], &name)
+		if got := r.Header.Get("Mcp-Name"); got == "" || got != name {
+			rpcError(w, http.StatusBadRequest, req.ID, -32020, "Header mismatch", nil)
+			return
+		}
+	}
 	if _, ok := meta["io.modelcontextprotocol/clientCapabilities"]; !ok {
 		rpcError(w, http.StatusBadRequest, req.ID, -32021, "Missing required client capability", nil)
 		return
@@ -104,9 +143,98 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result(w, req.ID, map[string]any{"resultType": "complete", "tools": tools, "_meta": info})
+	case "tools/call":
+		s.call(w, req, info)
 	default:
 		rpcError(w, http.StatusOK, req.ID, -32601, "Method not found", nil)
 	}
+}
+
+// call answers get_po: the text names the purchase order, an id of "ERR"
+// is a tool error (isError true). Any other tool is unknown.
+func (s *Server) call(w http.ResponseWriter, req rpcRequest, info map[string]any) {
+	var name string
+	_ = json.Unmarshal(req.Params["name"], &name)
+	var args struct {
+		ID *string `json:"id"`
+	}
+	if name != "get_po" || json.Unmarshal(req.Params["arguments"], &args) != nil || args.ID == nil {
+		rpcError(w, http.StatusOK, req.ID, -32602, "Invalid params", nil)
+		return
+	}
+	if err := s.record(name); err != nil {
+		rpcError(w, http.StatusOK, req.ID, -32603, "Internal error", nil)
+		return
+	}
+	text, isError := "Purchase order "+*args.ID+": open, 800 THB", false
+	if *args.ID == "ERR" {
+		text, isError = "purchase order not found", true
+	}
+	result(w, req.ID, map[string]any{"resultType": "complete", "isError": isError,
+		"content": []any{map[string]any{"type": "text", "text": text}}, "_meta": info})
+}
+
+// LogCallsTo makes the call log durable at path. An existing log is loaded
+// (a corrupt one fails closed); every answered call is written and synced
+// before the reply.
+func (s *Server) LogCallsTo(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("fakemcp: open call log: %w", err)
+	}
+	defer f.Close()
+	var calls []Call
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var c Call
+		if err := json.Unmarshal(sc.Bytes(), &c); err != nil || c.At.IsZero() || c.Tool == "" {
+			return errors.New("fakemcp: corrupt call log")
+		}
+		calls = append(calls, c)
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("fakemcp: read call log: %w", err)
+	}
+	s.mu.Lock()
+	s.callsLog, s.calls, s.failed = path, calls, false
+	s.mu.Unlock()
+	return nil
+}
+
+// Calls returns the logged calls, oldest first.
+func (s *Server) Calls() []Call {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Call{}, s.calls...)
+}
+
+// record logs a call before it is answered. A failed write stops the server
+// answering calls: it never forgets one.
+func (s *Server) record(tool string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failed {
+		return errors.New("fakemcp: call log unavailable")
+	}
+	c := Call{At: time.Now().UTC(), Tool: tool}
+	if s.callsLog != "" {
+		b, _ := json.Marshal(c)
+		f, err := os.OpenFile(s.callsLog, os.O_WRONLY|os.O_APPEND, 0o600)
+		if err == nil {
+			if _, err = f.Write(append(b, '\n')); err == nil {
+				err = f.Sync()
+			}
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+		}
+		if err != nil {
+			s.failed = true
+			return err
+		}
+	}
+	s.calls = append(s.calls, c)
+	return nil
 }
 
 // tools reads the current tool list.

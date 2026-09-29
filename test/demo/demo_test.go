@@ -796,12 +796,7 @@ func (d *demo) name(id string) string {
 
 func (d *demo) secretScan() {
 	d.t.Helper()
-	secrets := map[string]string{"the ERP credential": d.token}
-	if mcp, err := os.ReadFile(filepath.Join(d.root, "deployments", "docker", "secrets", "fakemcp-token.dev")); err == nil {
-		secrets["the MCP credential"] = strings.TrimSpace(string(mcp))
-	} else {
-		d.t.Fatalf("reading the MCP credential: %v", err)
-	}
+	secrets := map[string]string{"the ERP credential": d.token, "the MCP credential": d.mcpToken()}
 	find := func(where, text string) {
 		for name, secret := range secrets {
 			if strings.Contains(text, secret) {

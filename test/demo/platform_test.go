@@ -42,6 +42,7 @@ type platform interface {
 	logs() string                            // every EACP and dependency log
 	erpAudit(token string) ([]byte, error)   // GET fakeerp /v1/audit with the ERP credential
 	copyToFakeMCP(local, remote string) error
+	mcpCalls(token string) ([]byte, error) // GET fakemcp /v1/calls with the MCP credential
 }
 
 func newPlatform(t *testing.T, root string) platform {
@@ -107,6 +108,11 @@ func (c *composePlatform) logs() string {
 func (c *composePlatform) erpAudit(token string) ([]byte, error) {
 	cmd := exec.Command("docker", "run", "--rm", "--network", c.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
 		"--header", "Authorization: Bearer "+token, "http://fakeerp:8090/v1/audit")
+	return cmd.Output()
+}
+func (c *composePlatform) mcpCalls(token string) ([]byte, error) {
+	cmd := exec.Command("docker", "run", "--rm", "--network", c.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
+		"--header", "Authorization: Bearer "+token, "http://fakemcp:8091/v1/calls")
 	return cmd.Output()
 }
 func (c *composePlatform) copyToFakeMCP(local, remote string) error {
@@ -499,6 +505,10 @@ func (k *k8sPlatform) erpAudit(token string) ([]byte, error) {
 		return nil, fmt.Errorf("ERP audit: HTTP %d %s", resp.StatusCode, body)
 	}
 	return body, nil
+}
+
+func (k *k8sPlatform) mcpCalls(string) ([]byte, error) {
+	return nil, errors.New("reading the Fake MCP call log is not supported on k8s")
 }
 
 func (k *k8sPlatform) copyToFakeMCP(string, string) error {

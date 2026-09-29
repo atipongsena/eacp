@@ -251,9 +251,12 @@ services:
       EACP_HTTP_ADDR: ":8091"
       EACP_FAKEMCP_TOKEN_FILE: /run/secrets/fakemcp_token
       EACP_FAKEMCP_TOOLS_FILE: /data/tools.json
+      # Its durable, content-free log of tools/call (tool name and time).
+      EACP_FAKEMCP_CALLS_FILE: /tmp/calls.jsonl
     secrets: [fakemcp_token]
     volumes:
       - fakemcp_data:/data
+      - fakemcp_calls:/tmp
     networks: [erp]
 
   # The A2A demo's remote agent (ADR-030): A2A 1.0 JSON-RPC at /a2a. Its card
@@ -333,6 +336,7 @@ volumes:
   pgdata: {}
   fakeerp_data: {}
   fakemcp_data: {}
+  fakemcp_calls: {}
   fakea2a_data: {}
   fakellm_data: {}
   pdp_pki: {}
