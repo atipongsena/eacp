@@ -318,8 +318,14 @@ func TestExecuteSendsTheRemoteNameAndThePayload(t *testing.T) {
 	if h.Get("Authorization") != "Bearer "+token || h.Get("Mcp-Method") != "tools/call" || h.Get("MCP-Protocol-Version") != mcp.Modern {
 		t.Fatalf("headers %v", h)
 	}
+	if h.Get("Mcp-Name") != "create_po" {
+		t.Fatalf("Mcp-Name %q, want the remote name", h.Get("Mcp-Name"))
+	}
 	for _, r := range s.Requests() {
 		if r.RPCMethod != "tools/call" {
+			if r.Header.Get("Mcp-Name") != "" {
+				t.Fatalf("%s carries Mcp-Name %q", r.RPCMethod, r.Header.Get("Mcp-Name"))
+			}
 			continue
 		}
 		var meta map[string]json.RawMessage
@@ -876,5 +882,20 @@ func TestTheReplyHasItsOwnBudget(t *testing.T) {
 	res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 20*time.Second)
 	if res.Outcome != worker.Succeeded || len(s.Calls()) != 1 {
 		t.Fatalf("result %+v, %d calls", res, len(s.Calls()))
+	}
+}
+
+// TestExecuteSendsNoMcpNameOnTheLegacyRevision: Mcp-Name belongs to the
+// modern revision only.
+func TestExecuteSendsNoMcpNameOnTheLegacyRevision(t *testing.T) {
+	s := mcptest.New(t, mcptest.Legacy, token, createTool)
+	s.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Result: success} })
+	if res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 5*time.Second); res.Outcome != worker.Succeeded {
+		t.Fatalf("result %+v", res)
+	}
+	for _, r := range s.Requests() {
+		if r.Header.Get("Mcp-Name") != "" {
+			t.Fatalf("legacy %s carries Mcp-Name", r.RPCMethod)
+		}
 	}
 }

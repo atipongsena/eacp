@@ -125,7 +125,7 @@ Checked against the specification repository (`modelcontextprotocol/modelcontext
 ### Protocol facts used
 
 - **Modern requests are stateless.** Each request carries `params._meta` with `io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientCapabilities` and optionally `io.modelcontextprotocol/clientInfo`. `server/discover` returns the supported versions, capabilities and server info.
-- **Headers (Streamable HTTP).** `MCP-Protocol-Version` on every request, and `Mcp-Method` mirroring the JSON-RPC method on all requests. A mismatch is `400` with `HeaderMismatch`.
+- **Headers (Streamable HTTP).** `MCP-Protocol-Version` on every request, and `Mcp-Method` mirroring the JSON-RPC method on all requests. A mismatch is `400` with `HeaderMismatch`. `Mcp-Name` is also required from revision 2026-07-28 on `tools/call` (value = `params.name`), `resources/read` (`params.uri`) and `prompts/get`; a missing or wrong value is `400` with `-32020`. Source: go-sdk v1.8.0 `mcp/streamable_headers.go` (`validateMcpHeaders`) and SEP-2243 as described in the SDK's `docs/protocol.md`.
 - **Error codes.** `-32020` HeaderMismatch, `-32021` MissingRequiredClientCapability, `-32022` UnsupportedProtocolVersion. `-32020` to `-32099` are reserved for MCP.
 - **Legacy detection.** A server that predates 2026-07-28 answers a modern request with `400`, or `404`/`405` from an HTTP+SSE server. The client then uses `initialize`, keeps `Mcp-Session-Id`, sends `notifications/initialized` and ends the session with `DELETE`. 2025-06-18 did not define the `MCP-Protocol-Version` header, so servers of that revision may ignore it.
 - **Results.** `resultType` other than `complete` means the server needs more input. An absent `resultType` is `complete`.

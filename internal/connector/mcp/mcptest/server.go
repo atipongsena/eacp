@@ -204,6 +204,15 @@ func (s *Server) serveModern(w http.ResponseWriter, r *http.Request, req rpcRequ
 		s.rpcError(w, http.StatusBadRequest, req.ID, -32020, "Header mismatch", nil)
 		return
 	}
+	if req.Method == "tools/call" {
+		// From 2026-07-28 a tools/call mirrors params.name in Mcp-Name.
+		var name string
+		_ = json.Unmarshal(req.Params["name"], &name)
+		if got := r.Header.Get("Mcp-Name"); got == "" || got != name {
+			s.rpcError(w, http.StatusBadRequest, req.ID, -32020, "Header mismatch", nil)
+			return
+		}
+	}
 	if _, ok := meta["io.modelcontextprotocol/clientCapabilities"]; !ok {
 		s.rpcError(w, http.StatusBadRequest, req.ID, -32602, "clientCapabilities are required", nil)
 		return
