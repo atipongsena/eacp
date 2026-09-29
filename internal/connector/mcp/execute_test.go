@@ -836,3 +836,45 @@ func TestAToolWithHeaderMirroringIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestAHeaderMirroringKeyInAnotherCaseIsStillRefused: encoding/json matches
+// object keys case-insensitively and lets the last one win, so a certified
+// definition may carry a second "inputschema" that would hide the real
+// inputSchema's x-mcp-header from a struct decoder. Whatever the key, no
+// x-mcp-header anywhere in the definition is called.
+func TestAHeaderMirroringKeyInAnotherCaseIsStillRefused(t *testing.T) {
+	for name, tool := range map[string]string{
+		"a later case variant hides it": `{"name":"create_po","inputSchema":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}},"inputschema":{"type":"object"}}`,
+		"an earlier case variant":       `{"name":"create_po","INPUTSCHEMA":{"type":"object"},"inputSchema":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}}`,
+		"only in a variant":             `{"name":"create_po","inputSchema":{"type":"object"},"inputschema":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := mcptest.New(t, mcptest.Modern, token, tool)
+			res := execute(t, mcp.New(), toolCall(t, s.URL(), payload, tool), 5*time.Second)
+			if res.Outcome != worker.NoEffect || res.ErrorClass != "unsupported_header_mirroring" {
+				t.Fatalf("result %+v", res)
+			}
+			if len(s.Requests()) != 0 {
+				t.Fatalf("%d requests reached the server", len(s.Requests()))
+			}
+		})
+	}
+}
+
+// TestTheReplyHasItsOwnBudget: the listing may use most of the response
+// budget without starving the reply of a call that then runs.
+func TestTheReplyHasItsOwnBudget(t *testing.T) {
+	pad := strings.Repeat("x", 60000)
+	tools := []string{createTool}
+	for i := 0; i < 60; i++ { // about 3.6 MiB of a 4 MiB budget
+		tools = append(tools, fmt.Sprintf(`{"name":"pad_%d","description":%q,"inputSchema":{"type":"object"}}`, i, pad))
+	}
+	s := mcptest.New(t, mcptest.Modern, token, tools...)
+	big := map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": strings.Repeat("y", 1<<20)}},
+		"structuredContent": map[string]any{"po": "PO-9"}}
+	s.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Result: big} })
+	res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 20*time.Second)
+	if res.Outcome != worker.Succeeded || len(s.Calls()) != 1 {
+		t.Fatalf("result %+v, %d calls", res, len(s.Calls()))
+	}
+}

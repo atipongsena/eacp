@@ -81,6 +81,9 @@ func (c *Client) execute(ctx context.Context, call worker.Call) worker.Result {
 		return res
 	}
 
+	// The reply has its own budget: a large catalogue must not turn a call that
+	// ran into a response_too_large.
+	s.budget = c.maxBytes
 	result, err := s.call(ctx, "tools/call", map[string]any{"name": call.RemoteName, "arguments": call.Payload})
 	if err != nil {
 		return afterCall(ctx, err)
@@ -120,19 +123,21 @@ const (
 )
 
 // mirrorsHeaders classifies the certified canonical definition: unusable when
-// it is empty or not a JSON object, mirroring when its inputSchema carries an
-// x-mcp-header anywhere. The value encoding of Mcp-Param headers is not
-// specified upstream, so such a tool is refused, never called without them.
+// it is empty or not a JSON object, mirroring when an x-mcp-header key
+// appears anywhere in it. The whole definition is searched, not only its
+// inputSchema: the scanner certifies every top-level key, and a decoder that
+// matches keys case-insensitively could otherwise let a second "inputschema"
+// hide the real one. The value encoding of Mcp-Param headers is not specified
+// upstream, so such a tool is refused, never called without them.
 func mirrorsHeaders(definition string) int {
-	var def struct {
-		InputSchema any `json:"inputSchema"`
-	}
-	var obj map[string]json.RawMessage
-	if definition == "" || json.Unmarshal([]byte(definition), &obj) != nil || obj == nil ||
-		json.Unmarshal([]byte(definition), &def) != nil {
+	var v any
+	if definition == "" || json.Unmarshal([]byte(definition), &v) != nil {
 		return definitionUnusable
 	}
-	if hasKey(def.InputSchema, "x-mcp-header") {
+	if obj, ok := v.(map[string]any); !ok || obj == nil {
+		return definitionUnusable
+	}
+	if hasKey(v, "x-mcp-header") {
 		return definitionMirrors
 	}
 	return definitionUsable
