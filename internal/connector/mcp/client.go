@@ -91,7 +91,8 @@ type session struct {
 	version  string // negotiated revision
 	legacyID string // legacy Mcp-Session-Id, if the server assigned one
 	nextID   int
-	budget   int64 // response bytes left
+	callName string // the tool of the tools/call being sent (Mcp-Name)
+	budget   int64  // response bytes left
 }
 
 // Discover lists every tool of the MCP server at endpoint, authenticating
@@ -319,11 +320,17 @@ func (s *session) headers(req *http.Request, method string) {
 	}
 	if method != "" && s.version == Modern {
 		req.Header.Set("Mcp-Method", method)
+		// The modern revision mirrors the tool's name in Mcp-Name; a server
+		// (the official Go SDK) refuses a tools/call without it (-32020).
+		if method == "tools/call" && s.callName != "" {
+			req.Header.Set("Mcp-Name", s.callName)
+		}
 	}
 }
 
 // call sends one JSON-RPC request and returns its result.
 func (s *session) call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	s.callName, _ = params["name"].(string)
 	if s.version == Modern {
 		params["_meta"] = map[string]any{
 			metaProtocolVersion:    Modern,
