@@ -1,6 +1,7 @@
 // cost.js shows the FinOps dashboard and open alerts. FinOps observes and
 // never blocks (ADR-025); acknowledging alerts stays in eacpctl.
-import {h, section, notice, table, badge, fmtTime, kv} from '../dom.js';
+import {h, section, notice, table, badge, fmtTime, relTime, kv, emptyState} from '../dom.js';
+import {t} from '../i18n.js';
 import {mapText} from './common.js';
 
 export async function render({client}) {
@@ -9,26 +10,26 @@ export async function render({client}) {
   if (!d.ok) return notice(d);
   const x = d.data;
   return h('div', {},
-    h('p', {class: 'asof'}, `As of ${fmtTime(x.as_of)}; days and months are UTC.`),
-    section('Spend by unit', table([
-      ['Unit', u => u.unit],
-      ['Today', u => String(u.today)],
-      ['Month to date', u => String(u.month_to_date)],
-      ['Top agents', u => (u.top_agents ?? []).map(a => `${a.name} ${a.total}`).join(' · ') || '—'],
-    ], x.units, 'No spend recorded.')),
-    section('Today', kv([
-      ['Hard budget blocks', mapText(x.hard_blocks_today)],
-      ['Open alerts by kind', mapText(x.open_alerts)],
-      ['Unpriced tokens', String(x.unpriced_tokens_today)],
+    h('p', {class: 'asof'}, t('As of {time}; days and months are UTC.', {time: fmtTime(x.as_of)})),
+    section(t('Spend by unit'), table([
+      [t('Unit'), u => u.unit],
+      [t('Today'), u => String(u.today)],
+      [t('Month to date'), u => String(u.month_to_date)],
+      [t('Top agents'), u => (u.top_agents ?? []).map(a => `${a.name} ${a.total}`).join(' · ') || '—'],
+    ], x.units, emptyState(t('No spend recorded'), t('Spend appears here once agents report usage.'), 'cost'))),
+    section(t('Today'), kv([
+      [t('Hard budget blocks'), mapText(x.hard_blocks_today)],
+      [t('Open alerts by kind'), mapText(x.open_alerts)],
+      [t('Unpriced tokens'), String(x.unpriced_tokens_today)],
     ])),
-    section('Open alerts', alerts.ok ? table([
-      ['Kind', a => badge(a.kind)],
-      ['Subject', a => `${a.subject_type} ${a.subject_id}`],
-      ['Unit', a => a.unit ?? '—'],
-      ['Observed', a => a.observed ?? '—'],
-      ['Threshold', a => a.threshold ?? '—'],
-      ['Period', a => fmtTime(a.period_start)],
-      ['Raised', a => fmtTime(a.created_at)],
-    ], alerts.data.alerts, 'No open alerts.') : notice(alerts)),
-    h('p', {class: 'hint'}, 'Acknowledging alerts stays in eacpctl.'));
+    section(t('Open alerts'), alerts.ok ? table([
+      [t('Kind'), a => badge(a.kind)],
+      [t('Subject'), a => `${a.subject_type} ${a.subject_id}`],
+      [t('Unit'), a => a.unit ?? '—'],
+      [t('Observed'), a => a.observed ?? '—'],
+      [t('Threshold'), a => a.threshold ?? '—'],
+      [t('Period'), a => fmtTime(a.period_start)],
+      [t('Raised'), a => relTime(a.created_at, Date.now(), {node: true})],
+    ], alerts.data.alerts, emptyState(t('No open alerts'), t('Alerts appear here when spend crosses a soft limit.'), 'ok')) : notice(alerts)),
+    h('p', {class: 'hint'}, t('Acknowledging alerts stays in eacpctl.')));
 }

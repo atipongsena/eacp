@@ -98,6 +98,15 @@ Installed into the sidecar image from `sidecars/agt-pdp/requirements.txt`, pinne
 | `typing-inspection` | 0.4.4 | MIT | https://pypi.org/project/typing-inspection/0.4.4/ |
 | `typing-extensions` | 4.16.0 | PSF-2.0 | https://pypi.org/project/typing-extensions/4.16.0/ |
 
+## Design assets of the operator console
+
+Embedded in `internal/ui/static/`; the console serves no font, image or SVG file.
+
+| Component | License | Use |
+|---|---|---|
+| [Bootstrap Icons](https://github.com/twbs/icons) 1.13 (commit 6945b70), Copyright (c) 2019-2024 The Bootstrap Authors | MIT | 21 glyph outlines, transcribed as CSS `clip-path` in `app.css` |
+| [Radix Colors](https://github.com/radix-ui/colors), Copyright (c) 2022 WorkOS | MIT | the light and dark colour values behind the semantic tokens in `app.css` |
+
 ## Binaries and images
 
 | Component | Version | License | Where it is used |

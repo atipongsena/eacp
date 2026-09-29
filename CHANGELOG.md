@@ -7,6 +7,8 @@ schemas; each change says so.
 
 ## [Unreleased]
 
+- Operator console: a redesigned interface (semantic light and dark tokens checked for WCAG AA contrast, grouped navigation, KPI cards, banners, empty states) and Thai alongside English, chosen with `?lang=` and never stored (ADR-028 Rev 1.1). No API route, table or migration changes.
+
 ## [0.1.0]
 
 The first release. Every guarantee below is enforced by tests listed in [docs/INVARIANTS.md](docs/INVARIANTS.md);

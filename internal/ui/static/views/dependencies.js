@@ -2,6 +2,7 @@
 // only: an undeclared dependency is never proven absent.
 import {h, section, notice, table, link, kv, field, input, select, values} from '../dom.js';
 import {format} from '../router.js';
+import {t} from '../i18n.js';
 
 const KINDS = ['tool', 'mcp', 'agent_version', 'model', 'system'];
 const BY_NAME = new Set(['model', 'system']);
@@ -13,12 +14,12 @@ export async function render({client, route, go}) {
     const v = values(e.target);
     go(format('dependencies', [], {kind: v.kind, [BY_NAME.has(v.kind) ? 'name' : 'id']: v.target}));
   }},
-  field('Kind', select('kind', KINDS, KINDS.includes(q.kind) ? q.kind : 'tool')),
-  field('Id (tool, MCP connector, agent version) or name (model, system)',
+  field(t('Kind'), select('kind', KINDS, KINDS.includes(q.kind) ? q.kind : 'tool')),
+  field(t('Id (tool, MCP connector, agent version) or name (model, system)'),
     input('target', {value: q.id ?? q.name ?? '', required: true, size: 40})),
-  h('button', {type: 'submit', class: 'primary'}, 'Show blast radius'));
-  const parts = [section('Blast radius', form,
-    h('p', {class: 'hint'}, 'Observed evidence only: an undeclared dependency is never proven absent (ADR-015).'))];
+  h('button', {type: 'submit', class: 'primary'}, t('Show blast radius')));
+  const parts = [section(t('Blast radius'), form,
+    h('p', {class: 'hint'}, t('Observed evidence only: an undeclared dependency is never proven absent (ADR-015).')))];
   if (q.kind && (q.id || q.name)) {
     const res = await client.call('dependency.blast', {query: {kind: q.kind, id: q.id, name: q.name}});
     parts.push(res.ok ? report(res.data) : notice(res));
@@ -28,23 +29,23 @@ export async function render({client, route, go}) {
 
 function impacts(list) {
   return table([
-    ['Agent', i => link(i.agent_name, format('inventory', ['agents', i.agent_name]))],
-    ['Version', i => String(i.version)],
-    ['Environment', i => i.environment],
-    ['Team', i => i.team || '—'],
-    ['Owner', i => i.owner_principal ?? '—'],
-  ], list, 'None.');
+    [t('Agent'), i => link(i.agent_name, format('inventory', ['agents', i.agent_name]))],
+    [t('Version'), i => String(i.version)],
+    [t('Environment'), i => i.environment],
+    [t('Team'), i => i.team || '—'],
+    [t('Owner'), i => i.owner_principal ?? '—'],
+  ], list, t('None.'));
 }
 
 function report(r) {
   return h('div', {},
-    section('Summary', kv([
-      ['Target', `${r.target.kind} ${r.target.name || r.target.id || ''}`],
-      ['Coverage', r.coverage],
-      ['Affected teams', r.affected_teams.join(', ') || '—'],
-      ['Data classes', r.data_classes.join(', ') || '—'],
-      ['Actions in the last 24 hours', String(r.recent_actions_24h)],
+    section(t('Summary'), kv([
+      [t('Target'), `${r.target.kind} ${r.target.name || r.target.id || ''}`],
+      [t('Coverage'), r.coverage],
+      [t('Affected teams'), r.affected_teams.join(', ') || '—'],
+      [t('Data classes'), r.data_classes.join(', ') || '—'],
+      [t('Actions in the last 24 hours'), String(r.recent_actions_24h)],
     ])),
-    section(`Confirmed (${r.confirmed_agents.length})`, impacts(r.confirmed_agents)),
-    section(`Possible (${r.possible_agents.length})`, impacts(r.possible_agents)));
+    section(t('Confirmed ({n})', {n: r.confirmed_agents.length}), impacts(r.confirmed_agents)),
+    section(t('Possible ({n})', {n: r.possible_agents.length}), impacts(r.possible_agents)));
 }

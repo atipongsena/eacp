@@ -4,7 +4,8 @@
 import {createSession} from './session.js';
 import {createClient} from './api.js';
 import {parse, format} from './router.js';
-import {h, button} from './dom.js';
+import {h, button, icon, loading, pageHeader, replace} from './dom.js';
+import {t, setLang, getLang, detectLang, LANGS} from './i18n.js';
 import * as overview from './views/overview.js';
 import * as incidents from './views/incidents.js';
 import * as inventory from './views/inventory.js';
@@ -16,30 +17,65 @@ import * as fleet from './views/fleet.js';
 import * as approvals from './views/approvals.js';
 
 const READERS = ['operator', 'auditor', 'admin'];
-// NAV lists the areas that have a view: [area, label, roles that may read it].
-// The roles only hide links; the API answers 403 to anyone else.
+// NAV lists the areas that have a view, in groups: [group label, [area, label,
+// icon, roles that may read it]]. The roles only hide links; the API answers
+// 403 to anyone else. Labels are functions so they follow the language.
 const NAV = [
-  ['overview', 'Overview', READERS],
-  ['incidents', 'Incidents', READERS],
-  ['security', 'Security', ['operator', 'auditor', 'registry_approver']],
-  ['fleet', 'Fleet', ['operator', 'auditor', 'registry_approver']],
-  ['approvals', 'Approvals', ['approver']],
-  ['execution', 'Execution', ['operator', 'auditor']],
-  ['inventory', 'Inventory', null],
-  ['dependencies', 'Dependencies', ['operator', 'auditor']],
-  ['cost', 'Cost', READERS],
+  [() => t('Monitor'), [
+    ['overview', () => t('Overview'), 'overview', READERS],
+    ['incidents', () => t('Incidents'), 'incidents', READERS],
+    ['security', () => t('Security'), 'security', ['operator', 'auditor', 'registry_approver']],
+  ]],
+  [() => t('Operate'), [
+    ['fleet', () => t('Fleet'), 'fleet', ['operator', 'auditor', 'registry_approver']],
+    ['execution', () => t('Execution'), 'execution', ['operator', 'auditor']],
+  ]],
+  [() => t('Govern'), [
+    ['approvals', () => t('Approvals'), 'approvals', ['approver']],
+    ['inventory', () => t('Inventory'), 'inventory', null],
+    ['dependencies', () => t('Dependencies'), 'dependencies', ['operator', 'auditor']],
+    ['cost', () => t('Cost'), 'cost', READERS],
+  ]],
 ];
 const VIEWS = {overview, incidents, security, fleet, approvals, execution, inventory, dependencies, cost};
 const POLLED = new Set(['overview', 'incidents']);
 const POLL_MS = 15000;
 const IDLE_CHECK_MS = 30000;
 
+// The language is never stored: ?lang= in the address wins, else the browser.
+setLang(detectLang({search: location.search, languages: navigator.languages}));
+document.documentElement.lang = getLang();
+
 const session = createSession();
-const client = createClient({session, onUnauthorized: () => signOut('Your key was not accepted; sign in again.')});
+const client = createClient({session, onUnauthorized: () => signOut(t('Your key was not accepted; sign in again.'))});
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const who = document.getElementById('who');
+const pagebar = document.getElementById('pagebar');
+const brand = document.getElementById('brand');
+const langBox = document.getElementById('lang');
 let generation = 0;
+let shownArea = null;
+
+function chooseLanguage(next) {
+  if (next === getLang()) return;
+  setLang(next);
+  document.documentElement.lang = next;
+  const url = new URL(location.href);
+  url.searchParams.set('lang', next);
+  history.replaceState(null, '', url);
+  render();
+}
+
+const languageSwitch = () => LANGS.map(code => h('button', {
+  type: 'button', 'aria-pressed': code === getLang() ? 'true' : 'false', lang: code === 'th' ? 'th' : null,
+  onclick: () => chooseLanguage(code),
+}, code === 'th' ? 'ไทย' : 'EN'));
+
+const brandContent = () => [h('span', {class: 'brand-mark'}, icon('shield-ok')),
+  h('span', {}, 'EACP', h('small', {}, t('Operator console')))];
+
+const renderBrand = () => replace(brand, brandContent());
 
 function signOut(message) {
   session.signOut();
@@ -49,8 +85,12 @@ function signOut(message) {
 
 function renderSignIn(message = '') {
   document.body.classList.add('signed-out');
-  nav.replaceChildren();
-  who.replaceChildren();
+  replace(nav);
+  replace(who);
+  replace(pagebar);
+  replace(langBox);
+  renderBrand();
+  shownArea = null;
   const key = h('input', {id: 'key', name: 'key', type: 'password', autocomplete: 'off', spellcheck: 'false', required: true});
   const status = h('div', {role: 'status'}, message);
   const form = h('form', {class: 'signin', onsubmit: async e => {
@@ -63,14 +103,31 @@ function renderSignIn(message = '') {
     }
     status.replaceChildren(h('div', {class: 'notice error', role: 'alert'}, res.detail));
   }},
-  h('h1', {}, 'Sign in'),
-  h('label', {class: 'field', for: 'key'}, 'Principal API key'),
+  h('div', {class: 'signin-top'}, h('div', {class: 'brand'}, brandContent()), h('div', {class: 'lang'}, languageSwitch())),
+  h('h1', {}, t('Sign in')),
+  h('label', {class: 'field', for: 'key'}, t('Principal API key')),
   key,
-  h('button', {type: 'submit', class: 'primary'}, 'Sign in'),
-  h('p', {class: 'hint'}, 'The key stays in this tab’s memory only. Reloading the page, signing out or 30 minutes without activity forgets it.'),
+  h('button', {type: 'submit', class: 'primary'}, t('Sign in')),
+  h('p', {class: 'hint'}, t('The key stays in this tab’s memory only. Reloading the page, signing out or 30 minutes without activity forgets it.')),
   status);
   main.replaceChildren(form);
   key.focus();
+}
+
+function renderShell(area, route, label) {
+  renderBrand();
+  const me = session.me();
+  replace(nav, NAV.map(([group, items]) => {
+    const visible = items.filter(([, , , roles]) => session.hasAny(roles));
+    if (visible.length === 0) return null;
+    return [h('div', {class: 'nav-group'}, group()), visible.map(([a, name, ic]) =>
+      h('a', {href: format(a), 'aria-current': a === area ? 'page' : null}, icon(ic), name()))];
+  }));
+  replace(who, h('span', {class: 'role'}, me.roles.length ? me.roles.join(', ') : t('no roles')),
+    button(t('Sign out'), () => signOut(t('Signed out.')), {kind: 'ghost'}));
+  replace(langBox, languageSwitch());
+  // A detail page has its own h1 and back link; only a list gets the area title.
+  replace(pagebar, route.parts.length === 0 ? pageHeader(label()) : null);
 }
 
 async function render() {
@@ -81,11 +138,8 @@ async function render() {
   document.body.classList.remove('signed-out');
   const route = parse(location.hash);
   const area = VIEWS[route.area] ? route.area : 'overview';
-  const me = session.me();
-  nav.replaceChildren(h('ul', {}, NAV.filter(([, , roles]) => session.hasAny(roles)).map(([a, label]) =>
-    h('li', {}, h('a', {href: format(a), 'aria-current': a === area ? 'page' : null}, label)))));
-  who.replaceChildren(h('span', {}, me.roles.length ? me.roles.join(', ') : 'no roles'),
-    button('Sign out', () => signOut('Signed out.')));
+  const label = NAV.flatMap(([, items]) => items).find(([a]) => a === area)[1];
+  renderShell(area, route, label);
   const mine = ++generation;
   const ctx = {
     client,
@@ -97,22 +151,25 @@ async function render() {
     },
     refresh: () => render(),
   };
+  // A new area shows placeholders at once; a refresh keeps what is on screen.
+  if (shownArea !== area) main.replaceChildren(loading());
   main.setAttribute('aria-busy', 'true');
   let node;
   try {
     node = await VIEWS[area].render(ctx);
   } catch (err) {
-    node = h('div', {class: 'notice error', role: 'alert'}, 'This page failed to render: ', String(err?.message ?? err));
+    node = h('div', {class: 'notice error', role: 'alert'}, t('This page failed to render: {reason}', {reason: String(err?.message ?? err)}));
   }
   if (mine !== generation || !session.signedIn()) return;
   main.removeAttribute('aria-busy');
   main.replaceChildren(node);
+  shownArea = area;
 }
 
 window.addEventListener('hashchange', () => render());
 for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, () => session.touch(), {capture: true});
 setInterval(() => {
-  if (session.expired()) signOut('Signed out after 30 minutes without activity.');
+  if (session.expired()) signOut(t('Signed out after 30 minutes without activity.'));
 }, IDLE_CHECK_MS);
 setInterval(() => {
   if (!session.signedIn() || document.visibilityState !== 'visible') return;

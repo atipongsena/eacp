@@ -3,6 +3,7 @@
 // and, for the widest scopes, asks the operator to type a word. Only one
 // dialog is open at a time, so a double click never sends twice.
 import {h} from './dom.js';
+import {t} from './i18n.js';
 
 let busy = false;
 
@@ -12,7 +13,7 @@ export function canConfirm({reason = 'none', typed = null}, reasonValue = '', ty
   return true;
 }
 
-export function ask({title, lines = [], reason = 'none', typed = null, danger = false, confirmLabel = 'Confirm'}) {
+export function ask({title, lines = [], reason = 'none', typed = null, danger = false, confirmLabel = t('Confirm')}) {
   if (busy) return Promise.resolve(null);
   busy = true;
   return new Promise(resolve => {
@@ -22,7 +23,7 @@ export function ask({title, lines = [], reason = 'none', typed = null, danger = 
     const typedBox = typed !== null
       ? h('input', {id: 'confirm-typed', name: 'typed', autocomplete: 'off', spellcheck: 'false'}) : null;
     const confirmButton = h('button', {type: 'submit', class: danger ? 'danger' : 'primary', disabled: true}, confirmLabel);
-    const cancelButton = h('button', {type: 'button', onclick: () => finish(null)}, 'Cancel');
+    const cancelButton = h('button', {type: 'button', onclick: () => finish(null)}, t('Cancel'));
     const current = () => canConfirm({reason, typed}, reasonBox?.value ?? '', typedBox?.value ?? '');
     let dialog = null;
     const finish = value => {
@@ -43,9 +44,9 @@ export function ask({title, lines = [], reason = 'none', typed = null, danger = 
     },
     h('h2', {id: 'confirm-title'}, title),
     h('ul', {}, lines.filter(Boolean).map(line => h('li', {}, line))),
-    reasonBox ? h('label', {class: 'field', for: 'confirm-reason'}, 'Reason (journaled; never paste a secret)') : null,
+    reasonBox ? h('label', {class: 'field', for: 'confirm-reason'}, t('Reason (journaled; never paste a secret)')) : null,
     reasonBox,
-    typedBox ? h('label', {class: 'field', for: 'confirm-typed'}, `Type ${typed} to confirm`) : null,
+    typedBox ? h('label', {class: 'field', for: 'confirm-typed'}, t('Type {word} to confirm', {word: typed})) : null,
     typedBox,
     h('div', {class: 'actions'}, confirmButton, cancelButton));
     dialog = h('dialog', {class: 'confirm', 'aria-labelledby': 'confirm-title'}, form);

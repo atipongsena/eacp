@@ -1,6 +1,6 @@
 # ADR-028: The operator console
 
-Status: Accepted (Rev 1.0, 2026-09-26). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94).
+Status: Accepted (Rev 1.0, 2026-09-26; Rev 1.1, 2026-09-29). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94); Rev 1.1 is Phase 26-UI (design system and language).
 Related: ADR-027 (incidents and the SOC summary), ADR-016 (kill switch), ADR-022 (circuits), ADR-023 (MCP tools),
 ADR-024 (fleet operations), ADR-005 (approvals), ADR-014 (NATS carries signals).
 
@@ -98,6 +98,49 @@ pages refresh on navigation. There is no websocket and no NATS path to the brows
 - The console depends on no JavaScript package and has no build step. Its pure modules are unit-tested with
   `node --test`: `TestJavaScriptUnitTests` runs them and fails when `EACP_UI_NODE_REQUIRED=1` and node is missing.
 - Detection latency in the console is the incident evaluator interval plus the 15 s poll.
+
+## Revision 1.1: design system and language (Phase 26-UI)
+
+Rev 1.1 changes how the console looks and speaks. It adds no route, no authority and no served origin, and every rule of
+Rev 1.0 still holds (`TestConsoleUsesNoDangerousSinks` and `TestEveryConsoleCallIsARealRoute` are unchanged in force).
+The design is informed by `research/STUDIO_REFERENCES.md`: ideas only, no copied code or visuals.
+
+### 8. Design system
+
+- **Tokens, not colours.** `app.css` defines semantic pairs (`--surface`, `--text`, `--accent`, `--danger`, `--warning-text`,
+  ...) for light and dark, following the value scales of Radix Colors (MIT). The scheme follows the browser
+  (`prefers-color-scheme`); nothing is stored. `jstest/tokens.test.mjs` computes WCAG AA contrast for every text pair
+  in both schemes and fails below 4.5:1 (3:1 for non-text).
+- **Components are functions in `dom.js`.** `statCard`, `banner`, `emptyState`, `badge`, `loading`, `pageHeader`,
+  `relTime` and `icon` build DOM through `h()` only. A banner has `role="status"`; a zero stat is dimmed; an empty
+  table says what it would show and why it is empty.
+- **Icons are CSS.** `h()` allows no `svg` tag and CSP allows no `data:` image, so each Bootstrap Icons (MIT,
+  commit 6945b70) glyph is one `clip-path: path()` per pseudo-element on an `.icon.i-<name>` span, keeping the
+  original path's fill rule. `icon(name)` refuses an unknown name. No SVG file, no font and no image is served.
+- **Layout.** A grouped side navigation (Monitor, Operate, Govern) on wide screens; a wrapping top bar under 800 px.
+  Motion is off under `prefers-reduced-motion`.
+
+### 9. Language
+
+- **English and Thai** ship together. `i18n.js` exports `t('English text', {params})`: English is the key, `{name}`
+  parameters are filled in a single pass, and a missing Thai entry falls back to the English text, never to a blank.
+- **Catalogue.** `messages.th.js` maps each English key to Thai. `sameOnPurpose` lists the terms kept in English on
+  purpose (product and protocol words).
+- **Choice is never stored.** The language is carried in the address as `?lang=th|en`, written with
+  `history.replaceState` (no reload, so the session survives); without it, the browser's language list decides.
+  `TestLanguageChoiceIsNotStored` pins this. Values that come from the server (state names, ids, reason codes) are
+  shown as they are.
+- **Completeness is a test.** `TestEveryTranslatedTextHasAThaiEntry` (Go, so `go test` alone catches it) and
+  `jstest/i18n.test.mjs` require that every `t()` call has a string literal, every literal has a Thai entry, and
+  every catalogue entry is used. `index.html` still references only `app.js` and `app.css`.
+
+### Rev 1.1 consequences
+
+- Two new served files (`i18n.js`, `messages.th.js`), listed in `consoleFiles`. Adding a `t()` text means adding its
+  Thai entry in the same change.
+- A third language is a new catalogue plus one entry in `LANGS`.
+- Not done here (unchanged from Rev 1.0): any write flow beyond Rev 1.0, a directory of people, a dark/light toggle
+  (the browser decides).
 
 ## Unresolved assumptions (conservative choices)
 
