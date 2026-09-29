@@ -47,6 +47,11 @@ type Call struct {
 	Payload      json.RawMessage
 	Contract     Contract
 	Secret       Secret
+	// RemoteName is the server's exact tool name and Definition the tool's
+	// certified canonical definition (RFC 8785 text) for an MCP call
+	// (ADR-032 S3.7); both are empty for other protocols.
+	RemoteName string
+	Definition string
 }
 
 // Result is a connector's classified result. ErrorClass names a

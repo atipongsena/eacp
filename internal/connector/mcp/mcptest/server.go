@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Era selects which protocol generations the server speaks.
@@ -42,6 +43,8 @@ type Server struct {
 	nextSession   int
 	requests      []Request
 	handler       http.HandlerFunc
+	onCall        func(name string, arguments json.RawMessage) Reply
+	calls         []CallRequest
 }
 
 // Request is what the server saw of one HTTP request.
@@ -50,6 +53,26 @@ type Request struct {
 	RPCMethod  string
 	Header     http.Header
 	Params     map[string]json.RawMessage
+}
+
+// CallRequest is one tools/call that passed the header checks.
+type CallRequest struct {
+	Name      string
+	Arguments json.RawMessage
+	Header    http.Header
+}
+
+// Reply is the answer to one tools/call: a JSON-RPC error when RPCCode is
+// not 0 (with HTTP status RPCStatus, default 200); else a bare HTTP
+// RPCStatus when it is set and not 200; else Result, or a one-text result
+// when Result is nil. Delay holds the answer back, or until the client
+// gives up.
+type Reply struct {
+	Result     any
+	RPCStatus  int
+	RPCCode    int
+	RPCMessage string
+	Delay      time.Duration
 }
 
 // New starts a server of era that requires token as its bearer token and
@@ -83,6 +106,21 @@ func (s *Server) SetLegacyVersion(v string) { s.mu.Lock(); s.legacyVersion = v; 
 
 // SetHandler replaces the server's behaviour entirely (nil restores it).
 func (s *Server) SetHandler(h http.HandlerFunc) { s.mu.Lock(); s.handler = h; s.mu.Unlock() }
+
+// OnCall sets how the server answers a tools/call of a listed tool (nil: a
+// one-text result). A tool the server does not list gets -32602.
+func (s *Server) OnCall(f func(name string, arguments json.RawMessage) Reply) {
+	s.mu.Lock()
+	s.onCall = f
+	s.mu.Unlock()
+}
+
+// Calls returns the tools/call requests seen so far.
+func (s *Server) Calls() []CallRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.calls)
+}
 
 // Requests returns the requests seen so far.
 func (s *Server) Requests() []Request {
@@ -185,6 +223,8 @@ func (s *Server) serveModern(w http.ResponseWriter, r *http.Request, req rpcRequ
 		})
 	case "tools/list":
 		s.listTools(w, req, map[string]any{"resultType": "complete", "_meta": info, "ttlMs": 0, "cacheScope": "private"})
+	case "tools/call":
+		s.callTool(w, r, req, map[string]any{"resultType": "complete"})
 	default:
 		s.rpcError(w, http.StatusNotFound, req.ID, -32601, "Method not found", nil)
 	}
@@ -219,11 +259,67 @@ func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request, req rpcRequ
 		http.Error(w, "Bad Request: MCP-Protocol-Version", http.StatusBadRequest)
 		return
 	}
-	if req.Method != "tools/list" {
+	switch req.Method {
+	case "tools/list":
+		s.listTools(w, req, map[string]any{})
+	case "tools/call":
+		s.callTool(w, r, req, map[string]any{})
+	default:
 		s.rpcError(w, http.StatusOK, req.ID, -32601, "Method not found", nil)
+	}
+}
+
+// callTool records a tools/call and answers it as OnCall says; result is
+// the default result's base.
+func (s *Server) callTool(w http.ResponseWriter, r *http.Request, req rpcRequest, result map[string]any) {
+	var name string
+	_ = json.Unmarshal(req.Params["name"], &name)
+	args := req.Params["arguments"]
+	s.mu.Lock()
+	s.calls = append(s.calls, CallRequest{Name: name, Arguments: slices.Clone(args), Header: r.Header.Clone()})
+	listed := false
+	for _, t := range s.tools {
+		var named struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(t, &named) == nil && named.Name == name && name != "" {
+			listed = true
+		}
+	}
+	onCall := s.onCall
+	s.mu.Unlock()
+	if !listed {
+		s.rpcError(w, http.StatusOK, req.ID, -32602, "Unknown tool: "+name, nil)
 		return
 	}
-	s.listTools(w, req, map[string]any{})
+	var reply Reply
+	if onCall != nil {
+		reply = onCall(name, args)
+	}
+	if reply.Delay > 0 {
+		timer := time.NewTimer(reply.Delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	switch {
+	case reply.RPCCode != 0:
+		status := reply.RPCStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		s.rpcError(w, status, req.ID, reply.RPCCode, reply.RPCMessage, nil)
+	case reply.RPCStatus != 0 && reply.RPCStatus != http.StatusOK:
+		http.Error(w, http.StatusText(reply.RPCStatus), reply.RPCStatus)
+	case reply.Result != nil:
+		s.result(w, req.ID, reply.Result)
+	default:
+		result["content"] = []any{map[string]any{"type": "text", "text": "done"}}
+		s.result(w, req.ID, result)
+	}
 }
 
 func (s *Server) listTools(w http.ResponseWriter, req rpcRequest, result map[string]any) {

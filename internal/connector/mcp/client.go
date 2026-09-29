@@ -3,7 +3,7 @@
 // (per-request metadata, no sessions) and falls back to the legacy
 // initialize handshake (2025-11-25, 2025-06-18, 2025-03-26) as the
 // specification's backward-compatibility rules describe. Discovery only
-// reads: it never calls a tool.
+// reads; Execute calls one tool once (ADR-032).
 package mcp
 
 import (
@@ -14,12 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/atipongsena/eacp/internal/worker"
@@ -51,14 +53,17 @@ const (
 	defaultMaxBytes                int64 = 4 << 20
 )
 
-// Client discovers MCP tools. It never uses proxy environment variables or
-// follows redirects, so a server cannot forward the worker-held token to
-// another host.
+// Client discovers MCP tools and calls them (ADR-032). It never uses proxy
+// environment variables or follows redirects, so a server cannot forward
+// the worker-held token to another host.
 type Client struct {
 	http     *http.Client
 	maxPages int
 	maxTools int
 	maxBytes int64
+	// Log records each call's host, action id, class and reference, never
+	// the tool's output or the server's error text.
+	Log *slog.Logger
 }
 
 // New returns a Client with the ADR-023 limits.
@@ -70,6 +75,7 @@ func New() *Client {
 			return http.ErrUseLastResponse
 		}},
 		maxPages: defaultMaxPages, maxTools: defaultMaxTools, maxBytes: defaultMaxBytes,
+		Log: slog.New(slog.DiscardHandler),
 	}
 }
 
@@ -327,10 +333,15 @@ func (s *session) call(ctx context.Context, method string, params map[string]any
 	}
 	s.nextID++
 	id := s.nextID
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-	if err != nil {
+	// Without HTML escaping, so a tool's arguments reach the server as the
+	// enforced payload's exact bytes.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, fail("invalid_request", "encode %s", method)
 	}
+	body := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	resp, err := s.post(ctx, body, method)
 	if err != nil {
 		return nil, err
@@ -402,6 +413,9 @@ func (s *session) post(ctx context.Context, body []byte, method string) (*http.R
 	if err != nil {
 		return nil, fail("invalid_endpoint", "build request")
 	}
+	// A POST is never replayed by the transport: a lost reply may follow a
+	// tool that ran, so only the worker decides on another attempt.
+	req.GetBody = nil
 	req.Header.Set("Content-Type", "application/json")
 	s.headers(req, method)
 	resp, err := s.c.http.Do(req)
@@ -409,9 +423,32 @@ func (s *session) post(ctx context.Context, body []byte, method string) (*http.R
 		if ctx.Err() != nil {
 			return nil, fail("timeout", "%s: %v", method, ctx.Err())
 		}
+		if refused(err) {
+			// Discovery records the same class and message as any transport
+			// error; a call reads the refusal with errors.Is(err, errRefused).
+			return nil, &worker.DiscoveryError{Class: "transport_error", Err: refusal(method + ": request failed")}
+		}
 		return nil, fail("transport_error", "%s: request failed", method)
 	}
 	return resp, nil
+}
+
+// errRefused marks a connection the server refused: nothing was sent.
+var errRefused = errors.New("connection refused before send")
+
+// refusal is a transport error's message that also reports errRefused.
+type refusal string
+
+func (r refusal) Error() string      { return string(r) }
+func (refusal) Is(target error) bool { return target == errRefused }
+
+// wsaeconnrefused is WSAECONNREFUSED, which Windows reports for a refused
+// connection instead of ECONNREFUSED.
+const wsaeconnrefused = syscall.Errno(10061)
+
+// refused reports a connection the target refused.
+func refused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, wsaeconnrefused)
 }
 
 type message struct {
