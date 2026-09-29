@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,9 +83,20 @@ func execute(t *testing.T, c *mcp.Client, call worker.Call, timeout time.Duratio
 	return c.Execute(ctx, call)
 }
 
-// rawServer is a modern MCP server that answers server/discover itself and
-// every tools/call with answer, counting them.
+// rawServer is a modern MCP server that answers server/discover itself, lists
+// createTool and answers every tools/call with answer, counting them.
 func rawServer(t *testing.T, answer func(w http.ResponseWriter, r *http.Request, id json.RawMessage)) (string, *atomic.Int32) {
+	t.Helper()
+	return rawListing(t, func(w http.ResponseWriter, _ *http.Request, id json.RawMessage) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","tools":[%s]}}`, id, createTool)
+	}, answer)
+}
+
+// rawListing is a modern MCP server that answers server/discover itself,
+// every tools/list with list and every tools/call with answer, counting the
+// tools/call requests.
+func rawListing(t *testing.T, list, answer func(w http.ResponseWriter, r *http.Request, id json.RawMessage)) (string, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,13 +105,16 @@ func rawServer(t *testing.T, answer func(w http.ResponseWriter, r *http.Request,
 			Method string          `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.Method == "tools/call" {
+		switch req.Method {
+		case "tools/call":
 			calls.Add(1)
 			answer(w, r, req.ID)
-			return
+		case "tools/list":
+			list(w, r, req.ID)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","supportedVersions":["2026-07-28"]}}`, req.ID)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","supportedVersions":["2026-07-28"]}}`, req.ID)
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL + "/mcp", &calls
@@ -452,6 +467,7 @@ func TestExecuteWorksOnALegacyServer(t *testing.T) {
 				"POST server/discover  2026-07-28",
 				"POST initialize  ",
 				"POST notifications/initialized session-1 " + version,
+				"POST tools/list session-1 " + version,
 				"POST tools/call session-1 " + version,
 				"DELETE  session-1 " + version,
 			}
@@ -552,5 +568,271 @@ func TestLookupIsAlwaysUnknown(t *testing.T) {
 	var c worker.Connector = mcp.New()
 	if r := c.Lookup(context.Background(), worker.LookupCall{OperationKey: "k"}); r.Status != worker.LookupUnknown || r.ExternalReference != "" {
 		t.Fatalf("lookup %+v", r)
+	}
+}
+
+// otherTool is a listed tool that is not the certified one.
+const otherTool = `{"name":"list_po","description":"List purchase orders","inputSchema":{"type":"object"}}`
+
+// TestAChangedDefinitionIsNeverCalled (ADR-032 S3.5): a server that lists the
+// certified tool differently is not called, and the alert names no definition
+// text.
+func TestAChangedDefinitionIsNeverCalled(t *testing.T) {
+	for name, listed := range map[string]string{
+		"a changed description":  strings.Replace(createTool, "Create a purchase order", "Create a purchase order and email the vendor", 1),
+		"a changed inputSchema":  strings.Replace(createTool, `"note":{"type":"string"}`, `"note":{"type":"string"},"vendor":{"type":"string"}`, 1),
+		"new annotations":        strings.Replace(createTool, `"inputSchema"`, `"annotations":{"readOnlyHint":true},"inputSchema"`, 1),
+		"a changed outputSchema": strings.Replace(createTool, `"required":["po"]`, `"required":[]`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if listed == createTool {
+				t.Fatal("the fixture did not change the definition")
+			}
+			s := mcptest.New(t, mcptest.Modern, token, listed)
+			buf := &syncBuffer{}
+			c := mcp.New()
+			c.Log = slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			call := toolCall(t, s.URL(), payload)
+			res := execute(t, c, call, 5*time.Second)
+			if res.Outcome != worker.NoEffect || res.ErrorClass != "definition_changed" || res.ExternalReference != "" {
+				t.Fatalf("result %+v", res)
+			}
+			if len(s.Calls()) != 0 {
+				t.Fatalf("%d tools/call requests reached the server", len(s.Calls()))
+			}
+			logs := buf.String()
+			if !strings.Contains(logs, `"alert":"worker.mcp_definition_changed"`) {
+				t.Fatalf("no alert in the log: %s", logs)
+			}
+			for _, want := range []string{call.ActionID.String(), "erp.create_po", hostOf(t, s.URL())} {
+				if !strings.Contains(logs, want) {
+					t.Fatalf("the alert lacks %q: %s", want, logs)
+				}
+			}
+			for _, secret := range []string{"purchase order", "vendor", "readOnlyHint", "inputSchema", token} {
+				if strings.Contains(logs, secret) {
+					t.Fatalf("the log carries %q: %s", secret, logs)
+				}
+			}
+		})
+	}
+}
+
+func hostOf(t *testing.T, endpoint string) string {
+	t.Helper()
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Host
+}
+
+// TestAMissingOrRejectedToolIsNeverCalled: a tool that is not listed, or is
+// listed but rejected by the scanner's rules, is tool_missing.
+func TestAMissingOrRejectedToolIsNeverCalled(t *testing.T) {
+	rejected := strings.Replace(createTool, `"note":{"type":"string"}`, `"note":{"type":"string","x-mcp-header":"not a token"}`, 1)
+	for name, listed := range map[string][]string{
+		"not listed":                  {otherTool},
+		"nothing listed":              {},
+		"rejected by the scanner":     {rejected},
+		"listed twice":                {createTool, createTool},
+		"rejected beside another one": {otherTool, rejected},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := mcptest.New(t, mcptest.Modern, token, listed...)
+			res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 5*time.Second)
+			if res.Outcome != worker.NoEffect || res.ErrorClass != "tool_missing" {
+				t.Fatalf("result %+v", res)
+			}
+			if len(s.Calls()) != 0 {
+				t.Fatalf("%d tools/call requests reached the server", len(s.Calls()))
+			}
+		})
+	}
+}
+
+// TestAnUnverifiableListingIsNeverCalled: a listing that cannot complete
+// means nothing was called; it is definition_unverified, never timeout or
+// response_too_large.
+func TestAnUnverifiableListingIsNeverCalled(t *testing.T) {
+	answer := func(w http.ResponseWriter, _ *http.Request, id json.RawMessage) {
+		t.Errorf("a tools/call was sent")
+	}
+	unverified := func(t *testing.T, u string, calls *atomic.Int32, timeout time.Duration) {
+		t.Helper()
+		res := execute(t, mcp.New(), toolCall(t, u, payload), timeout)
+		if res.Outcome != worker.NoEffect || res.ErrorClass != "definition_unverified" || calls.Load() != 0 {
+			t.Fatalf("result %+v, %d calls", res, calls.Load())
+		}
+	}
+	t.Run("a failing second page", func(t *testing.T) {
+		var pages atomic.Int32
+		u, calls := rawListing(t, func(w http.ResponseWriter, r *http.Request, id json.RawMessage) {
+			if pages.Add(1) > 1 {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","tools":[%s],"nextCursor":"1"}}`, id, otherTool)
+		}, answer)
+		unverified(t, u, calls, 5*time.Second)
+		if pages.Load() != 2 {
+			t.Fatalf("%d pages requested", pages.Load())
+		}
+	})
+	t.Run("a listing over the response budget", func(t *testing.T) {
+		huge := `{"name":"create_po","description":"` + strings.Repeat("x", 5<<20) + `","inputSchema":{"type":"object"}}`
+		s := mcptest.New(t, mcptest.Modern, token, huge)
+		res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 10*time.Second)
+		if res.Outcome != worker.NoEffect || res.ErrorClass != "definition_unverified" || len(s.Calls()) != 0 {
+			t.Fatalf("result %+v, %d calls", res, len(s.Calls()))
+		}
+	})
+	t.Run("a hang while listing", func(t *testing.T) {
+		u, calls := rawListing(t, func(w http.ResponseWriter, r *http.Request, id json.RawMessage) {
+			<-r.Context().Done()
+		}, answer)
+		unverified(t, u, calls, time.Second)
+	})
+	t.Run("a cancelled listing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		u, calls := rawListing(t, func(w http.ResponseWriter, r *http.Request, id json.RawMessage) {
+			cancel()
+			<-r.Context().Done()
+		}, answer)
+		res := mcp.New().Execute(ctx, toolCall(t, u, payload))
+		if res.Outcome != worker.NoEffect || res.ErrorClass != "definition_unverified" || calls.Load() != 0 {
+			t.Fatalf("result %+v, %d calls", res, calls.Load())
+		}
+	})
+	t.Run("a listing that is not a listing", func(t *testing.T) {
+		u, calls := rawListing(t, func(w http.ResponseWriter, _ *http.Request, id json.RawMessage) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete"}}`, id)
+		}, answer)
+		unverified(t, u, calls, 5*time.Second)
+	})
+	t.Run("a JSON-RPC error while listing", func(t *testing.T) {
+		u, calls := rawListing(t, func(w http.ResponseWriter, _ *http.Request, id json.RawMessage) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"boom"}}`, id)
+		}, answer)
+		unverified(t, u, calls, 5*time.Second)
+	})
+	t.Run("input required while listing", func(t *testing.T) {
+		u, calls := rawListing(t, func(w http.ResponseWriter, _ *http.Request, id json.RawMessage) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"resultType":"input_required","inputRequests":{}}}`, id)
+		}, answer)
+		unverified(t, u, calls, 5*time.Second)
+	})
+	t.Run("401 and 403 while listing", func(t *testing.T) {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+			u, calls := rawListing(t, func(w http.ResponseWriter, _ *http.Request, _ json.RawMessage) {
+				http.Error(w, "no", status)
+			}, answer)
+			res := execute(t, mcp.New(), toolCall(t, u, payload), 5*time.Second)
+			if res.Outcome != worker.NoEffect || res.ErrorClass != "unauthorized" || calls.Load() != 0 {
+				t.Fatalf("status %d: result %+v, %d calls", status, res, calls.Load())
+			}
+		}
+	})
+}
+
+// TestTheSameDefinitionInAnotherKeyOrderIsNotDrift: the listing is
+// canonicalized before the comparison, so key order, whitespace and the
+// display-only fields do not change the definition.
+func TestTheSameDefinitionInAnotherKeyOrderIsNotDrift(t *testing.T) {
+	listed := `{
+  "title": "Create PO (display only)",
+  "outputSchema": {"required": ["po"], "properties": {"po": {"type": "string"}}, "type": "object"},
+  "inputSchema": {"properties": {"note": {"type": "string"}, "amount": {"type": "number"}}, "type": "object"},
+  "description": "Create a purchase order",
+  "name": "create_po"
+}`
+	s := mcptest.New(t, mcptest.Modern, token, listed)
+	s.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Result: success} })
+	res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 5*time.Second)
+	if res.Outcome != worker.Succeeded || len(s.Calls()) != 1 {
+		t.Fatalf("result %+v, %d calls", res, len(s.Calls()))
+	}
+}
+
+// TestAToolOnALaterPageIsFound: the check lists every page.
+func TestAToolOnALaterPageIsFound(t *testing.T) {
+	s := mcptest.New(t, mcptest.Modern, token, otherTool, strings.Replace(otherTool, "list_po", "get_po", 1), createTool)
+	s.SetPageSize(1)
+	s.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Result: success} })
+	res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 5*time.Second)
+	if res.Outcome != worker.Succeeded || len(s.Calls()) != 1 || s.Calls()[0].Name != "create_po" {
+		t.Fatalf("result %+v, calls %+v", res, s.Calls())
+	}
+}
+
+// TestTheDefinitionCheckIsTheListingThenOneCall: the wire carries the probe,
+// every page of the listing and exactly one tools/call, in that order.
+func TestTheDefinitionCheckIsTheListingThenOneCall(t *testing.T) {
+	for name, c := range map[string]struct {
+		tools []string
+		page  int
+		want  string
+	}{
+		"one page":  {[]string{createTool}, 0, "server/discover tools/list tools/call"},
+		"two pages": {[]string{otherTool, createTool}, 1, "server/discover tools/list tools/list tools/call"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := mcptest.New(t, mcptest.Modern, token, c.tools...)
+			s.SetPageSize(c.page)
+			s.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Result: success} })
+			if res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 5*time.Second); res.Outcome != worker.Succeeded {
+				t.Fatalf("result %+v", res)
+			}
+			var flow []string
+			for _, r := range s.Requests() {
+				flow = append(flow, r.RPCMethod)
+			}
+			if strings.Join(flow, " ") != c.want {
+				t.Fatalf("flow %q, want %q", strings.Join(flow, " "), c.want)
+			}
+		})
+	}
+}
+
+// TestAnEmptyCertifiedDefinitionIsRefused: without a usable certified
+// definition there is nothing to compare, so nothing is sent.
+func TestAnEmptyCertifiedDefinitionIsRefused(t *testing.T) {
+	for name, def := range map[string]string{"empty": "", "not JSON": "{", "not an object": "[]"} {
+		t.Run(name, func(t *testing.T) {
+			s := mcptest.New(t, mcptest.Modern, token, createTool)
+			call := toolCall(t, s.URL(), payload)
+			call.Definition = def
+			res := execute(t, mcp.New(), call, 5*time.Second)
+			if res.Outcome != worker.NoEffect || res.ErrorClass != "definition_unverified" || len(s.Requests()) != 0 {
+				t.Fatalf("result %+v, %d requests", res, len(s.Requests()))
+			}
+		})
+	}
+}
+
+// TestAToolWithHeaderMirroringIsRefused: the value encoding of Mcp-Param
+// headers is not specified upstream, so a certified inputSchema with
+// x-mcp-header is refused before any request is sent.
+func TestAToolWithHeaderMirroringIsRefused(t *testing.T) {
+	for name, tool := range map[string]string{
+		"on a string property": `{"name":"create_po","inputSchema":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}}`,
+		"nested":               `{"name":"create_po","inputSchema":{"type":"object","properties":{"a":{"type":"object","properties":{"b":{"type":"integer","x-mcp-header":"B"}}}}}}`,
+		"in a combinator":      `{"name":"create_po","inputSchema":{"type":"object","anyOf":[{"properties":{"a":{"type":"string","x-mcp-header":"A"}}}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := mcptest.New(t, mcptest.Modern, token, tool)
+			res := execute(t, mcp.New(), toolCall(t, s.URL(), payload, tool), 5*time.Second)
+			if res.Outcome != worker.NoEffect || res.ErrorClass != "unsupported_header_mirroring" {
+				t.Fatalf("result %+v", res)
+			}
+			if len(s.Requests()) != 0 {
+				t.Fatalf("%d requests reached the server", len(s.Requests()))
+			}
+		})
 	}
 }

@@ -55,16 +55,30 @@ func (c *Client) execute(ctx context.Context, call worker.Call) worker.Result {
 		return worker.Result{Outcome: worker.NoEffect, ErrorClass: "invalid_payload"}
 	}
 
+	// Nothing to compare, or a tool the worker cannot call faithfully: refused
+	// before any network use (ADR-032 S3.3, S3.5).
+	switch mirrorsHeaders(call.Definition) {
+	case definitionUnusable:
+		return worker.Result{Outcome: worker.NoEffect, ErrorClass: "definition_unverified"}
+	case definitionMirrors:
+		return worker.Result{Outcome: worker.NoEffect, ErrorClass: "unsupported_header_mirroring"}
+	}
+
 	s := &session{c: c, endpoint: u.String(), secret: call.Secret.Reveal(), budget: c.maxBytes}
-	_, modern, err := s.probe(ctx)
+	info, modern, err := s.probe(ctx)
 	if err != nil {
 		return beforeCall(err)
 	}
 	if !modern {
 		defer s.close()
-		if _, err := s.initialize(ctx); err != nil {
+		if info, err = s.initialize(ctx); err != nil {
 			return beforeCall(err)
 		}
+	}
+
+	// The definition check, in the session that will call (ADR-032 S3.5).
+	if res, ok := c.checkDefinition(ctx, s, info, call); !ok {
+		return res
 	}
 
 	result, err := s.call(ctx, "tools/call", map[string]any{"name": call.RemoteName, "arguments": call.Payload})
@@ -74,8 +88,78 @@ func (c *Client) execute(ctx context.Context, call worker.Call) worker.Result {
 	return classify(call, result)
 }
 
-// beforeCall classifies a failure before tools/call was sent: nothing was
-// called, so every class is a no effect (ADR-032 S3.4).
+// checkDefinition lists every page of the server's tools and compares the
+// canonical text of call.RemoteName, byte for byte, with the certified one.
+// It reports a result, and false, when the call must not be sent.
+func (c *Client) checkDefinition(ctx context.Context, s *session, info json.RawMessage, call worker.Call) (worker.Result, bool) {
+	d, err := s.listTools(ctx, info)
+	if err != nil {
+		return beforeCall(err), false
+	}
+	for _, t := range d.Tools {
+		if t.RemoteName != call.RemoteName {
+			continue
+		}
+		if t.Definition == call.Definition {
+			return worker.Result{}, true
+		}
+		// The worker never logs a definition: only who, where and which tool.
+		c.Log.ErrorContext(ctx, "security alert", "alert", "worker.mcp_definition_changed",
+			"host", hostOf(call.Endpoint), "action_id", call.ActionID, "tool", call.Tool)
+		return worker.Result{Outcome: worker.NoEffect, ErrorClass: "definition_changed"}, false
+	}
+	// Not listed, or listed and rejected by the scanner's rules.
+	return worker.Result{Outcome: worker.NoEffect, ErrorClass: "tool_missing"}, false
+}
+
+// What a certified definition allows (ADR-032 S3.3, S3.5).
+const (
+	definitionUsable = iota
+	definitionUnusable
+	definitionMirrors
+)
+
+// mirrorsHeaders classifies the certified canonical definition: unusable when
+// it is empty or not a JSON object, mirroring when its inputSchema carries an
+// x-mcp-header anywhere. The value encoding of Mcp-Param headers is not
+// specified upstream, so such a tool is refused, never called without them.
+func mirrorsHeaders(definition string) int {
+	var def struct {
+		InputSchema any `json:"inputSchema"`
+	}
+	var obj map[string]json.RawMessage
+	if definition == "" || json.Unmarshal([]byte(definition), &obj) != nil || obj == nil ||
+		json.Unmarshal([]byte(definition), &def) != nil {
+		return definitionUnusable
+	}
+	if hasKey(def.InputSchema, "x-mcp-header") {
+		return definitionMirrors
+	}
+	return definitionUsable
+}
+
+// hasKey reports whether any object under v has the key.
+func hasKey(v any, key string) bool {
+	switch n := v.(type) {
+	case map[string]any:
+		for k, child := range n {
+			if k == key || hasKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range n {
+			if hasKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// beforeCall classifies a failure before tools/call was sent (the probe,
+// initialize or the listing): nothing was called, so every class is a no
+// effect (ADR-032 S3.4).
 func beforeCall(err error) worker.Result {
 	switch {
 	case errors.Is(err, errRefused):
