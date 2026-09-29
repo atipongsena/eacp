@@ -97,3 +97,69 @@ func TestInteropWithTheOfficialGoSDK(t *testing.T) {
 		})
 	}
 }
+
+type sdkPOIn struct {
+	Amount float64 `json:"amount"`
+	Note   string  `json:"note,omitempty"`
+}
+
+type sdkPOOut struct {
+	PO string `json:"po"`
+}
+
+// TestExecuteCallsAToolOfTheOfficialSDKServer discovers a tool of the SDK
+// server (what the scanner would certify) and calls it through Execute.
+func TestExecuteCallsAToolOfTheOfficialSDKServer(t *testing.T) {
+	cases := map[string]struct {
+		opts     *sdk.ServerOptions
+		httpOpts *sdk.StreamableHTTPOptions
+	}{
+		"modern stateless json": {nil, &sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}},
+		"stateful legacy":       {&sdk.ServerOptions{SupportedProtocolVersions: []string{"2025-11-25"}}, &sdk.StreamableHTTPOptions{}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := sdk.NewServer(&sdk.Implementation{Name: "sdk-server", Version: "1.8.0"}, c.opts)
+			sdk.AddTool(server, &sdk.Tool{Name: "create_po", Description: "Create a purchase order"},
+				func(_ context.Context, _ *sdk.CallToolRequest, _ sdkPOIn) (*sdk.CallToolResult, sdkPOOut, error) {
+					return nil, sdkPOOut{PO: "PO-7"}, nil
+				})
+			handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, c.httpOpts)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer "+token {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(ts.Close)
+			url := ts.URL + "/mcp"
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			d, err := eacpmcp.New().Discover(ctx, url, secret(t, url, token))
+			if err != nil || len(d.Tools) != 1 {
+				t.Fatalf("discover: %v, %+v", err, d)
+			}
+			def := d.Tools[0].Definition
+			call := func(args string) worker.Result {
+				return execute(t, eacpmcp.New(), toolCall(t, url, args, def), 10*time.Second)
+			}
+
+			ok := call(`{"amount":5}`)
+			if ok.Outcome != worker.Succeeded || !reference.MatchString(ok.ExternalReference) {
+				t.Fatalf("valid call: %+v", ok)
+			}
+
+			// Observed with go-sdk v1.8.0, on both revisions: the typed
+			// AddTool validates the arguments against the inferred
+			// inputSchema and reports a wrong type as a result with isError
+			// true, not as a protocol error, so S3.4 gives Ambiguous
+			// mcp_tool_error (NoEffect only if the contract certifies it).
+			bad := call(`{"amount":"five"}`)
+			if bad.Outcome != worker.Ambiguous || bad.ErrorClass != "mcp_tool_error" {
+				t.Fatalf("invalid argument: %+v", bad)
+			}
+		})
+	}
+}
