@@ -414,7 +414,11 @@ func (s *session) post(ctx context.Context, body []byte, method string) (*http.R
 		return nil, fail("invalid_endpoint", "build request")
 	}
 	// A POST is never replayed by the transport: a lost reply may follow a
-	// tool that ran, so only the worker decides on another attempt.
+	// tool that ran, so only the worker decides on another attempt. The
+	// consequence is conservative by design: a request never written because
+	// a kept-alive connection went stale now fails instead of being resent
+	// (tools/call reports Ambiguous transport_error; discovery fails and
+	// retries at the next scan).
 	req.GetBody = nil
 	req.Header.Set("Content-Type", "application/json")
 	s.headers(req, method)

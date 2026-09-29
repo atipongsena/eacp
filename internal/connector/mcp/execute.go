@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -104,10 +105,12 @@ func afterCall(ctx context.Context, err error) worker.Result {
 	case ctx.Err() != nil:
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "timeout"}
 	case errors.As(err, &rpc):
-		if rpc.Code < -999999 || rpc.Code > 999999 {
+		// JSON-RPC error codes are negative; a positive one must not borrow a
+		// certifiable class name.
+		if rpc.Code >= 0 || rpc.Code < -999999 {
 			return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 		}
-		code := "mcp_rpc_" + strconv.Itoa(max(rpc.Code, -rpc.Code))
+		code := "mcp_rpc_" + strconv.Itoa(-rpc.Code)
 		if protocolCodes[rpc.Code] {
 			return worker.Result{Outcome: worker.NoEffect, ErrorClass: code}
 		}
@@ -126,21 +129,25 @@ func afterCall(ctx context.Context, err error) worker.Result {
 // classify maps a complete tools/call result: a tool error, output that
 // breaks the certified outputSchema, or a success with the result's digest.
 func classify(call worker.Call, result json.RawMessage) worker.Result {
-	var r struct {
-		IsError           json.RawMessage `json:"isError"`
-		StructuredContent json.RawMessage `json:"structuredContent"`
-	}
-	if json.Unmarshal(result, &r) != nil {
+	// A result is a JSON object; null (which a struct accepts) is not one.
+	var r map[string]json.RawMessage
+	if json.Unmarshal(result, &r) != nil || r == nil {
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 	}
-	switch string(r.IsError) {
+	switch string(r["isError"]) {
 	case "", "false":
 	case "true":
+		// A no effect only when the contract certifies it (ADR-032 S3.4):
+		// the worker keeps a certified NoEffect but never upgrades an
+		// Ambiguous.
+		if slices.Contains(call.Contract.NoEffectErrors, "mcp_tool_error") {
+			return worker.Result{Outcome: worker.NoEffect, ErrorClass: "mcp_tool_error"}
+		}
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "mcp_tool_error"}
 	default:
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 	}
-	if len(r.StructuredContent) > 0 && !validOutput(call.Definition, r.StructuredContent) {
+	if sc, ok := r["structuredContent"]; ok && !validOutput(call.Definition, sc) {
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "mcp_output_invalid"}
 	}
 	ref := reference(result)

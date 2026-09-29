@@ -153,6 +153,15 @@ func raw(answer func(w http.ResponseWriter, r *http.Request, id json.RawMessage)
 
 func rpcReply(code int) mcptest.Reply { return mcptest.Reply{RPCCode: code, RPCMessage: "refused"} }
 
+// rawResult answers tools/call with a JSON-RPC response whose result is the
+// raw JSON text result.
+func rawResult(result string) func(*testing.T, string) (string, func() int) {
+	return raw(func(w http.ResponseWriter, _ *http.Request, id json.RawMessage) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":%s}`, id, result)
+	})
+}
+
 var (
 	success     = map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": "PO-1 raised"}}, "structuredContent": map[string]any{"po": "PO-1"}}
 	textOnly    = map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": "PO-2 raised"}}}
@@ -207,6 +216,11 @@ func classRows() []classRow {
 		{name: "a reply over the response budget", server: replying(mcptest.Reply{Result: map[string]any{"resultType": "complete",
 			"content": []any{map[string]any{"type": "text", "text": strings.Repeat("x", 5<<20)}}}}),
 			outcome: worker.Ambiguous, class: "response_too_large", calls: 1},
+		{name: "a null result", server: rawResult(`null`), outcome: worker.Ambiguous, class: "invalid_response", calls: 1},
+		{name: "an array result", server: rawResult(`[]`), outcome: worker.Ambiguous, class: "invalid_response", calls: 1},
+		{name: "a number result", server: rawResult(`1`), outcome: worker.Ambiguous, class: "invalid_response", calls: 1},
+		{name: "a string result", server: rawResult(`"x"`), outcome: worker.Ambiguous, class: "invalid_response", calls: 1},
+		{name: "a positive JSON-RPC code", server: replying(rpcReply(32602)), outcome: worker.Ambiguous, class: "invalid_response", calls: 1},
 	}
 }
 
@@ -236,6 +250,37 @@ func TestExecuteClassifiesEveryReply(t *testing.T) {
 			}
 			if got := calls(); got != row.calls {
 				t.Fatalf("%d tools/call requests reached the server, want %d", got, row.calls)
+			}
+		})
+	}
+}
+
+// TestExecuteCertifiedToolErrorIsNoEffect: isError is a no effect only when
+// the contract certifies mcp_tool_error (ADR-032 S3.4); otherwise it stays
+// ambiguous.
+func TestExecuteCertifiedToolErrorIsNoEffect(t *testing.T) {
+	toolError := mcptest.Reply{Result: map[string]any{"resultType": "complete", "isError": true,
+		"content": []any{map[string]any{"type": "text", "text": "no budget"}}}}
+	for _, c := range []struct {
+		name      string
+		certified []string
+		outcome   worker.Outcome
+	}{
+		{"not certified", nil, worker.Ambiguous},
+		{"other classes certified", []string{"mcp_rpc_32602", "unauthorized"}, worker.Ambiguous},
+		{"certified", []string{"mcp_rpc_32602", "mcp_tool_error"}, worker.NoEffect},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := mcptest.New(t, mcptest.Modern, token, createTool)
+			s.OnCall(func(string, json.RawMessage) mcptest.Reply { return toolError })
+			call := toolCall(t, s.URL(), payload)
+			call.Contract.NoEffectErrors = c.certified
+			res := execute(t, mcp.New(), call, 5*time.Second)
+			if res.Outcome != c.outcome || res.ErrorClass != "mcp_tool_error" || res.ExternalReference != "" {
+				t.Fatalf("result %+v, want %s mcp_tool_error", res, c.outcome)
+			}
+			if len(s.Calls()) != 1 {
+				t.Fatalf("%d calls", len(s.Calls()))
 			}
 		})
 	}
