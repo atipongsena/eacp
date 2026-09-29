@@ -5,7 +5,7 @@ Related: ADR-001 (only workers reach connectors and hold their secrets), ADR-003
 
 ## Context
 
-An agent may already be granted an MCP tool, and the scanner already certifies it (ADR-023), but no worker serves protocol `mcp`: an action on an MCP tool expires unclaimed (ADR-023 §1). Phase 26a makes the execution worker **call** a certified MCP tool with the guarantees of every other connector call: allowlist, policy, approval, budget, kill switch, circuit, dispatch intent, fencing, at most one send, and a human for any outcome nobody can prove.
+An agent may already be granted an MCP tool, and the scanner already certifies it (ADR-023), but no worker serves protocol `mcp`: an action on an MCP tool expires unclaimed (ADR-023 §1). Phase 26a makes the execution worker **call** a certified MCP tool with the guarantees of every other connector call: allowlist, policy, approval, budget, kill switch, circuit, dispatch intent, fencing, at most one send, and a human for any write whose outcome nobody can prove.
 
 The Model Context Protocol (revision `2026-07-28`, with a legacy `initialize` fallback; `research/REFERENCES.md`) shapes this decision in four ways:
 
@@ -28,7 +28,7 @@ The section numbers S3.1 to S3.7 match the approved design (`docs/superpowers/sp
 
 The contract trigger already pins `definition_id`, requires `reconciliation_lookup = none` and allows `READ_ONLY` only when the certified definition says `readOnlyHint: true`. Phase 26a adds, for an `mcp` connector's tool:
 
-- `idempotency_mode = none` and `max_attempts = 1`, **even for `READ_ONLY`**. The protocol offers no idempotency key and every annotation is an untrusted hint, so a hint never permits a retry. A lost read goes to a human; a later revision may relax this for `READ_ONLY` with its own ADR.
+- `idempotency_mode = none` and `max_attempts = 1`, **even for `READ_ONLY`**. The protocol offers no idempotency key and every annotation is an untrusted hint, so a hint never permits a retry. An unknown outcome of a write goes to a human once it settles. An unknown outcome of a `READ_ONLY` MCP call ends `FAILED` (`retry budget exhausted: attempts`), is never resent and is not escalated: an ambiguous read goes `UNKNOWN_OUTCOME` → `RETRY_WAIT` (T29a), and a lease that lapses during the call goes `RETRY_WAIT` (T24); with one attempt the sweeper then fails it (T27). These are the semantics every `READ_ONLY` contract has (ADR-004, ADR-022); T29 to a human is refused for `READ_ONLY` in PostgreSQL. A later revision may allow retries for `READ_ONLY` with its own ADR.
 - `no_effect_errors` only from the classes of S3.4 that the worker reports before or instead of any tool run: `connection_refused_before_send`, `unauthorized`, `invalid_payload`, `definition_changed`, `tool_missing`, `unsupported_header_mirroring`, `definition_unverified`, and `mcp_rpc_<code>` for the codes 32700, 32600, 32601 and 32602. The class `mcp_tool_error` may be certified too, as a per-contract human choice, like `a2a_rejected` (ADR-030 §3).
 
 Existing certified MCP contracts (none can have executed) are unaffected: the rules apply to new contracts, and an old contract with `max_attempts > 1` is refused at dispatch by the worker (`invalid_contract`, nothing sent). HTTP and A2A contracts are untouched.
@@ -40,7 +40,7 @@ After the dispatch intent (T16), the kill check and the credential rules of ever
 1. **Validates** the enforced payload: a JSON object (the tool's `arguments`). Otherwise nothing is sent and the result is `NoEffect` `invalid_payload`. The worker does not validate against `inputSchema`: the server does, and a validation error is a protocol error (`-32602`), a certifiable no-effect class.
 2. **Opens a session** exactly as discovery does (modern probe, else legacy `initialize`), with the worker-held Bearer. An AWS-signing credential is refused (`unsupported_credential`), as for discovery.
 3. **Checks the definition before it calls** (S3.5). Any mismatch means no `tools/call` is sent.
-4. **Sends `tools/call` once**, with `name` = the tool's `remote_name` and `arguments` = the enforced payload, plus the modern `_meta` and headers (`Mcp-Method`, and on the modern revision only `Mcp-Name` = the tool's remote name). The transport never replays the POST, follows no redirect and uses no proxy. A certified `inputSchema` that contains `x-mcp-header` is refused with `unsupported_header_mirroring` (nothing sent, checked before the session opens): the value encoding of `Mcp-Param-{name}` is not specified in the verified specification page (`research/REFERENCES.md`, Phase 26a), so header mirroring stays out of scope.
+4. **Sends `tools/call` once**, with `name` = the tool's `remote_name` and `arguments` = the enforced payload, plus the modern `_meta` and headers (`Mcp-Method`, and on the modern revision only `Mcp-Name` = the tool's remote name). The transport never replays the POST, follows no redirect and uses no proxy. A certified definition with an `x-mcp-header` key anywhere in it is refused with `unsupported_header_mirroring` (nothing sent, checked before the session opens). The whole certified definition is searched, not only its `inputSchema`: the scanner certifies every top-level key, and a case-variant duplicate key (a second `inputschema`, which a case-insensitive decoder could read instead) could otherwise hide it. The value encoding of `Mcp-Param-{name}` is not specified in the verified specification page (`research/REFERENCES.md`, Phase 26a), so header mirroring stays out of scope.
 5. **Classifies** the reply (S3.4) and returns a `worker.Result`.
 
 Kill and cancellation: the call runs under the worker's context, which the heartbeat cancels on a lost lease, a cancellation request or a kill. A cancelled call that was already sent is `Ambiguous` `timeout` or `mcp_interrupted`; EACP sends no `notifications/cancelled` in 26a.
@@ -66,7 +66,7 @@ Two rules refine the table (controller decisions, 2026-09-29):
 - **Before `tools/call` is sent.** A refused connection or an HTTP 401 or 403 at any stage before the call (the probe, `initialize`, the listing) reports `connection_refused_before_send` or `unauthorized`. Any other failure while probing, initializing or listing (a timeout, a reset, a malformed or oversize reply, an HTTP error) reports `definition_unverified`. Nothing was called, so both are `NoEffect` and certifiable, and the action fails closed.
 - **`timeout`.** The `timeout` row applies only to a `tools/call` that was sent and got no reply. A deadline that expires while probing, initializing or listing is `definition_unverified`, never `timeout`.
 
-`Ambiguous` goes to `UNKNOWN_OUTCOME` and to a human once it settles (ADR-004). A `Succeeded` result needs an external reference, so a success always carries the digest. The digest proves that a result arrived and lets a human compare it with the tool's own log; it reveals nothing about the content.
+`Ambiguous` goes to `UNKNOWN_OUTCOME`. For a write it goes to a human once it settles (ADR-004); for a `READ_ONLY` contract it ends `FAILED` and is never resent (S3.2). A `Succeeded` result needs an external reference, so a success always carries the digest. The digest proves that a result arrived and lets a human compare it with the tool's own log; it reveals nothing about the content.
 
 ### S3.5 The definition check before every call
 
@@ -100,13 +100,13 @@ Each becomes a test first.
 2. **No call on an unverified definition.** If the server's current definition is not byte-equal to the certified one, or cannot be verified, no `tools/call` is sent.
 3. **Output never leaves the worker.** No log line, journal entry, database column or error string contains any part of a tool's output or error text (a canary string in the fake server's reply is searched for everywhere).
 4. **Credentials.** The Bearer goes only to the connector's endpoint; an AWS-signing credential is refused; a rejected token is dropped; redirects and proxies are refused.
-5. **A human settles anything unproven.** `isError`, invalid output, `input_required`, transport failures after the send and unknown JSON-RPC errors all reach `UNKNOWN_OUTCOME`; only the certified no-effect classes are `NoEffect`.
+5. **Nothing unproven counts as proven.** `isError`, invalid output, `input_required`, transport failures after the send and unknown JSON-RPC errors all reach `UNKNOWN_OUTCOME`; only the certified no-effect classes are `NoEffect`. A human settles an unknown write; an unknown `READ_ONLY` call ends `FAILED`, never resent (S3.2).
 6. **The contract rules hold in PostgreSQL**, tested with raw SQL as `eacp_app`: `idempotency_mode = none`, `max_attempts = 1`, and the certifiable classes.
 
 ## Consequences
 
 - An MCP tool call is governed like any other external effect: allowlist, policy, approval, budget, kill, circuit and evidence apply unchanged.
-- No MCP call is ever retried, not even a `READ_ONLY` one. A lost call needs a human once it settles.
+- No MCP call is ever retried, not even a `READ_ONLY` one. A lost write needs a human once it settles; a lost `READ_ONLY` call ends `FAILED` (`retry budget exhausted: attempts`) and is not escalated.
 - A tool that changes between scans is never called. The cost is one full listing per call and a failed check when the server cannot list.
 - The calling agent sees a digest, not the tool's output. A workflow that needs the result waits for Phase 26b.
 - A tool whose schema uses `x-mcp-header` cannot be called until its encoding is verified against the specification.
@@ -116,6 +116,7 @@ Each becomes a test first.
 | Assumption | Conservative choice |
 |---|---|
 | `READ_ONLY` retries | None in 26a: `max_attempts = 1` for every MCP contract. A later ADR may allow them for a two-person certified `READ_ONLY` contract |
+| Whether an unknown MCP read should reach a human | No: `READ_ONLY` keeps the platform's semantics (`FAILED`, never resent); `READ_ONLY` on MCP needs `readOnlyHint: true` and two-person certification; escalating reads would be a cross-protocol guard change needing its own ADR |
 | `notifications/cancelled` | Not sent. A sent call that is cut stays `Ambiguous`; whether the server stops is unknown either way |
 | Faster drift response | A refused call logs an alert and waits for the next scan (at most 15 minutes). A worker-requested rescan would need an actor the scanner lease does not give it; it is a follow-up |
 | The external reference | `mcp:sha256:<hex>` of the canonical result. The alternative, `mcp:<action id>`, proves nothing about the result |
@@ -133,7 +134,7 @@ Returning or storing output (Phase 26b), stdio, OAuth flows, sampling, elicitati
 
 - `internal/registry/mcp_schema_test.go` (raw SQL as `eacp_app`): `TestMCPContractsAreAtMostOnce` (each refused and each accepted case; an HTTP or A2A contract is untouched) beside `TestMCPContractRules`.
 - `internal/connector/mcp`: `TestExecuteClassifiesEveryReply` (every row of S3.4 against `mcptest`), `TestExecuteRefusesAPayloadThatIsNotAnObject`, `TestExecuteRefusesAnUnsafeContract`, `TestExecuteRefusesASigningCredential`, `TestExecuteWorksOverSSE`, `TestExecuteWorksOnALegacyServer`, `TestExecuteNeverLeaksOutput`, `TestExecuteSendsOnceAndNeverFollowsARedirect`; the definition check: `TestAChangedDefinitionIsNeverCalled`, `TestAMissingOrRejectedToolIsNeverCalled`, `TestAnUnverifiableListingIsNeverCalled`, `TestTheSameDefinitionInAnotherKeyOrderIsNotDrift`, `TestAToolOnALaterPageIsFound`, `TestAnEmptyCertifiedDefinitionIsRefused`, `TestAToolWithHeaderMirroringIsRefused`.
-- `internal/worker`: `TestLoadCarriesTheCertifiedDefinition` (`Store.Load`), and through the real worker, connector and fake server `TestTheWorkerCallsAnMCPTool`, `TestAChangedDefinitionBetweenScansIsNeverCalled`, `TestAnMCPToolErrorIsUnknownUntilCertified`, `TestAnMCPActionIsNeverRetried`, `TestAKillDuringAnMCPCallIsUnknown`, `TestNothingOfTheOutputIsPersisted`, `TestAWorkerWithoutMCPLeavesTheActionQueued`.
+- `internal/worker`: `TestLoadCarriesTheCertifiedDefinition` (`Store.Load`), and through the real worker, connector and fake server `TestTheWorkerCallsAnMCPTool`, `TestAChangedDefinitionBetweenScansIsNeverCalled`, `TestAnMCPToolErrorIsUnknownUntilCertified`, `TestAnMCPActionIsNeverRetried`, `TestAnUnknownMCPReadEndsFailedAndIsNeverResent`, `TestAKillDuringAnMCPCallIsUnknown`, `TestNothingOfTheOutputIsPersisted`, `TestAWorkerWithoutMCPLeavesTheActionQueued`.
 - Interoperability with the official Go SDK server (`modelcontextprotocol/go-sdk`, already a dependency): `TestExecuteCallsAToolOfTheOfficialSDKServer`.
 - `internal/fakemcp` (`tools/call`, a content-free call log), `test/security` (the agent cannot reach the MCP server; only the worker holds its token) and `test/demo` `TestSliceCDemo` (`DEMO=C scripts/demo.sh`) extended with one approved MCP call and one rug pull refused.
 - Everything runs with `-race`; the PostgreSQL suites run with `EACP_TEST_ADMIN_DSN` set (skipped tests are not passes).
