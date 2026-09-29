@@ -39,6 +39,9 @@ const (
 	// registry derives one and the call must use the server's (Review Focus 3).
 	mcpCreate  = `{"name":"Create.PO","description":"Create a purchase order","inputSchema":{"type":"object","properties":{"supplier":{"type":"string"},"lines":{"type":"array"}}}}`
 	mcpChanged = `{"name":"Create.PO","description":"Create a purchase order and pay it","inputSchema":{"type":"object","properties":{"supplier":{"type":"string"},"lines":{"type":"array"}}}}`
+	// mcpRead is a tool that declares readOnlyHint, so its contract may be
+	// READ_ONLY (ADR-023 §6).
+	mcpRead = `{"name":"Get.PO","description":"Read a purchase order","inputSchema":{"type":"object","properties":{"supplier":{"type":"string"}}},"annotations":{"readOnlyHint":true}}`
 )
 
 var mcpReference = regexp.MustCompile(`^mcp:sha256:[0-9a-f]{64}$`)
@@ -68,8 +71,15 @@ type mcpEnv struct {
 // call budget of timeoutMS.
 func newMCPEnv(t *testing.T, noEffect []string, timeoutMS int) *mcpEnv {
 	t.Helper()
+	return newMCPToolEnv(t, mcpCreate, "Create.PO", "{IRREVERSIBLE_WRITE,FINANCIAL}", noEffect, timeoutMS)
+}
+
+// newMCPToolEnv certifies the tool definition def, named remote on the
+// server, with the side effects sideEffects.
+func newMCPToolEnv(t *testing.T, def, remote, sideEffects string, noEffect []string, timeoutMS int) *mcpEnv {
+	t.Helper()
 	v := &mcpEnv{t: t, logs: &bytes.Buffer{}, logMu: &sync.Mutex{}}
-	v.srv = mcptest.New(t, mcptest.Modern, mcpToken, mcpCreate)
+	v.srv = mcptest.New(t, mcptest.Modern, mcpToken, def)
 	v.f = registrytest.New(t)
 	v.conn = v.f.ID(t, "erin", `INSERT INTO eacp.connectors (tenant_id, name, protocol, endpoint, secret_ref)
 		VALUES (eacp.current_tenant_id(), 'sap-mcp', 'mcp', $1, 'sap-mcp') RETURNING id`, v.srv.URL())
@@ -89,17 +99,17 @@ func newMCPEnv(t *testing.T, noEffect []string, timeoutMS int) *mcpEnv {
 	}
 	runScan(t, v.scanner, 1)
 
-	var def uuid.UUID
-	v.owner(`SELECT id, definition_id, name FROM eacp.tools WHERE connector_id = $1 AND remote_name = 'Create.PO'`,
-		[]any{v.conn}, &v.tool, &def, &v.name)
-	if v.name == "Create.PO" {
+	var defID uuid.UUID
+	v.owner(`SELECT id, definition_id, name FROM eacp.tools WHERE connector_id = $1 AND remote_name = $2`,
+		[]any{v.conn, remote}, &v.tool, &defID, &v.name)
+	if v.name == remote {
 		t.Fatalf("the EACP name %q was not derived from the server name", v.name)
 	}
 	contract := v.f.ID(t, "erin", `INSERT INTO eacp.tool_contracts
 		(tenant_id, tool_id, definition_id, side_effects, idempotency_mode, reconciliation_lookup,
 		 reconciliation_consistency, proof_standard, no_effect_errors, max_attempts, timeout_ms)
-		VALUES (eacp.current_tenant_id(), $1, $2, '{IRREVERSIBLE_WRITE,FINANCIAL}', 'none', 'none', 'none', 'none',
-		 $3::text[], 1, $4) RETURNING id`, v.tool, def, noEffect, timeoutMS)
+		VALUES (eacp.current_tenant_id(), $1, $2, $5::text[], 'none', 'none', 'none', 'none',
+		 $3::text[], 1, $4) RETURNING id`, v.tool, defID, noEffect, timeoutMS, sideEffects)
 	if err := v.f.Exec("rita", `UPDATE eacp.tools SET active_contract_id = $1 WHERE id = $2`, contract, v.tool); err != nil {
 		t.Fatal(err)
 	}
@@ -342,9 +352,155 @@ func TestAnMCPToolErrorIsUnknownUntilCertified(t *testing.T) {
 // not run, so the action waits for a human and is never sent again.
 func TestAnMCPActionIsNeverRetried(t *testing.T) {
 	v := newMCPEnv(t, []string{"definition_changed", "connection_refused_before_send"}, 5000)
-	// A second server answers everything but tools/call, which the first one
-	// reads in full and then drops without an answer.
-	inner := mcptest.New(t, mcptest.Modern, mcpToken, mcpCreate)
+	calls := v.dropCalls(mcpCreate)
+
+	got := v.call(map[string]any{"supplier": "ACME"})
+	ev := v.evidence(got.ID)
+	if got.State != "UNKNOWN_OUTCOME" || len(ev.Attempts) != 1 || ev.Attempts[0].Outcome != "ambiguous" ||
+		ev.Attempts[0].ErrorClass != "transport_error" {
+		t.Fatalf("reset call: %s (%s), attempts %+v", got.State, got.StateReason, ev.Attempts)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("%d tools/call reached the server", n)
+	}
+	if n, err := v.w.RunOnce(context.Background()); err != nil || n != 0 {
+		t.Fatalf("the worker ran again: dispatched %d, %v", n, err)
+	}
+	if n := calls.Load(); n != 1 || v.get(got.ID).State != "UNKNOWN_OUTCOME" || len(v.evidence(got.ID).Attempts) != 1 {
+		t.Fatalf("after another pass: %d tools/call, state %s", n, v.get(got.ID).State)
+	}
+}
+
+// sweep runs the sweeper once, with no grace period.
+func (v *mcpEnv) sweep() {
+	v.t.Helper()
+	s := action.NewSweeper(v.e)
+	s.Grace = 0
+	if _, err := s.RunOnce(context.Background()); err != nil {
+		v.t.Fatal(err)
+	}
+}
+
+// TestAnUnknownMCPReadEndsFailedAndIsNeverResent (ADR-032 S3.2, invariant 1):
+// a READ_ONLY MCP contract keeps the platform's semantics for an unknown
+// read. The outcome is retried (T24 or T29a) against a budget of one attempt,
+// so the sweeper fails it (T27) instead of handing it to a human, and the
+// tools/call is never sent again: neither after a reply lost once the call
+// was sent, nor after a lease that lapsed during the call.
+func TestAnUnknownMCPReadEndsFailedAndIsNeverResent(t *testing.T) {
+	const exhausted = "retry budget exhausted: attempts"
+	// settle sweeps and runs the worker again, three times over: the action
+	// stays FAILED and nothing more is sent.
+	settle := func(t *testing.T, v *mcpEnv, id uuid.UUID, calls func() int) {
+		t.Helper()
+		for range 3 {
+			v.sweep()
+			if n, err := v.w.RunOnce(context.Background()); err != nil || n != 0 {
+				t.Fatalf("the worker ran again: dispatched %d, %v", n, err)
+			}
+		}
+		got := v.get(id)
+		if got.State != "FAILED" || got.StateReason != exhausted || got.AttemptCount != 1 {
+			t.Fatalf("after the sweeper: %s (%s), %d attempts", got.State, got.StateReason, got.AttemptCount)
+		}
+		if ev := v.evidence(id); len(ev.Attempts) != 1 {
+			t.Fatalf("attempts %+v", ev.Attempts)
+		}
+		// The journal shows the road: one retry wait, never a human.
+		var waits, humans int
+		v.owner(`SELECT count(*) FILTER (WHERE e.to = 'RETRY_WAIT'), count(*) FILTER (WHERE e.to = 'NEEDS_HUMAN_RESOLUTION')
+			FROM (SELECT convert_from(payload, 'UTF8')::jsonb->'data'->>'to' AS to FROM eacp.audit_events
+			      WHERE convert_from(payload, 'UTF8')::jsonb->'subject'->>'id' = $1::text) e`,
+			[]any{id}, &waits, &humans)
+		if waits != 1 || humans != 0 {
+			t.Fatalf("journaled %d moves to RETRY_WAIT and %d to a human", waits, humans)
+		}
+		if n := calls(); n != 1 {
+			t.Fatalf("%d tools/call reached the server", n)
+		}
+	}
+
+	t.Run("lost reply", func(t *testing.T) {
+		v := newMCPToolEnv(t, mcpRead, "Get.PO", "{READ_ONLY}", []string{"definition_changed"}, 5000)
+		calls := v.dropCalls(mcpRead)
+		got := v.call(map[string]any{"supplier": "ACME"})
+		ev := v.evidence(got.ID)
+		if got.State != "UNKNOWN_OUTCOME" || len(ev.Attempts) != 1 || ev.Attempts[0].Outcome != "ambiguous" ||
+			ev.Attempts[0].ErrorClass != "transport_error" {
+			t.Fatalf("reset read: %s (%s), attempts %+v", got.State, got.StateReason, ev.Attempts)
+		}
+		settle(t, v, got.ID, func() int { return int(calls.Load()) })
+	})
+
+	t.Run("lapsed lease", func(t *testing.T) {
+		v := newMCPToolEnv(t, mcpRead, "Get.PO", "{READ_ONLY}", []string{"definition_changed"}, 500)
+		v.srv.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Delay: time.Minute} })
+		a := v.submit(map[string]any{"supplier": "ACME"})
+		if a.State != "QUEUED" {
+			t.Fatalf("submit: %s %s", a.State, a.StateReason)
+		}
+		// A worker that sends the call and then freezes: its lease lapses
+		// while the server still holds the tools/call.
+		ctx := context.Background()
+		stale := worker.NewStore(v.f.App, "stale")
+		l, ok, err := stale.Claim(ctx, worker.Candidate{TenantID: v.f.Tenant, ActionID: a.ID}, 5*time.Second)
+		if err != nil || !ok {
+			t.Fatalf("claim = %v %v", ok, err)
+		}
+		job, err := stale.Load(ctx, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decision, d, err := stale.Intent(ctx, l, 1100*time.Millisecond)
+		if err != nil || decision != worker.Dispatched {
+			t.Fatalf("intent = %s %v", decision, err)
+		}
+		secret, err := v.secrets.Resolve(v.f.Tenant, job.SecretRef, job.Endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		result := make(chan worker.Result, 1)
+		go func() {
+			result <- v.client.Execute(callCtx, worker.Call{TenantID: v.f.Tenant, ActionID: a.ID,
+				OperationKey: job.OperationKey, Attempt: d.Attempt, Generation: l.Generation, Tool: job.Tool,
+				Endpoint: job.Endpoint, Payload: job.EnforcedPayload, Contract: job.Contract, Secret: secret,
+				RemoteName: job.RemoteName, Definition: job.Definition})
+		}()
+		deadline := time.Now().Add(10 * time.Second)
+		for len(v.srv.Calls()) == 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("the tools/call was not sent")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		time.Sleep(2200 * time.Millisecond) // the lease (0.5 s call + 1.1 s) lapses mid-call
+		v.sweep()                           // T24, then T27 in the same pass
+		settle(t, v, a.ID, func() int { return len(v.srv.Calls()) })
+
+		// The frozen worker wakes up: its result is late evidence only.
+		cancel()
+		res := <-result
+		if res.Outcome != worker.Ambiguous {
+			t.Fatalf("the cut call = %+v", res)
+		}
+		c, err := stale.Complete(ctx, l, res, time.Second)
+		if err != nil || !c.Late {
+			t.Fatalf("late completion = %+v %v", c, err)
+		}
+		if got := v.get(a.ID); got.State != "FAILED" || got.StateReason != exhausted || len(v.srv.Calls()) != 1 {
+			t.Fatalf("after the late result: %s (%s), %d tools/call", got.State, got.StateReason, len(v.srv.Calls()))
+		}
+	})
+}
+
+// dropCalls makes the server read every tools/call in full and drop the
+// connection without an answer; a second server with the tool def answers
+// everything else. It returns the number of tools/call received.
+func (v *mcpEnv) dropCalls(def string) *atomic.Int32 {
+	t := v.t
+	inner := mcptest.New(t, mcptest.Modern, mcpToken, def)
 	var calls atomic.Int32
 	v.srv.SetHandler(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -365,22 +521,7 @@ func TestAnMCPActionIsNeverRetried(t *testing.T) {
 		}
 		_ = conn.Close()
 	})
-
-	got := v.call(map[string]any{"supplier": "ACME"})
-	ev := v.evidence(got.ID)
-	if got.State != "UNKNOWN_OUTCOME" || len(ev.Attempts) != 1 || ev.Attempts[0].Outcome != "ambiguous" ||
-		ev.Attempts[0].ErrorClass != "transport_error" {
-		t.Fatalf("reset call: %s (%s), attempts %+v", got.State, got.StateReason, ev.Attempts)
-	}
-	if n := calls.Load(); n != 1 {
-		t.Fatalf("%d tools/call reached the server", n)
-	}
-	if n, err := v.w.RunOnce(context.Background()); err != nil || n != 0 {
-		t.Fatalf("the worker ran again: dispatched %d, %v", n, err)
-	}
-	if n := calls.Load(); n != 1 || v.get(got.ID).State != "UNKNOWN_OUTCOME" || len(v.evidence(got.ID).Attempts) != 1 {
-		t.Fatalf("after another pass: %d tools/call, state %s", n, v.get(got.ID).State)
-	}
+	return &calls
 }
 
 // TestAKillDuringAnMCPCallIsUnknown (ADR-016, ADR-032 S3.3): the server
