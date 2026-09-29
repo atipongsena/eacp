@@ -20,7 +20,7 @@ Before Phase 14, every connector spoke EACP's HTTP connector protocol, tools wer
 
 **Discovered protocols (Phase 25a, ADR-030).** `a2a` connectors are discovered the same way: they get an `eacp.mcp_servers` row, the same scan lease and `eacp.mcp_record_scan`, and one discovered tool, `delegate`, whose definition embeds the remote agent's Agent Card. The scanner picks a discoverer by protocol; §3–§7 (fingerprint, risk, certification, quarantine) apply unchanged. The table names still say `mcp`.
 
-**Out of scope for Phase 14: calling MCP tools (`tools/call`).** No worker serves protocol `mcp` yet, so the claim hint never offers an action on an MCP tool, and such an action expires unclaimed (fail safe). Execution needs the MCP connector contract (ADR-013) and a pre-dispatch definition check; it is a later phase. The stdio transport, `subscriptions/listen` and OAuth authorization flows are out of scope as well: EACP scans remote servers with a worker-held bearer token.
+**Out of scope for Phase 14: calling MCP tools (`tools/call`).** No worker serves protocol `mcp` yet, so the claim hint never offers an action on an MCP tool, and such an action expires unclaimed (fail safe). Execution needs the MCP connector contract (ADR-013) and a pre-dispatch definition check; it is a later phase (ADR-032 makes the worker call a certified MCP tool). The stdio transport, `subscriptions/listen` and OAuth authorization flows are out of scope as well: EACP scans remote servers with a worker-held bearer token.
 
 ### 2. Discovery (the scanner in `execution-worker`)
 

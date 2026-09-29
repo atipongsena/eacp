@@ -3,6 +3,13 @@
 Facts here were checked against the released artifacts, not the docs alone
 (MASTER_PLAN §107: no invented APIs). Re-verify on every version bump.
 
+## Phase 26a — MCP `tools/call` and the `x-mcp-header` value encoding (2026-09-29)
+
+Checked on 2026-09-29 against the raw `docs/specification/2026-07-28/server/tools.mdx` on the main branch of the `modelcontextprotocol` repository. ADR-032 relies on this.
+
+- **`x-mcp-header` encoding is not specified.** The page states the constraints on the `x-mcp-header` annotation itself, but not how a value is encoded into the `Mcp-Param-{name}` header, nor when the header is required, nor the error a server returns on a mismatch. `basic/transports.mdx` was not found at that path.
+- **Consequence.** Phase 26a refuses such a tool at call time (`unsupported_header_mirroring`, nothing sent, certifiable as no effect) instead of guessing an encoding. Lift the refusal only after the encoding is verified against the specification source and an ADR records it.
+
 ## Phase 25b — Anthropic Messages and OpenAI Chat Completions, via the official Go SDKs (2026-09-27)
 
 Verified against the module sources of `github.com/anthropics/anthropic-sdk-go` v1.75.0 and `github.com/openai/openai-go/v3` v3.66.0 (both test-only requirements in `go.mod`), and exercised end to end by `internal/llmgateway` `TestAnthropicSDKThroughTheGateway` and `TestOpenAISDKThroughTheGateway`, which point the unmodified clients at the gateway.
