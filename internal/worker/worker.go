@@ -407,7 +407,7 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	res := safeExecute(callCtx, conn, Call{
 		TenantID: l.TenantID, ActionID: l.ActionID, OperationKey: job.OperationKey, Attempt: d.Attempt,
 		Generation: l.Generation, Tool: job.Tool, Endpoint: job.Endpoint, Payload: job.EnforcedPayload,
-		Contract: job.Contract, Secret: secret,
+		Contract: job.Contract, Secret: secret, RemoteName: job.RemoteName, Definition: job.Definition,
 	})
 	cancel()
 	stop()

@@ -176,6 +176,10 @@ type Job struct {
 	Protocol, Endpoint, SecretRef             string
 	Contract                                  Contract
 	CallTimeout                               time.Duration // eacp.call_timeout of the pinned contract
+	// RemoteName is the server's exact tool name and Definition the certified
+	// canonical definition of the contract's definition_id (MCP tools only,
+	// ADR-032); both are empty for other protocols.
+	RemoteName, Definition string
 }
 
 // Load reads the leased action with its pinned contract and connector.
@@ -192,17 +196,19 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 			c.id, c.protocol, c.endpoint, c.secret_ref, k.version, k.side_effects, k.idempotency_mode,
 			COALESCE(k.idempotency_key_field, ''), COALESCE(k.correlation_field, ''),
 			k.no_effect_errors, k.max_attempts,
-			extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8
+			extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8,
+			COALESCE(t.remote_name, ''), COALESCE(d.definition, '')
 			FROM eacp.actions a
 			JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
 			JOIN eacp.tools t ON t.tenant_id = a.tenant_id AND t.id = a.tool_id
 			JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id
+			LEFT JOIN eacp.tool_definitions d ON d.tenant_id = k.tenant_id AND d.id = k.definition_id
 			WHERE a.id = $1`, l.ActionID).Scan(&state, &gen, &j.AgentID, &j.AgentVersionID, &j.Subject,
 			&j.Operation, &j.Target, &j.Tool, &j.ToolSchemaVersion, &j.Resource, &j.OperationKey,
 			&input, &enforced, &j.EnforcedDigest, &j.Attempts, &j.ConnectorID, &j.Protocol, &j.Endpoint, &j.SecretRef,
 			&j.Contract.Version, &j.Contract.SideEffects, &j.Contract.IdempotencyMode,
 			&j.Contract.IdempotencyKeyField, &j.Contract.CorrelationField, &j.Contract.NoEffectErrors,
-			&j.Contract.MaxAttempts, &callSecs)
+			&j.Contract.MaxAttempts, &callSecs, &j.RemoteName, &j.Definition)
 		if err != nil {
 			return err
 		}

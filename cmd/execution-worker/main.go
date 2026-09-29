@@ -63,7 +63,10 @@ func main() {
 			// A2A delegations (ADR-030): one client sends, follows and discovers.
 			a2aClient := a2a.New()
 			a2aClient.Log = d.Log
-			connectors := map[string]worker.Connector{"http": connector.NewHTTP(), "a2a": a2aClient}
+			// MCP tool calls (ADR-032): the same client discovers and calls.
+			mcpClient := mcp.New()
+			mcpClient.Log = d.Log
+			connectors := map[string]worker.Connector{"http": connector.NewHTTP(), "a2a": a2aClient, "mcp": mcpClient}
 			w, err := worker.New(d.DB, worker.Options{
 				ID: id, Lease: d.Config.WorkerLease, Concurrency: d.Config.WorkerConcurrency,
 				GroupConcurrency: d.Config.WorkerGroupConcurrency, BreakerFailures: d.Config.WorkerBreakerFailures,
@@ -91,7 +94,7 @@ func main() {
 			scanner, err := worker.NewScanner(d.DB, worker.ScannerOptions{
 				ID: id, Interval: d.Config.MCPScanInterval, Timeout: d.Config.MCPScanTimeout,
 				Secrets: secrets, Log: d.Log,
-				Discoverers: map[string]worker.Discoverer{"mcp": mcp.New(), "a2a": a2aClient},
+				Discoverers: map[string]worker.Discoverer{"mcp": mcpClient, "a2a": a2aClient},
 			})
 			if err != nil {
 				return err
