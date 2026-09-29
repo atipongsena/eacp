@@ -29,7 +29,7 @@ func TestMCPDefinitionDriftBeforeReleaseDenies(t *testing.T) {
 	contract := v.f.ID(t, "erin", `INSERT INTO eacp.tool_contracts
 		(tenant_id, tool_id, definition_id, side_effects, idempotency_mode, reconciliation_lookup,
 		 reconciliation_consistency, proof_standard, max_attempts)
-		VALUES (eacp.current_tenant_id(), $1, $2, '{READ_ONLY}', 'none', 'none', 'none', 'none', 3) RETURNING id`, tool, def)
+		VALUES (eacp.current_tenant_id(), $1, $2, '{READ_ONLY}', 'none', 'none', 'none', 'none', 1) RETURNING id`, tool, def)
 	if err := v.f.Exec("rita", `UPDATE eacp.tools SET active_contract_id = $1 WHERE id = $2`, contract, tool); err != nil {
 		t.Fatal(err)
 	}

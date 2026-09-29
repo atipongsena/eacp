@@ -55,7 +55,7 @@ func TestMCPRegistryAPI(t *testing.T) {
 	// Certify the reviewed definition.
 	code, contract := h.as("erin", "POST", toolPath+"/contracts", map[string]any{
 		"definition_id": def["id"], "side_effects": []string{"READ_ONLY"}, "idempotency_mode": "none",
-		"reconciliation_lookup": "none", "reconciliation_consistency": "none", "proof_standard": "none", "max_attempts": 3})
+		"reconciliation_lookup": "none", "reconciliation_consistency": "none", "proof_standard": "none", "max_attempts": 1})
 	h.want(201, code, contract)
 	code, body = h.as("rita", "POST", toolPath+"/contract", map[string]any{"contract_id": str(contract, "id")})
 	h.want(204, code, body)

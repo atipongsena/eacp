@@ -87,7 +87,7 @@ func currentDefinition(t *testing.T, f *registrytest.Fixture, tool uuid.UUID) uu
 const mcpReadContractSQL = `INSERT INTO eacp.tool_contracts
 	(tenant_id, tool_id, definition_id, side_effects, idempotency_mode, reconciliation_lookup,
 	 reconciliation_consistency, proof_standard, max_attempts)
-	VALUES (eacp.current_tenant_id(), $1, $2, '{READ_ONLY}', 'none', 'none', 'none', 'none', 3)
+	VALUES (eacp.current_tenant_id(), $1, $2, '{READ_ONLY}', 'none', 'none', 'none', 'none', 1)
 	RETURNING id`
 
 // certify proposes (erin) and activates (rita) a READ_ONLY contract for the
@@ -430,6 +430,79 @@ func TestMCPContractRules(t *testing.T) {
 	if quarantined {
 		t.Fatal("an uncertified tool was quarantined")
 	}
+}
+
+// TestMCPContractsAreAtMostOnce covers ADR-032 S3.2: an MCP tool is called at
+// most once (the protocol has no idempotency key and every annotation is an
+// untrusted hint, so even READ_ONLY is never retried) and only classes the
+// worker reports before or instead of a tool run are certifiable no-effect.
+func TestMCPContractsAreAtMostOnce(t *testing.T) {
+	f := registrytest.New(t)
+	mcp := f.MCPConnector(t, "sap-mcp")
+	f.Scan(t, mcp, scanResult(getPO, createPO))
+	create := toolID(t, f, mcp, "Create.PO")
+	get := toolID(t, f, mcp, "get_po")
+	createDef, getDef := currentDefinition(t, f, create), currentDefinition(t, f, get)
+
+	const contract = `INSERT INTO eacp.tool_contracts
+		(tenant_id, tool_id, definition_id, side_effects, idempotency_mode, idempotency_key_field,
+		 reconciliation_lookup, reconciliation_consistency, proof_standard, no_effect_errors, max_attempts)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3::text[], $4, $5, 'none', 'none', 'none', $6::text[], $7)
+		RETURNING id`
+	insert := func(tool, def uuid.UUID, effects, mode, keyField string, noEffect []string, attempts int) (uuid.UUID, error) {
+		var kf any
+		if keyField != "" {
+			kf = keyField
+		}
+		return f.TryID("erin", contract, tool, def, "{"+effects+"}", mode, kf, noEffect, attempts)
+	}
+
+	refused := []struct {
+		name     string
+		tool     uuid.UUID
+		def      uuid.UUID
+		effects  string
+		mode     string
+		keyField string
+		noEffect []string
+		attempts int
+	}{
+		{"two attempts", create, createDef, "IRREVERSIBLE_WRITE", "none", "", nil, 2},
+		{"a read is never retried", get, getDef, "READ_ONLY", "none", "", nil, 3},
+		{"correlation only", create, createDef, "REVERSIBLE_WRITE", "correlation_only", "", nil, 1},
+		{"native idempotency", create, createDef, "REVERSIBLE_WRITE", "native", "key", nil, 1},
+		{"an A2A class", create, createDef, "IRREVERSIBLE_WRITE", "none", "", []string{"a2a_rejected"}, 1},
+		{"an internal JSON-RPC error", create, createDef, "IRREVERSIBLE_WRITE", "none", "", []string{"mcp_rpc_32603"}, 1},
+		{"an HTTP class", create, createDef, "IRREVERSIBLE_WRITE", "none", "", []string{"http_500"}, 1},
+		{"a timeout", create, createDef, "IRREVERSIBLE_WRITE", "none", "", []string{"timeout"}, 1},
+		{"a truncated code", create, createDef, "IRREVERSIBLE_WRITE", "none", "", []string{"mcp_rpc_"}, 1},
+		{"a signed code", create, createDef, "IRREVERSIBLE_WRITE", "none", "", []string{"mcp_rpc_-32602"}, 1},
+		{"one bad class among good ones", create, createDef, "IRREVERSIBLE_WRITE", "none", "",
+			[]string{"invalid_payload", "mcp_rpc_32000"}, 1},
+	}
+	for _, c := range refused {
+		_, err := insert(c.tool, c.def, c.effects, c.mode, c.keyField, c.noEffect, c.attempts)
+		if err == nil {
+			t.Errorf("%s: the contract was accepted", c.name)
+			continue
+		}
+		wantState(t, err, sqlCheck)
+	}
+
+	// A single-attempt contract with certifiable classes is accepted.
+	f.ID(t, "erin", contract, create, createDef, "{IRREVERSIBLE_WRITE,FINANCIAL}", "none", nil, []string{}, 1)
+	f.ID(t, "erin", contract, create, createDef, "{IRREVERSIBLE_WRITE}", "none", nil,
+		[]string{"definition_changed", "mcp_rpc_32602", "mcp_tool_error"}, 1)
+	f.ID(t, "erin", contract, get, getDef, "{READ_ONLY}", "none", nil,
+		[]string{"connection_refused_before_send", "unauthorized", "invalid_payload", "tool_missing",
+			"definition_unverified", "unsupported_header_mirroring", "mcp_rpc_32700", "mcp_rpc_32600",
+			"mcp_rpc_32601", "mcp_rpc_32602"}, 1)
+
+	// HTTP and A2A contracts are untouched.
+	http := f.ActiveTool(t, "erp", "read")
+	f.ID(t, "erin", contract, http.Tool, nil, "{REVERSIBLE_WRITE}", "native", "key", []string{"http_500"}, 3)
+	_, tool := scannedDelegate(t, f)
+	f.ID(t, "erin", a2aWriteContractSQL, tool, currentDefinition(t, f, tool), []string{"a2a_rejected", "a2a_rpc_32004"})
 }
 
 func TestMissingCertifiedToolIsQuarantined(t *testing.T) {

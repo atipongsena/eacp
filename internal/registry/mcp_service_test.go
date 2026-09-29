@@ -33,7 +33,7 @@ func TestMCPRegistryService(t *testing.T) {
 
 	// Certify through the service: the contract pins the reviewed definition.
 	c := registry.Contract{SideEffects: []string{"READ_ONLY"}, IdempotencyMode: "none", ReconciliationLookup: "none",
-		ReconciliationConsistency: "none", ProofStandard: "none", MaxAttempts: 3}
+		ReconciliationConsistency: "none", ProofStandard: "none", MaxAttempts: 1}
 	_, err = e.svc.ProposeContract(e.ctx, e.as("erin"), get.ID, c)
 	wantErr(t, err, registry.ErrConflict) // no definition pinned
 	c.DefinitionID = &get.Definition.ID
