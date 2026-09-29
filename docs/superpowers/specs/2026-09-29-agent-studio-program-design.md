@@ -1,6 +1,7 @@
 # Agent Studio and Agent Hub, and the missing tool-calling paths (program design)
 
 Date: 2026-09-29 · Status: design agreed with the owner in chat, section by section; awaiting the owner's review of this file
+Reference study: `research/STUDIO_REFERENCES.md` (n8n, Copilot Studio, Dify, the MCP specification, Radix, shadcn, Primer)
 Scope: a program of five phases, each with its own ADR, spec, plan and review. This document fixes the shared
 decisions. It is not an implementation spec for any single phase.
 
@@ -51,6 +52,7 @@ Success:
 One JSON document per version, immutable once saved. PostgreSQL computes its digest and the capability set.
 
 ```text
+schema_version, kind: "agent"      (a newer major version is refused, never guessed)
 name, description, department (an eacp group), owner
 trigger:  manual | chat | schedule                 (webhook: later)
 inputs:   a schema
@@ -127,7 +129,13 @@ draft (mutable, owner only)
 - **Visibility is enforced by PostgreSQL.** PRIVATE: the owner. DEPARTMENT: members of the group. ORG: the tenant.
 - **Run** creates a run on `published_version_id`. The database checks that the caller can see a PUBLISHED listing.
 - **Clone** copies the definition into a new draft owned by the cloner, records `cloned_from`, and carries no
-  permission. Its tools need a new allowlist request, so a clone cannot avoid the original's approval.
+  permission. Its tools need a new allowlist request, so a clone cannot avoid the original's approval. A clone also
+  drops what is bound to the original's environment: the schedule trigger arrives **disabled with no schedule**
+  and any webhook URL is cleared (Dify does the same on export; `research/STUDIO_REFERENCES.md` section 1).
+- **Run is not edit.** A listing grants the right to run and nothing else (Copilot Studio separates chat from
+  co-authoring; n8n's viewer cannot execute). Co-authoring is a later phase.
+- **No overwriting a colleague.** A draft carries a `revision`; a save with a stale revision is refused and the
+  builder offers "save as copy" (the Copilot Studio behaviour).
 - **Templates** are listings that an admin publishes with the tag `template` and seeds with a bundle (ADR-026).
   There is no separate templates system.
 - **Discovery** (first release): search by name, tag and department, and a run count. Cost comes from FinOps.
@@ -160,6 +168,7 @@ exist yet and are a later phase (open point 2).
 | 26 | **MCP `tools/call`:** the execution worker calls an MCP tool under the contract that pins `definition_id`, re-checking the fingerprint before every dispatch | 032 (new) |
 | 27a | Studio core: definition, versions, derived capability, `agent-runtime`, agent credentials | 033 (new) |
 | 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads | 033 Rev 1.1 |
+| 26-UI | Console design system and a redesign of every existing view (section 8.2) | 028 Rev 1.1 |
 | 27c | Builder UI, templates, the end-to-end demo | 033 Rev 1.2 |
 | 28 | The `run` kill scope, using the authenticated run binding a Studio run provides | 016 revision |
 | 29 | Inbound A2A: accept delegations from remote agents | 030 revision |
@@ -168,12 +177,23 @@ Phase 26 comes first because most enterprise integrations an employee will pick 
 on one expires unclaimed. Phase 29 does not depend on Studio and can move. **The `global` scope** stays out: it
 waits for platform authority, not for run bindings.
 
-### 8.1 Phase 26 constraints already known (ADR-023, AGENTS.md)
+### 8.1 Phase 26 constraints already known (ADR-023, AGENTS.md, `research/STUDIO_REFERENCES.md` section 2)
 
 The MCP contract pins the tool's current `definition_id`; the worker must re-check the fingerprint before every
-call and refuse a quarantined tool. MCP has no idempotency guarantee, so an MCP call is at-most-once unless the
-tool declares itself idempotent, and an ambiguous outcome is `UNKNOWN_OUTCOME` (ADR-004). The stdio transport and
-OAuth authorization flows stay out of scope. Phase 26 gets its own brainstorm and spec.
+call and refuse a quarantined tool. An MCP call is **always** at-most-once: the protocol has no idempotency key and
+`idempotentHint` is an untrusted hint (the specification says clients must not trust annotations), so a hint never
+permits a retry. A transport failure after the request was sent is `UNKNOWN_OUTCOME` (ADR-004). A result with
+`isError: true` is a completed, failed outcome. `input_required` and a `structuredContent` that breaks the
+`outputSchema` are refused with a reason; the worker never answers a request for more input. The stdio transport
+and OAuth authorization flows stay out of scope. Phase 26 gets its own brainstorm and spec.
+
+### 8.2 The console redesign (added after the reference study)
+
+The console is plain today (`internal/ui/static/app.css` is 5.8 KB: no icons, no empty states, counts shown as
+underlined links). Studio's builder will live beside it, so the two share one design system, built first:
+semantic token pairs, the 12-step colour meaning, type by role, system fonts only, inline SVG icons through `dom.js`
+(`research/STUDIO_REFERENCES.md` section 3). It changes no route, permission or security rule (ADR-028). It is its
+own phase, **Phase 26-UI**, and runs before 27c. Its own short design is agreed in chat first.
 
 ## 9. Testing
 
