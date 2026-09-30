@@ -150,15 +150,49 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// call answers get_po: the text names the purchase order, an id of "ERR"
-// is a tool error (isError true). Any other tool is unknown.
+// call answers a tool its current list names: get_po (the text names the
+// purchase order; an id of "ERR" is a tool error) or get_leave_balance (the
+// Studio demo's template: structuredContent {"days": N}, fixed per employee;
+// "ERR" is a tool error). Anything else is invalid params.
 func (s *Server) call(w http.ResponseWriter, req rpcRequest, info map[string]any) {
 	var name string
 	_ = json.Unmarshal(req.Params["name"], &name)
-	var args struct {
-		ID *string `json:"id"`
+	if !s.lists(name) {
+		rpcError(w, http.StatusOK, req.ID, -32602, "Invalid params", nil)
+		return
 	}
-	if name != "get_po" || json.Unmarshal(req.Params["arguments"], &args) != nil || args.ID == nil {
+	var answer map[string]any
+	switch name {
+	case "get_po":
+		var args struct {
+			ID *string `json:"id"`
+		}
+		if json.Unmarshal(req.Params["arguments"], &args) != nil || args.ID == nil {
+			rpcError(w, http.StatusOK, req.ID, -32602, "Invalid params", nil)
+			return
+		}
+		text, isError := "Purchase order "+*args.ID+": open, 800 THB", false
+		if *args.ID == "ERR" {
+			text, isError = "purchase order not found", true
+		}
+		answer = map[string]any{"isError": isError, "content": []any{map[string]any{"type": "text", "text": text}}}
+	case "get_leave_balance":
+		var args struct {
+			EmployeeID *string `json:"employee_id"`
+		}
+		if json.Unmarshal(req.Params["arguments"], &args) != nil || args.EmployeeID == nil {
+			rpcError(w, http.StatusOK, req.ID, -32602, "Invalid params", nil)
+			return
+		}
+		id := *args.EmployeeID
+		if id == "ERR" {
+			answer = map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": "employee not found"}}}
+			break
+		}
+		days := leaveDays[id]
+		answer = map[string]any{"isError": false, "structuredContent": map[string]any{"days": days},
+			"content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("%s has %d days of leave left.", id, days)}}}
+	default:
 		rpcError(w, http.StatusOK, req.ID, -32602, "Invalid params", nil)
 		return
 	}
@@ -166,12 +200,29 @@ func (s *Server) call(w http.ResponseWriter, req rpcRequest, info map[string]any
 		rpcError(w, http.StatusOK, req.ID, -32603, "Internal error", nil)
 		return
 	}
-	text, isError := "Purchase order "+*args.ID+": open, 800 THB", false
-	if *args.ID == "ERR" {
-		text, isError = "purchase order not found", true
+	answer["resultType"], answer["_meta"] = "complete", info
+	result(w, req.ID, answer)
+}
+
+// leaveDays is the Studio demo's fixed leave balances; any other employee has 0.
+var leaveDays = map[string]int{"E-1": 12, "E-2": 3}
+
+// lists reports whether the current tool list names tool. An unreadable
+// list names nothing.
+func (s *Server) lists(tool string) bool {
+	tools, err := s.tools()
+	if err != nil {
+		return false
 	}
-	result(w, req.ID, map[string]any{"resultType": "complete", "isError": isError,
-		"content": []any{map[string]any{"type": "text", "text": text}}, "_meta": info})
+	for _, raw := range tools {
+		var t struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &t) == nil && t.Name == tool {
+			return true
+		}
+	}
+	return false
 }
 
 // LogCallsTo makes the call log durable at path. An existing log is loaded

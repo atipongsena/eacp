@@ -233,3 +233,74 @@ func TestFakeMCPCallsGetPOAndKeepsAContentFreeLog(t *testing.T) {
 		t.Fatal("a corrupt call log was accepted")
 	}
 }
+
+// hrServer serves the HR tool list of the Studio demo
+// (deployments/docker/fakemcp/hr-tools.json).
+func hrServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	h, err := fakemcp.New(token, filepath.Join("..", "..", "deployments", "docker", "fakemcp", "hr-tools.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestTheHRToolFileNamesTheLeaveTool(t *testing.T) {
+	d, err := discover(t, hrServer(t), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Tools) != 1 || d.Tools[0].RemoteName != "get_leave_balance" ||
+		!strings.Contains(d.Tools[0].Definition, `"outputSchema"`) || !strings.Contains(d.Tools[0].Definition, `"readOnlyHint":true`) {
+		t.Fatalf("HR listing = %+v", d)
+	}
+}
+
+func TestLeaveBalanceAnswersStructuredContent(t *testing.T) {
+	srv := hrServer(t)
+	for id, days := range map[string]float64{"E-1": 12, "E-2": 3, "E-9": 0} {
+		status, out := call(t, srv, "Bearer "+token, "get_leave_balance",
+			callParams("get_leave_balance", `{"employee_id":"`+id+`"}`))
+		res, _ := out["result"].(map[string]any)
+		sc, _ := res["structuredContent"].(map[string]any)
+		content, _ := res["content"].([]any)
+		if status != 200 || res["isError"] != false || sc["days"] != days || len(sc) != 1 || len(content) != 1 ||
+			!strings.Contains(fmt.Sprint(content[0]), id) {
+			t.Fatalf("%s = %d %v", id, status, out)
+		}
+	}
+	for _, args := range []string{`{}`, `{"employee_id":7}`} {
+		if status, out := call(t, srv, "Bearer "+token, "get_leave_balance", callParams("get_leave_balance", args)); rpcCode(out) != -32602 {
+			t.Fatalf("arguments %s = %d %v", args, status, out)
+		}
+	}
+}
+
+func TestLeaveBalanceErrIsAToolError(t *testing.T) {
+	status, out := call(t, hrServer(t), "Bearer "+token, "get_leave_balance",
+		callParams("get_leave_balance", `{"employee_id":"ERR"}`))
+	if res, _ := out["result"].(map[string]any); status != 200 || res["isError"] != true || res["structuredContent"] != nil {
+		t.Fatalf("ERR = %d %v", status, out)
+	}
+}
+
+// A server answers only the tools its current list names: the HR server
+// has no get_po, the default server no get_leave_balance.
+func TestAToolOutsideTheListIsRefused(t *testing.T) {
+	status, out := call(t, hrServer(t), "Bearer "+token, "get_po", callParams("get_po", `{"id":"PO-1"}`))
+	if rpcCode(out) != -32602 {
+		t.Fatalf("get_po on the HR server = %d %v", status, out)
+	}
+	h, err := fakemcp.New(token, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	status, out = call(t, srv, "Bearer "+token, "get_leave_balance", callParams("get_leave_balance", `{"employee_id":"E-1"}`))
+	if rpcCode(out) != -32602 {
+		t.Fatalf("get_leave_balance on the default server = %d %v", status, out)
+	}
+}

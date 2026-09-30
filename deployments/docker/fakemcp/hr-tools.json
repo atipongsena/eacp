@@ -1,0 +1,5 @@
+[{"name":"get_leave_balance","title":"Get leave balance",
+ "description":"Read how many days of leave an employee has left.",
+ "inputSchema":{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]},
+ "outputSchema":{"type":"object","properties":{"days":{"type":"integer"}},"required":["days"]},
+ "annotations":{"readOnlyHint":true}}]
