@@ -50,6 +50,9 @@ type Stats struct {
 	Escalated int
 	// Pruned counts expired results whose content this pass cleared (ADR-034).
 	Pruned int
+	// StudioExpired counts Studio runs failed past their deadline and
+	// answers cleared after expiry (Phase 27a-2).
+	StudioExpired int
 }
 
 // RunOnce makes one pass over every tenant with open actions.
@@ -82,11 +85,23 @@ func (s *Sweeper) RunOnce(ctx context.Context) (Stats, error) {
 	return st, s.pruneResults(ctx, &st)
 }
 
-// pruneResults clears the content of expired results (ADR-034) in every
-// tenant that has some, open actions or not. Replicas race harmlessly:
-// eacp.action_results_prune skips locked rows and counts only real clears.
+// pruneResults clears the content of expired results (ADR-034), then
+// expires Studio runs and answers (Phase 27a-2), in every tenant that has
+// some, open actions or not. Replicas race harmlessly: both functions skip
+// locked rows and count only real changes.
 func (s *Sweeper) pruneResults(ctx context.Context, st *Stats) error {
-	rows, err := s.e.pool.Query(ctx, `SELECT eacp.action_result_tenants()`)
+	if err := s.drain(ctx, `SELECT eacp.action_result_tenants()`, `SELECT eacp.action_results_prune($1)`,
+		"result pruning failed", &st.Pruned); err != nil {
+		return err
+	}
+	return s.drain(ctx, `SELECT eacp.studio_run_tenants()`, `SELECT eacp.studio_runs_expire($1)`,
+		"studio run expiry failed", &st.StudioExpired)
+}
+
+// drain runs fn (taking the batch size) as the sweeper in every tenant
+// tenantsSQL lists, until a call changes fewer rows than the batch.
+func (s *Sweeper) drain(ctx context.Context, tenantsSQL, fn, failure string, count *int) error {
+	rows, err := s.e.pool.Query(ctx, tenantsSQL)
 	if err != nil {
 		return err
 	}
@@ -94,7 +109,7 @@ func (s *Sweeper) pruneResults(ctx context.Context, st *Stats) error {
 	if err != nil {
 		return err
 	}
-	batch := max(s.Batch, 1) // as eacp.action_results_prune reads it
+	batch := max(s.Batch, 1) // as the functions read it
 	for _, t := range tenants {
 		for {
 			var n int
@@ -102,16 +117,16 @@ func (s *Sweeper) pruneResults(ctx context.Context, st *Stats) error {
 				if err := storage.SetSystem(ctx, tx, SweeperComponent); err != nil {
 					return err
 				}
-				return tx.QueryRow(ctx, `SELECT eacp.action_results_prune($1)`, batch).Scan(&n)
+				return tx.QueryRow(ctx, fn, batch).Scan(&n)
 			})
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				s.e.o.Log.ErrorContext(ctx, "result pruning failed", "tenant", t.String(), "err", err)
+				s.e.o.Log.ErrorContext(ctx, failure, "tenant", t.String(), "err", err)
 				break
 			}
-			st.Pruned += n
+			*count += n
 			if n < batch {
 				break
 			}
