@@ -3,7 +3,8 @@
 # stack: the examples' data, plus the situations an operator console exists
 # for (an approval waiting, an outcome only a human can settle, a kill switch
 # and the incidents they open) and an Agent Studio agent from its template to
-# an answer. Needs Docker, Go, curl, jq and Chrome or Edge.
+# an answer, published to its department in the Hub. Needs Docker, Go, curl,
+# jq and Chrome or Edge.
 # Keys come from examples/.env and are never printed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -146,6 +147,19 @@ done
 echo "screenshots: a leave-balance run answered"
 [ -n "$(studio_agent team-leave)" ] || save_agent team-leave "Team leave overview" >/dev/null
 echo "screenshots: a second agent waits for a registry approver"
+# The Hub (Phase 27b): stella proposes leave-bot to HR and rita, HR's lead,
+# publishes it.
+listing() { api "$STUDIO_AUTHOR_KEY" GET "/v1/studio/agents/$agent/listing"; }
+if [ "$(listing | "$JQ" -r '.listing.state // ""')" != PUBLISHED ]; then
+	open=$(listing | "$JQ" -r 'if .proposal and .proposal.decision == null then .proposal.id else "" end')
+	if [ -z "$open" ]; then
+		open=$(api "$STUDIO_AUTHOR_KEY" POST "/v1/studio/agents/$agent/listing" "$("$JQ" -cn --arg v "$(latest | "$JQ" -r .id)" \
+			'{version_id: $v, scope: "DEPARTMENT", tags: ["leave", "hr"], note: "for everyone in HR"}')" | "$JQ" -r .id)
+	fi
+	api "$REGISTRY_APPROVER_KEY" POST "/v1/studio/listing-proposals/$open/approve" '{"reason": "useful for HR"}' >/dev/null
+fi
+[ "$(listing | "$JQ" -r .listing.state)" = PUBLISHED ] || { echo "leave-bot is not published in the Hub" >&2; exit 1; }
+echo "screenshots: leave-bot is published to HR in the Hub"
 
 chrome=${CHROME:-}
 if [ -z "$chrome" ]; then
@@ -172,4 +186,9 @@ out=$(pwd)/docs/images
 	"fleet:OPERATOR_KEY:#/fleet" \
 	"dependencies:OPERATOR_KEY:#/dependencies?kind=tool&id=$TOOL_CREATE_PO_ID" \
 	"cost:OPERATOR_KEY:#/cost")
-(cd tools/screenshots && go run . -page studio -api "$EACP_API" -out "$out" -chrome "$chrome" 	"new:STUDIO_AUTHOR_KEY:#/new?template=leave-balance" 	"agent:STUDIO_AUTHOR_KEY:#/agents/$agent" 	"run:STUDIO_AUTHOR_KEY:#/runs/$studio_run" 	"requests:REGISTRY_APPROVER_KEY:#/requests")
+(cd tools/screenshots && go run . -page studio -api "$EACP_API" -out "$out" -chrome "$chrome" \
+	"new:STUDIO_AUTHOR_KEY:#/new?template=leave-balance" \
+	"agent:STUDIO_AUTHOR_KEY:#/agents/$agent" \
+	"run:STUDIO_AUTHOR_KEY:#/runs/$studio_run" \
+	"hub:STUDIO_AUTHOR_KEY:#/hub" \
+	"requests:REGISTRY_APPROVER_KEY:#/requests")

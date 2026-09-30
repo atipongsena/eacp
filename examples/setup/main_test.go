@@ -12,8 +12,14 @@ import (
 )
 
 // fakeAPI accepts the principal keys in people on /v1/me and the agent keys
-// in agents on /v1/agent/self, like the control plane does.
+// in agents on /v1/agent/self, like the control plane does. rita's /v1/me
+// shows her leading hr.
 func fakeAPI(t *testing.T, people, agents []string) *httptest.Server {
+	return fakeAPIWithRita(t, people, agents, `{"groups": [{"name": "hr", "lead": true}]}`)
+}
+
+// fakeAPIWithRita is fakeAPI with rita's /v1/me body.
+func fakeAPIWithRita(t *testing.T, people, agents []string, rita string) *httptest.Server {
 	t.Helper()
 	ok := func(keys []string, r *http.Request) bool {
 		for _, k := range keys {
@@ -25,6 +31,8 @@ func fakeAPI(t *testing.T, people, agents []string) *httptest.Server {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/v1/me" && ok(people, r) && r.Header.Get("Authorization") == "Bearer rita":
+			_, _ = w.Write([]byte(rita))
 		case r.URL.Path == "/v1/me" && ok(people, r), r.URL.Path == "/v1/agent/self" && ok(agents, r):
 			_, _ = w.Write([]byte(`{}`))
 		default:
@@ -45,9 +53,9 @@ func envFile(t *testing.T, env map[string]string) string {
 }
 
 var fullEnv = map[string]string{"EACP_API": "x", "ADMIN_KEY": "admin", "OPERATOR_KEY": "otto", "AGENT_KEY": "agent",
-	"STUDIO_AUTHOR_KEY": "stella", "STUDIO_RUNTIME_KEY": "runtime"}
+	"STUDIO_AUTHOR_KEY": "stella", "STUDIO_RUNTIME_KEY": "runtime", "REGISTRY_APPROVER_KEY": "rita"}
 
-var allPeople = []string{"admin", "otto", "stella", "runtime"}
+var allPeople = []string{"admin", "otto", "stella", "runtime", "rita"}
 
 func setupFor(srv *httptest.Server) *setup {
 	return &setup{api: srv.URL, http: srv.Client(), keys: map[string]string{}, env: map[string]string{}, ids: map[string]string{}}
@@ -66,8 +74,8 @@ func TestAlreadySetUpWhenEveryKeyWorks(t *testing.T) {
 func TestAlreadySetUpRefusesAnyKeyThatNoLongerWorks(t *testing.T) {
 	for name, srv := range map[string]*httptest.Server{
 		"AGENT_KEY":          fakeAPI(t, allPeople, nil),
-		"OPERATOR_KEY":       fakeAPI(t, []string{"admin", "stella", "runtime"}, []string{"agent"}),
-		"STUDIO_RUNTIME_KEY": fakeAPI(t, []string{"admin", "otto", "stella"}, []string{"agent"}),
+		"OPERATOR_KEY":       fakeAPI(t, []string{"admin", "stella", "runtime", "rita"}, []string{"agent"}),
+		"STUDIO_RUNTIME_KEY": fakeAPI(t, []string{"admin", "otto", "stella", "rita"}, []string{"agent"}),
 	} {
 		done, err := setupFor(srv).alreadySetUp(context.Background(), envFile(t, fullEnv))
 		if done || err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), resetHint) {
@@ -111,5 +119,22 @@ func TestAnEnvWithoutTheStudioKeysAsksForAReset(t *testing.T) {
 	done, err := setupFor(srv).alreadySetUp(context.Background(), envFile(t, old))
 	if done || err == nil || !strings.Contains(err.Error(), "STUDIO_AUTHOR_KEY") || !strings.Contains(err.Error(), resetHint) {
 		t.Fatalf("done=%v err=%v, want an error naming the missing Studio key and the reset instructions", done, err)
+	}
+}
+
+// An .env written before the Agent Hub (Phase 27b) belongs to a tenant where
+// rita does not lead HR, so nobody could publish leave-bot for the
+// screenshots: setup must ask for a reset rather than reuse it.
+func TestAnEnvWhereRitaDoesNotLeadHRAsksForAReset(t *testing.T) {
+	for name, rita := range map[string]string{
+		"no group": `{"groups": []}`,
+		"a member": `{"groups": [{"name": "hr", "lead": false}]}`,
+		"no field": `{}`,
+	} {
+		srv := fakeAPIWithRita(t, allPeople, []string{"agent"}, rita)
+		done, err := setupFor(srv).alreadySetUp(context.Background(), envFile(t, fullEnv))
+		if done || err == nil || !strings.Contains(err.Error(), "lead") || !strings.Contains(err.Error(), resetHint) {
+			t.Errorf("%s: done=%v err=%v, want an error about the HR lead with the reset instructions", name, done, err)
+		}
 	}
 }

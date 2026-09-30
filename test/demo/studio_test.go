@@ -26,7 +26,9 @@ const leaveAnswer = "You have 12 days of leave left."
 // TestStudioDemo is the Agent Studio thin slice through the API (ADR-033,
 // Phase 27a-3a): an HR employee's agent, approved by a second person, runs
 // in agent-runtime with a key derived from a master only the runtime holds,
-// and every side effect goes through the action path.
+// and every side effect goes through the action path. Phase 27b adds the
+// Hub: an HR lead publishes the agent to HR, a colleague runs it, and a
+// finance author's copy starts with no permission.
 func TestStudioDemo(t *testing.T) {
 	d := newDemo(t, tenantStudio)
 	if d.p.name() != "compose" {
@@ -36,11 +38,16 @@ func TestStudioDemo(t *testing.T) {
 	d.step("S0. Bootstrap tenant Wonka: people, the HR department and the runtime's own principal")
 	d.tenantWithCast("wonka", "Wonka", []member{
 		{"erin", "registry_editor"}, {"rita", "registry_approver"}, {"otto", "operator"}, {"audra", "auditor"},
-		{"stella", "studio_author"}, {"carol", "approver"},
+		{"stella", "studio_author"}, {"carol", "approver"}, {"hana", "approver"}, {"lena", "approver"},
+		{"finn", "studio_author"},
 	})
 	hr := d.must(201, "alice", "POST", "/v1/groups", map[string]any{"name": "hr", "display_name": "HR"})
-	d.must(201, "alice", "POST", "/v1/groups/"+hr["id"].(string)+"/members", map[string]any{"principal_id": d.ids["stella"]})
-	d.logf("stella (studio_author) is in HR; carol is not")
+	finance := d.must(201, "alice", "POST", "/v1/groups", map[string]any{"name": "finance", "display_name": "Finance"})
+	for who, g := range map[string]map[string]any{"stella": hr, "hana": hr, "lena": hr, "finn": finance} {
+		d.must(201, "alice", "POST", "/v1/groups/"+g["id"].(string)+"/members",
+			map[string]any{"principal_id": d.ids[who], "lead": who == "lena"})
+	}
+	d.logf("stella (studio_author) and hana are in HR, led by lena; finn (studio_author) is in finance; carol is in neither")
 	d.runtimePrincipal()
 	policy := d.must(201, "alice", "POST", "/v1/policies", map[string]any{"content": json.RawMessage(`{"format_version": 1,
 		"rules": [{"id": "hr-lookups", "match": {"target": "hr"}, "verdict": "allow", "reason": "read-only HR lookup"}]}`)})
@@ -117,13 +124,69 @@ func TestStudioDemo(t *testing.T) {
 		t.Fatalf("a failed run has an answer: %v", failed)
 	}
 
-	d.step("S6. otto revokes every Studio key: runs stop at once")
+	d.step("S6. The Hub: lena, HR's lead, publishes leave-bot to HR; hana runs it; finn's copy starts unapproved")
+	code, body = d.call("hana", "POST", "/v1/studio/agents/"+agent+"/runs", map[string]any{"inputs": map[string]string{"employee_id": "E-1"}})
+	if code != 403 {
+		t.Fatalf("hana ran an unpublished agent: %d %v", code, body)
+	}
+	d.logf("before it is published only its owner runs it: hana, in HR, gets HTTP %d", code)
+	proposal := d.must(201, "stella", "POST", "/v1/studio/agents/"+agent+"/listing", map[string]any{"version_id": version,
+		"scope": "DEPARTMENT", "tags": []string{"leave", "hr"}, "note": "for everyone in HR"})
+	decide := "/v1/studio/listing-proposals/" + proposal["id"].(string) + "/approve"
+	code, body = d.call("stella", "POST", decide, map[string]any{"reason": "mine"})
+	if code != 409 {
+		t.Fatalf("stella published her own agent: %d %v", code, body)
+	}
+	code, body = d.call("rita", "POST", decide, map[string]any{"reason": "looks fine"})
+	if code != 403 {
+		t.Fatalf("a registry approver published to a department: %d %v", code, body)
+	}
+	d.must(200, "lena", "POST", decide, map[string]any{"reason": "useful for HR"})
+	d.logf("stella proposes it to HR: she cannot publish it herself (HTTP 409), nor can rita (HTTP 403); lena, HR's lead, publishes it")
+	hub := d.must(200, "hana", "GET", "/v1/studio/hub", nil)
+	listings := hub["listings"].([]any)
+	if len(listings) != 1 || listings[0].(map[string]any)["runnable"] != true {
+		t.Fatalf("hana's Hub = %v", hub)
+	}
+	listing := listings[0].(map[string]any)["id"].(string)
+	colleague := d.waitRunAs("hana", d.runAs("hana", agent, "E-1"), "SUCCEEDED", "")
+	if colleague["answer"] != leaveAnswer {
+		t.Fatalf("hana's answer = %v", colleague["answer"])
+	}
+	hanaStep := d.must(200, "audra", "GET", "/v1/actions/"+colleague["steps"].([]any)[0].(map[string]any)["action_id"].(string), nil)
+	if hanaStep["agent_version_id"] != version || hanaStep["subject"] != "hana@wonka.test" {
+		t.Fatalf("hana's step = %v", hanaStep)
+	}
+	d.logf("hana finds it in the Hub and runs it as herself: the same version, her own subject, her own answer")
+	if got := d.must(200, "finn", "GET", "/v1/studio/hub", nil)["listings"].([]any); len(got) != 0 {
+		t.Fatalf("finn sees HR's listing: %v", got)
+	}
+	org := d.must(201, "stella", "POST", "/v1/studio/agents/"+agent+"/listing", map[string]any{"version_id": version,
+		"scope": "ORG", "tags": []string{"leave", "hr"}})
+	code, body = d.call("lena", "POST", "/v1/studio/listing-proposals/"+org["id"].(string)+"/approve", map[string]any{"reason": "wider"})
+	if code != 403 {
+		t.Fatalf("a department lead published to the organisation: %d %v", code, body)
+	}
+	d.must(200, "rita", "POST", "/v1/studio/listing-proposals/"+org["id"].(string)+"/approve", map[string]any{"reason": "useful for everyone"})
+	d.logf("finance saw nothing until rita (not lena, HTTP %d) published it to the organisation", code)
+	clone := d.must(201, "finn", "POST", "/v1/studio/listings/"+listing+"/clone", map[string]any{"name": "finance-leave-bot",
+		"display_name": "Leave balance (finance)", "department_id": finance["id"]})
+	if clone["status"] != "waiting_for_approval" {
+		t.Fatalf("clone = %v", clone)
+	}
+	code, body = d.call("finn", "POST", "/v1/studio/agents/"+clone["agent_id"].(string)+"/runs", map[string]any{"inputs": map[string]string{"employee_id": "E-1"}})
+	if code != 409 {
+		t.Fatalf("finn ran an unapproved copy: %d %v", code, body)
+	}
+	d.logf("finn copies it into finance: the copy is %v and cannot run (HTTP %d); it carries no permission", clone["status"], code)
+
+	d.step("S7. otto revokes every Studio key: runs stop at once")
 	revoked := d.must(200, "otto", "POST", "/v1/studio/credentials/revoke-all", map[string]any{"reason": "suspected runtime compromise (demo)"})
 	d.logf("otto revokes %v Studio key(s)", revoked["revoked"])
 	d.waitRun(d.runAs("stella", agent, "E-1"), "FAILED", "credential_pending")
 	d.logf("the next run fails closed: credential_pending, until a new key is proposed and approved")
 
-	d.step("S7. No master, derived key or runtime key anywhere; the answer is in no log and no journal entry")
+	d.step("S8. No master, derived key or runtime key anywhere; the answer is in no log and no journal entry")
 	d.studioScan(master, key)
 	v := d.must(200, "audra", "GET", "/v1/audit/verify", nil)
 	if v["valid"] != true {
@@ -230,9 +293,15 @@ func (d *demo) runAs(who, agent, employee string) string {
 // as stella sees it.
 func (d *demo) waitRun(run, state, reason string) map[string]any {
 	d.t.Helper()
+	return d.waitRunAs("stella", run, state, reason)
+}
+
+// waitRunAs is waitRun as who sees the run.
+func (d *demo) waitRunAs(who, run, state, reason string) map[string]any {
+	d.t.Helper()
 	deadline := time.Now().Add(120 * time.Second)
 	for {
-		got := d.must(200, "stella", "GET", "/v1/studio/runs/"+run, nil)
+		got := d.must(200, who, "GET", "/v1/studio/runs/"+run, nil)
 		if s := got["state"]; s == "SUCCEEDED" || s == "FAILED" {
 			if s != state || (reason != "" && got["failure_reason"] != reason) {
 				d.t.Fatalf("run %s = %v, want %s %s\nruntime log:\n%s", run, got, state, reason, d.p.runtimeLogs())

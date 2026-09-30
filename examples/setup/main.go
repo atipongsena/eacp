@@ -46,7 +46,7 @@ const keyDays = 90
 // people are the tenant's members after alice and bob, the admins.
 var people = []struct{ name, role, env string }{
 	{"erin", "registry_editor", "EDITOR_KEY"},
-	{"rita", "registry_approver", "REGISTRY_APPROVER_KEY"},
+	{"rita", "registry_approver", "REGISTRY_APPROVER_KEY"}, // also leads the HR group
 	{"ravi", "registry_approver", ""},
 	{"otto", "operator", "OPERATOR_KEY"},
 	{"olga", "operator", "OPERATOR2_KEY"},
@@ -58,7 +58,7 @@ var people = []struct{ name, role, env string }{
 
 // requiredKeys are the keys a reusable examples/.env must hold: one written
 // before a newer setup step is refused with the reset instructions.
-var requiredKeys = []string{"ADMIN_KEY", "AGENT_KEY", "STUDIO_AUTHOR_KEY", "STUDIO_RUNTIME_KEY"}
+var requiredKeys = []string{"ADMIN_KEY", "AGENT_KEY", "REGISTRY_APPROVER_KEY", "STUDIO_AUTHOR_KEY", "STUDIO_RUNTIME_KEY"}
 
 type setup struct {
 	api   string
@@ -184,7 +184,7 @@ func (s *setup) alreadySetUp(ctx context.Context, path string) (bool, error) {
 			route = "/v1/agent/self"
 		}
 		s.keys[k] = env[k]
-		code, _, err := s.call(ctx, k, "GET", route, nil)
+		code, body, err := s.call(ctx, k, "GET", route, nil)
 		if err != nil {
 			return false, err
 		}
@@ -192,8 +192,23 @@ func (s *setup) alreadySetUp(ctx context.Context, path string) (bool, error) {
 			return false, fmt.Errorf("examples/.env exists but its %s is not accepted (HTTP %d): the stack was reset "+
 				"or the key expired; %s", k, code, resetHint)
 		}
+		if k == "REGISTRY_APPROVER_KEY" && !leadsHR(body) {
+			return false, fmt.Errorf("examples/.env was written before rita became the HR lead who publishes "+
+				"leave-bot in the Agent Hub; %s", resetHint)
+		}
 	}
 	return true, nil
+}
+
+// leadsHR reports whether a /v1/me body shows the caller leading the hr group.
+func leadsHR(me map[string]any) bool {
+	groups, _ := me["groups"].([]any)
+	for _, g := range groups {
+		if m, _ := g.(map[string]any); m["name"] == "hr" && m["lead"] == true {
+			return true
+		}
+	}
+	return false
 }
 
 // newKey generates who's key and returns the credential id and the hash
@@ -392,9 +407,13 @@ func (s *setup) studio(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.must(ctx, 201, "alice", "POST", "/v1/groups/"+id(g)+"/members",
-		map[string]any{"principal_id": s.ids["stella"]}); err != nil {
-		return err
+	// stella saves agents into HR; rita leads HR, so she publishes its
+	// agents in the Agent Hub (a lead is set only when the membership is added).
+	for who, lead := range map[string]bool{"stella": false, "rita": true} {
+		if _, err := s.must(ctx, 201, "alice", "POST", "/v1/groups/"+id(g)+"/members",
+			map[string]any{"principal_id": s.ids[who], "lead": lead}); err != nil {
+			return err
+		}
 	}
 	p, err := s.must(ctx, 201, "alice", "POST", "/v1/principals", map[string]any{"kind": "service",
 		"name": "studio-runtime", "display_name": "Agent runtime"})
