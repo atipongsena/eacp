@@ -100,6 +100,36 @@ func (s *Service) RemoveMember(ctx context.Context, a Actor, membershipID uuid.U
 	return s.change(ctx, a, func(tx pgx.Tx) error { return Tx{tx}.RemoveMember(ctx, membershipID, reason) })
 }
 
+// GroupRef names a group.
+type GroupRef struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+}
+
+// MemberGroups lists the groups a's principal is an active member of, by
+// name. It reads only the caller's own memberships.
+func (s *Service) MemberGroups(ctx context.Context, a Actor) ([]GroupRef, error) {
+	out := []GroupRef{}
+	err := s.read(ctx, a, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT g.id, g.name, g.display_name
+			FROM eacp.group_memberships m
+			JOIN eacp.groups g ON g.tenant_id = m.tenant_id AND g.id = m.group_id
+			WHERE m.principal_id = $1 AND m.removed_at IS NULL
+			ORDER BY g.name`, a.PrincipalID)
+		if err != nil {
+			return err
+		}
+		out, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (GroupRef, error) {
+			var g GroupRef
+			err := r.Scan(&g.ID, &g.Name, &g.DisplayName)
+			return g, err
+		})
+		return err
+	})
+	return out, err
+}
+
 // NewCredential registers a key its holder generated (bring your own key):
 // only the credential id and the SHA-256 of the secret are ever sent.
 type NewCredential struct {

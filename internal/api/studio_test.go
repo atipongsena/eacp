@@ -191,3 +191,34 @@ func TestStudioAuthorsSaveAndApproversDecide(t *testing.T) {
 		t.Fatalf("approver sees %v", list)
 	}
 }
+
+// TestMeListsTheCallersGroups: /v1/me names the caller's active groups, so
+// the Studio page can offer the departments an author may save into (Phase
+// 27a-3b). A removed membership disappears; nobody sees another's groups.
+func TestMeListsTheCallersGroups(t *testing.T) {
+	h, hr := studioHarness(t)
+	code, me := h.as("stella", "GET", "/v1/me", nil)
+	h.want(200, code, me)
+	groups, _ := me["groups"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("stella's groups = %v", me["groups"])
+	}
+	g := groups[0].(map[string]any)
+	if g["id"] != hr.String() || g["name"] != "hr" || g["display_name"] != "HR" {
+		t.Fatalf("group = %v", g)
+	}
+	code, me = h.as("carol", "GET", "/v1/me", nil)
+	h.want(200, code, me)
+	if groups, ok := me["groups"].([]any); !ok || len(groups) != 0 {
+		t.Fatalf("carol's groups = %v", me["groups"])
+	}
+	m := h.f.ID(t, "alice", `SELECT id FROM eacp.group_memberships WHERE group_id = $1 AND principal_id = $2`,
+		hr, h.f.P["stella"])
+	code, body := h.as("alice", "POST", "/v1/group-memberships/"+m.String()+"/remove", map[string]any{"reason": "moved"})
+	h.want(204, code, body)
+	code, me = h.as("stella", "GET", "/v1/me", nil)
+	h.want(200, code, me)
+	if groups, _ := me["groups"].([]any); len(groups) != 0 {
+		t.Fatalf("stella's groups after removal = %v", me["groups"])
+	}
+}

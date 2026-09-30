@@ -303,8 +303,14 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, c identity.Caller) e
 	if roles == nil {
 		roles = []string{}
 	}
+	// The caller's own groups: the Studio page offers them as departments.
+	groups, err := s.reg.MemberGroups(r.Context(), actor(c))
+	if err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant_id": c.TenantID, "principal_id": c.PrincipalID, "credential_id": c.CredentialID, "roles": roles})
+		"tenant_id": c.TenantID, "principal_id": c.PrincipalID, "credential_id": c.CredentialID, "roles": roles,
+		"groups": groups})
 	return nil
 }
 
