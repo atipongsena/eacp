@@ -374,3 +374,35 @@ func TestAKeyHeaderTheSignerOwnsIsRefused(t *testing.T) {
 		t.Fatalf("the target was called %d times", calls.Load())
 	}
 }
+
+// ADR-034: the execute response's result is a success's output; a failure
+// carries none, and a response up to 128 KiB is read.
+func TestHTTPReturnsASuccessesResult(t *testing.T) {
+	big := strings.Repeat("x", 100<<10)
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   string
+	}{
+		"object":      {200, `{"external_reference":"PO-1","result":{"po":"PO-1","lines":[1,2]}}`, `{"po":"PO-1","lines":[1,2]}`},
+		"string":      {200, `{"external_reference":"PO-1","result":"ok"}`, `"ok"`},
+		"no result":   {200, `{"external_reference":"PO-1"}`, ``},
+		"null result": {200, `{"external_reference":"PO-1","result":null}`, ``},
+		"large":       {200, `{"external_reference":"PO-1","result":"` + big + `"}`, `"` + big + `"`},
+		"failure":     {400, `{"error_class":"validation","result":{"why":"x"}}`, ``},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		res := connector.NewHTTP().Execute(context.Background(), call(t, srv.URL, "native"))
+		srv.Close()
+		if string(res.Output) != tc.want {
+			t.Errorf("%s: output = %.80q (outcome %s), want %.80q", name, res.Output, res.Outcome, tc.want)
+		}
+		if tc.status == 200 && res.Outcome != worker.Succeeded {
+			t.Errorf("%s: outcome %s", name, res.Outcome)
+		}
+	}
+}

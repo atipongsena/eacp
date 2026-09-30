@@ -19,7 +19,9 @@ import (
 	"github.com/atipongsena/eacp/internal/worker"
 )
 
-const maxResponseBytes = 16 << 10
+// maxResponseBytes bounds a response; a success's result may be up to 64 KiB
+// of canonical JSON (ADR-034), so the envelope allows twice that.
+const maxResponseBytes = 128 << 10
 
 var headerName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)
 
@@ -148,14 +150,20 @@ func (h *HTTP) Execute(ctx context.Context, c worker.Call) worker.Result {
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "transport_error"}
 	}
 	var data struct {
-		ExternalReference string `json:"external_reference"`
-		ErrorClass        string `json:"error_class"`
+		ExternalReference string          `json:"external_reference"`
+		ErrorClass        string          `json:"error_class"`
+		Result            json.RawMessage `json:"result"`
 	}
 	if !readResponse(r, &data) {
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 	}
 	if r.StatusCode >= 200 && r.StatusCode < 300 && strings.TrimSpace(data.ExternalReference) != "" {
-		return worker.Result{Outcome: worker.Succeeded, ExternalReference: data.ExternalReference}
+		// The result is the success's output (ADR-034); null is none.
+		var output json.RawMessage
+		if len(data.Result) > 0 && string(data.Result) != "null" {
+			output = data.Result
+		}
+		return worker.Result{Outcome: worker.Succeeded, ExternalReference: data.ExternalReference, Output: output}
 	}
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
 		if data.ExternalReference == "" && slices.Contains(c.Contract.NoEffectErrors, data.ErrorClass) && data.ErrorClass != "" {

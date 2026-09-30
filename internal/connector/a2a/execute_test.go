@@ -159,7 +159,8 @@ func TestADelegationSendsOneMessage(t *testing.T) {
 			a := newRPCAgent(t)
 			a.reply = sent(map[string]any{"task": task("task-1", "TASK_STATE_COMPLETED")}, "")
 			call := delegation(t, a.endpoint, c.payload)
-			if res := execute(t, fastClient(), call); res != (worker.Result{Outcome: worker.Succeeded, ExternalReference: "task-1"}) {
+			if res := execute(t, fastClient(), call); res.Outcome != worker.Succeeded || res.ExternalReference != "task-1" ||
+				res.ErrorClass != "" || res.RemoteReference != "" {
 				t.Fatalf("result %+v", res)
 			}
 			if m := a.methods(); !slices.Equal(m, []string{"SendMessage"}) {
@@ -264,7 +265,7 @@ func TestEveryOutcomeIsClassified(t *testing.T) {
 				}
 				return task("task-1", "TASK_STATE_CANCELED"), 0
 			}
-			if res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`)); res != c.want {
+			if res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`)); differs(res, c.want) {
 				t.Fatalf("result %+v, want %+v", res, c.want)
 			}
 			want := []string{"SendMessage"}
@@ -281,7 +282,7 @@ func TestEveryOutcomeIsClassified(t *testing.T) {
 		a := newRPCAgent(t)
 		a.srv.Close()
 		res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
-		if res != (worker.Result{Outcome: worker.NoEffect, ErrorClass: "connection_refused_before_send"}) {
+		if differs(res, worker.Result{Outcome: worker.NoEffect, ErrorClass: "connection_refused_before_send"}) {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -300,7 +301,7 @@ func TestAWorkingTaskIsFollowed(t *testing.T) {
 		}
 	}
 	res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
-	if res != (worker.Result{Outcome: worker.Succeeded, ExternalReference: "task-1"}) {
+	if differs(res, worker.Result{Outcome: worker.Succeeded, ExternalReference: "task-1"}) {
 		t.Fatalf("result %+v", res)
 	}
 	if m := a.methods(); !slices.Equal(m, []string{"SendMessage", "GetTask", "GetTask", "GetTask"}) {
@@ -335,7 +336,7 @@ func TestAMismatchedTaskIsRefused(t *testing.T) {
 		return task("task-1", "TASK_STATE_CANCELED"), 0
 	}
 	res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
-	if res != (worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response", RemoteReference: "task-1"}) {
+	if differs(res, worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response", RemoteReference: "task-1"}) {
 		t.Fatalf("result %+v", res)
 	}
 	if m := a.methods(); !slices.Equal(m, []string{"SendMessage", "GetTask", "CancelTask"}) {
@@ -389,7 +390,7 @@ func TestAnInterruptedTaskIsCancelledOnce(t *testing.T) {
 			defer cancel()
 			start := time.Now()
 			res := cl.Execute(ctx, delegation(t, a.endpoint, `{"text":"Buy"}`))
-			if res != (worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_interrupted", RemoteReference: "task-1"}) {
+			if differs(res, worker.Result{Outcome: worker.Ambiguous, ErrorClass: "a2a_interrupted", RemoteReference: "task-1"}) {
 				t.Fatalf("result %+v", res)
 			}
 			if elapsed := time.Since(start); elapsed > time.Second {
@@ -411,7 +412,7 @@ func TestAnInterruptedTaskIsCancelledOnce(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 		defer cancel()
 		res := fastClient().Execute(ctx, delegation(t, a.endpoint, `{"text":"Buy"}`))
-		if res != (worker.Result{Outcome: worker.Ambiguous, ErrorClass: "timeout"}) {
+		if differs(res, worker.Result{Outcome: worker.Ambiguous, ErrorClass: "timeout"}) {
 			t.Fatalf("result %+v", res)
 		}
 		if m := a.methods(); !slices.Equal(m, []string{"SendMessage"}) {
@@ -429,7 +430,7 @@ func TestAnInvalidPayloadSendsNothing(t *testing.T) {
 		if len(label) > 40 {
 			label = label[:40]
 		}
-		if res := execute(t, fastClient(), delegation(t, a.endpoint, p)); res != (worker.Result{Outcome: worker.NoEffect,
+		if res := execute(t, fastClient(), delegation(t, a.endpoint, p)); differs(res, worker.Result{Outcome: worker.NoEffect,
 			ErrorClass: "invalid_payload"}) {
 			t.Fatalf("%s: result %+v", label, res)
 		}
@@ -449,7 +450,7 @@ func TestResponsesAreBounded(t *testing.T) {
 	a.reply = sent(map[string]any{"task": map[string]any{"id": "task-1", "contextId": "c",
 		"status": map[string]any{"state": "TASK_STATE_COMPLETED"}, "metadata": map[string]any{"x": strings.Repeat("x", 1<<20)}}}, "")
 	res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
-	if res != (worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}) {
+	if differs(res, worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}) {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -465,7 +466,7 @@ func TestNoRedirectIsFollowed(t *testing.T) {
 	}
 	a.reply = sent(map[string]any{"task": task("task-1", "TASK_STATE_COMPLETED")}, "")
 	res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
-	if res != (worker.Result{Outcome: worker.Ambiguous, ErrorClass: "http_307"}) {
+	if differs(res, worker.Result{Outcome: worker.Ambiguous, ErrorClass: "http_307"}) {
 		t.Fatalf("result %+v", res)
 	}
 	if n := len(a.methods()); n != 1 {
@@ -575,7 +576,7 @@ func TestARejectionAfterWorkIsUnknown(t *testing.T) {
 				}
 				return task("task-1", c.states[min(n, len(c.states)-1)]), 0
 			}
-			if res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`)); res != c.want {
+			if res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`)); differs(res, c.want) {
 				t.Fatalf("result %+v", res)
 			}
 		})
@@ -608,3 +609,37 @@ func TestARemoteStateNeverReachesTheLog(t *testing.T) {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// TestASuccessReturnsItsArtifactsAsOutput (ADR-034): a completed task's
+// artifacts, or a direct reply's parts, are the output; nothing else is.
+func TestASuccessReturnsItsArtifactsAsOutput(t *testing.T) {
+	a := newRPCAgent(t)
+	a.reply = sent(map[string]any{"task": task("task-1", "TASK_STATE_WORKING")}, "TASK_STATE_COMPLETED")
+	res := execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
+	want := `{"artifacts":[{"artifactId":"a-1","parts":[{"text":"PO-42 raised"}]}]}`
+	if res.Outcome != worker.Succeeded || string(res.Output) != want {
+		t.Fatalf("task: %s output %s", res.Outcome, res.Output)
+	}
+
+	a = newRPCAgent(t)
+	a.reply = sent(map[string]any{"message": map[string]any{"messageId": "m-1", "role": "ROLE_AGENT",
+		"parts": []any{map[string]any{"text": "done"}}}}, "")
+	res = execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`))
+	if res.Outcome != worker.Succeeded || string(res.Output) != `{"parts":[{"text":"done"}]}` {
+		t.Fatalf("message: %s output %s", res.Outcome, res.Output)
+	}
+
+	// A failed task keeps its artifacts to itself.
+	a = newRPCAgent(t)
+	a.reply = sent(map[string]any{"task": task("task-1", "TASK_STATE_FAILED")}, "")
+	if res = execute(t, fastClient(), delegation(t, a.endpoint, `{"text":"Buy"}`)); res.Output != nil {
+		t.Fatalf("failed: %s output %s", res.Outcome, res.Output)
+	}
+}
+
+// differs compares a result's classification; a success's Output is
+// checked where it matters (TestASuccessReturnsItsArtifactsAsOutput).
+func differs(got, want worker.Result) bool {
+	return got.Outcome != want.Outcome || got.ExternalReference != want.ExternalReference ||
+		got.ErrorClass != want.ErrorClass || got.RemoteReference != want.RemoteReference
+}

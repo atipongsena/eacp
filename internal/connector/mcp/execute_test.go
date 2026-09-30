@@ -514,6 +514,12 @@ func TestExecuteNeverLeaksOutput(t *testing.T) {
 			if len(s.Calls()) != 1 {
 				t.Fatalf("%d calls", len(s.Calls()))
 			}
+			// Only a success returns output, and only in Output (ADR-034),
+			// for the worker to keep or drop per the contract.
+			if (name == "success") != strings.Contains(string(res.Output), canary) {
+				t.Fatalf("%s: output %s", name, res.Output)
+			}
+			res.Output = nil
 			if strings.Contains(fmt.Sprintf("%#v", res), canary) {
 				t.Fatalf("the result carries tool output: %+v", res)
 			}
@@ -897,5 +903,30 @@ func TestExecuteSendsNoMcpNameOnTheLegacyRevision(t *testing.T) {
 		if r.Header.Get("Mcp-Name") != "" {
 			t.Fatalf("legacy %s carries Mcp-Name", r.RPCMethod)
 		}
+	}
+}
+
+// TestASuccessReturnsItsResultAsOutput (ADR-034): the output is the whole
+// CallToolResult, so its RFC 8785 digest is the reference.
+func TestASuccessReturnsItsResultAsOutput(t *testing.T) {
+	result := map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": "PO-1"}},
+		"structuredContent": map[string]any{"po": "PO-1"}}
+	s := mcptest.New(t, mcptest.Modern, token, createTool)
+	s.OnCall(func(string, json.RawMessage) mcptest.Reply { return mcptest.Reply{Result: result} })
+	res := execute(t, mcp.New(), toolCall(t, s.URL(), payload), 5*time.Second)
+	if res.Outcome != worker.Succeeded || len(res.Output) == 0 {
+		t.Fatalf("result %+v", res)
+	}
+	canon, err := governance.Canonicalize(res.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(canon)
+	if res.ExternalReference != "mcp:sha256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("reference %s is not the digest of the output %s", res.ExternalReference, canon)
+	}
+	var got map[string]any
+	if json.Unmarshal(res.Output, &got) != nil || got["structuredContent"].(map[string]any)["po"] != "PO-1" {
+		t.Fatalf("output %s", res.Output)
 	}
 }

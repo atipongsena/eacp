@@ -181,12 +181,14 @@ func (d *delegation) run(ctx context.Context, parts []any) worker.Result {
 	case isMessage:
 		// A direct reply: the agent answered without a task.
 		var msg struct {
-			MessageID string `json:"messageId"`
+			MessageID string          `json:"messageId"`
+			Parts     json.RawMessage `json:"parts"`
 		}
 		if json.Unmarshal(m, &msg) != nil || !d.validID(msg.MessageID) {
 			return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 		}
-		return worker.Result{Outcome: worker.Succeeded, ExternalReference: "message:" + msg.MessageID}
+		return worker.Result{Outcome: worker.Succeeded, ExternalReference: "message:" + msg.MessageID,
+			Output: output("parts", msg.Parts)}
 	}
 	var first task
 	if json.Unmarshal(t, &first) != nil || !d.validID(first.ID) {
@@ -203,7 +205,7 @@ func (d *delegation) follow(ctx context.Context, t task) worker.Result {
 		d.final = t
 		switch t.Status.State {
 		case stateCompleted:
-			return worker.Result{Outcome: worker.Succeeded, ExternalReference: id}
+			return worker.Result{Outcome: worker.Succeeded, ExternalReference: id, Output: output("artifacts", t.Artifacts)}
 		case stateRejected:
 			if d.worked {
 				// Work was reported: a rejection now proves nothing.
@@ -370,4 +372,18 @@ func digest(raw json.RawMessage) string {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// output wraps a success's artifacts or reply parts as its output (ADR-034):
+// the worker keeps it only when the contract has a result retention. None
+// (absent or null) is no output.
+func output(name string, raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	b, err := json.Marshal(map[string]json.RawMessage{name: raw})
+	if err != nil {
+		return nil
+	}
+	return b
 }

@@ -243,7 +243,9 @@ func classify(call worker.Call, result json.RawMessage) worker.Result {
 	if call.Secret.Contains(ref) {
 		return worker.Result{Outcome: worker.Ambiguous, ErrorClass: "invalid_response"}
 	}
-	return worker.Result{Outcome: worker.Succeeded, ExternalReference: ref}
+	// The whole result is the output (ADR-034): the worker keeps it only
+	// when the contract has a result retention, and never logs it.
+	return worker.Result{Outcome: worker.Succeeded, ExternalReference: ref, Output: result}
 }
 
 // validOutput reports whether structured is valid against the certified
