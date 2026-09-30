@@ -27,7 +27,7 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 | [ADR-030](ADR-030-a2a-delegation.md) | Governed A2A Delegation | Accepted (Rev 1.0) | Phase 25a |
 | [ADR-031](ADR-031-llm-gateway.md) | The LLM Gateway | Accepted (Rev 1.0) | Phase 25b |
 | [ADR-032](ADR-032-mcp-tools-call.md) | Governed MCP `tools/call` | Accepted (Rev 1.0) | Phase 26a |
-| [ADR-033](ADR-033-agent-studio-and-runtime-credentials.md) | Agent Studio and the runtime's agent credentials | Proposed (Rev 1.0) | Phase 27-0 |
+| [ADR-033](ADR-033-agent-studio-and-runtime-credentials.md) | Agent Studio and the runtime's agent credentials | Accepted (Rev 1.0) | Phase 27-0 |
 | [ADR-034](ADR-034-result-channel.md) | The result channel | Accepted (Rev 1.0) | Phase 26b |
 | ADR-006 … ADR-021 (others, except 011, 012, 014, 015, 016, 018 and 019) | See MASTER_PLAN §74 | Not started | |
 

@@ -1,6 +1,6 @@
 # ADR-033: Agent Studio and the runtime's agent credentials
 
-Status: Proposed (Rev 1.0, 2026-09-30), awaiting the owner's review before any Phase 27a code. Scope: Phase 27-0.
+Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Scope: Phase 27-0.
 Related: ADR-001 (the product boundary, agents never hold enterprise credentials), ADR-003 §5 (API keys), ADR-019 (credential custody and providers), ADR-029 (replicas), ADR-031 (the LLM gateway authenticates agent keys), ADR-034 (the result channel); the program spec `docs/superpowers/specs/2026-09-29-agent-studio-program-design.md` sections 2, 5 and 11.
 
 ## Context
