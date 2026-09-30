@@ -127,7 +127,7 @@
 | contract pin นิยามที่ทบทวนแล้ว การเปลี่ยนที่เสี่ยงสูง หรือ tool ที่รับรองแล้วหายไป จะกักกัน tool และ contract จะไม่ตรงอีกต่อไป action ที่อนุมัติแล้วจะถูกปฏิเสธตอนปล่อย การกักกันคือ containment (operator หรือ registry approver) การปล่อยต้องใช้ registry approver คนที่สองและไม่รับรองใหม่ | `TestMCPDefinitionDriftBeforeReleaseDenies`, `TestMissingCertifiedToolIsQuarantined`, `TestToolQuarantineRules` |
 | operator ดู tool, ประวัตินิยาม และการ scan ขอ scan ใหม่ และกักกันหรือปล่อย tool ได้ | `GET /v1/connectors/{id}/tools`, `GET /v1/connectors/{id}/mcp[/scans]`, `POST /v1/connectors/{id}/mcp/scan`, `GET /v1/tools/{id}[/definitions]`, `POST /v1/tools/{id}/quarantine\|release`; `eacpctl connector tools\|mcp\|scans\|scan`, `eacpctl tool` |
 
-การเรียก MCP tool (`tools/call`) คือ Phase 26a ([ADR-032](adr/ADR-032-mcp-tools-call.md)) execution worker ส่ง `tools/call` ไม่เกินหนึ่งครั้งต่อ action หลังแสดงรายการ tool ของ server และพบว่านิยามของ tool ตรงกับที่รับรองไว้ทุกไบต์ (`definition_changed`, `tool_missing` และ `definition_unverified` จะไม่ส่งอะไรเลย) tool ที่ใช้ `x-mcp-header` ถูกปฏิเสธ (`unsupported_header_mirroring`) reference ของความสำเร็จคือ `mcp:sha256:<digest ของผลลัพธ์>` ผลลัพธ์ของ tool ไม่ถูกเก็บ บันทึกลง journal หรือ log และการส่งผลลัพธ์กลับเป็นงานของ phase ถัดไป ผลลัพธ์ `isError`, output ที่ไม่ถูกต้อง, `input_required` และความล้มเหลวของการส่งหลังส่งไปแล้วจะเป็น `UNKNOWN_OUTCOME` เว้นแต่ class นั้นถูกรับรอง หลักฐาน: `TestTheWorkerCallsAnMCPTool`, `TestAChangedDefinitionBetweenScansIsNeverCalled`, `TestAnMCPActionIsNeverRetried`, `TestNothingOfTheOutputIsPersisted`, `TestAToolWithHeaderMirroringIsRefused`
+การเรียก MCP tool (`tools/call`) คือ Phase 26a ([ADR-032](adr/ADR-032-mcp-tools-call.md)) execution worker ส่ง `tools/call` ไม่เกินหนึ่งครั้งต่อ action หลังแสดงรายการ tool ของ server และพบว่านิยามของ tool ตรงกับที่รับรองไว้ทุกไบต์ (`definition_changed`, `tool_missing` และ `definition_unverified` จะไม่ส่งอะไรเลย) tool ที่ใช้ `x-mcp-header` ถูกปฏิเสธ (`unsupported_header_mirroring`) reference ของความสำเร็จคือ `mcp:sha256:<digest ของผลลัพธ์>` ผลลัพธ์ของ tool ไม่ถูกบันทึกลง journal หรือ log และจะถูกเก็บไว้ให้ agent ที่เรียกอ่านเฉพาะเมื่อ contract เลือกเปิด (Phase 26b ด้านล่าง) ผลลัพธ์ `isError`, output ที่ไม่ถูกต้อง, `input_required` และความล้มเหลวของการส่งหลังส่งไปแล้วจะเป็น `UNKNOWN_OUTCOME` เว้นแต่ class นั้นถูกรับรอง หลักฐาน: `TestTheWorkerCallsAnMCPTool`, `TestAChangedDefinitionBetweenScansIsNeverCalled`, `TestAnMCPActionIsNeverRetried`, `TestNothingOfTheOutputIsPersisted`, `TestAToolWithHeaderMirroringIsRefused`
 
 ## Slice C (Phase 15): dependency graph และ blast radius
 
@@ -329,6 +329,18 @@ eacpctl llm-model register --name sonnet --provider anthropic --base-url https:/
 ทุกการเรียกถูกตัดสินใน PostgreSQL ก่อนส่ง model ต้องอยู่ใน allowlist, ต้องไม่มี kill scope ที่ตรงกัน (operator kill `model` ได้แล้ว) และการจองงบประมาณแบบแข็งต้องพอตามราคาในตารางราคา gateway เป็นผู้ถือ key ของผู้ให้บริการแต่เพียงผู้เดียว (`EACP_LLM_SECRETS_FILE` ในรูปแบบ manifest เดียวกับของ worker) ตัดการเรียกที่ถูก kill ภายในไม่กี่วินาที และปิดยอดตาม usage ที่ผู้ให้บริการรายงานด้วยราคาของ PostgreSQL `eacpctl llm-calls list` แสดง ledger คือ token, ค่าใช้จ่าย และผลลัพธ์ ไม่เคยแสดงเนื้อหา `DEMO=L scripts/demo.sh` รัน demo ของ LLM gateway
 
 worker ลงทะเบียน HTTP connector ของ Phase 6 และรัน reconciler ของ Phase 7 Fake ERP ต้องใช้ credential สำหรับการเรียกที่มีอภิสิทธิ์ และเก็บ operation log ไว้ใน volume ของ Compose ที่คงทน
+
+## Phase 26b: ช่องทางรับผลลัพธ์
+
+contract เลือกเก็บผลลัพธ์ของการเรียกที่สำเร็จไว้ให้ agent ที่เรียกอ่านได้ นาน 60 วินาทีถึงหนึ่งวัน (`result_retention_seconds`; [ADR-034](adr/ADR-034-result-channel.md)) การเปิดใช้คือการออก contract เวอร์ชันใหม่ จึงต้องให้คนที่สองเป็นผู้เปิดใช้ HTTP ส่ง `result` ในคำตอบของ execute มา MCP ส่ง `CallToolResult` ทั้งก้อน (digest ของมันคือ reference) และ A2A ส่ง artifact ของ task
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| เก็บเฉพาะความสำเร็จ โดยผู้ถือ lease บันทึกใน transaction เดียวกับที่ย้าย action ไปเป็น `SUCCEEDED` PostgreSQL คำนวณ digest ขนาด และเวลาหมดอายุ | `migrations/00026_result_channel.sql`, `TestOnlyTheLeaseHolderRecordsASuccess`, `TestASuccessKeepsItsOutputForTheAgent`, `TestAKilledSuccessKeepsNoOutput` |
+| มีเพียงเวอร์ชัน `ACTIVE` ของ agent ที่เรียกเท่านั้นที่อ่านเนื้อหาได้ (`GET /v1/actions/{id}/result`) operator เห็นแค่ขนาดและ digest ในหลักฐาน | `TestOnlyTheActionsAgentReadsTheResult`, `TestResultContentIsNotSelectable`, `TestTheCallingAgentReadsItsResult` |
+| มีขอบเขต: JSON แบบ RFC 8785 ไม่เกิน 64 KiB ผลลัพธ์ที่มี credential ที่ worker ถืออยู่หรือใหญ่เกินจะไม่ถูกเก็บ แต่ action ยังสำเร็จ | `TestPrepareOutput`, `TestACredentialInTheOutputIsWithheld`, `TestAnOversizedOutputIsWithheldAndTheActionSucceeds`, `TestAWithheldResultSaysWhy` |
+| มีเวลาจำกัด: หมดอายุแล้วอ่านไม่ได้ และ sweeper ลบเนื้อหาทิ้งครั้งเดียว | `TestTheSweeperClearsExpiredResultsOnce`, `TestPruneNeedsTheSweeper` |
+| ไม่อยู่ใน log, journal หรือข้อความใดๆ | `TestASuccessKeepsItsOutputForTheAgent` |
 
 ## Benchmark
 

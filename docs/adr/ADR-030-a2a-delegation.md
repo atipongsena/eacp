@@ -80,6 +80,8 @@ An ambiguous or no-effect attempt carries no external reference (ADR-004). `eacp
 
 Only ids, states, counts and digests. The delegation log line names the host, action id, task id, final state (a state EACP does not know is logged as `unknown`), `GetTask` polls, artifact count and the SHA-256 of the artifacts' canonical JSON. Message and artifact content from the remote agent is untrusted and never stored, journaled or logged; the calling agent sees the external reference, not the output.
 
+> **Phase 26b (ADR-034):** a completed task's artifacts, or a direct reply's parts, are returned as a success's output. They are kept for the calling agent only when the contract has a `result_retention_seconds`, and are still never journaled or logged.
+
 ## Consequences
 
 - A delegation is governed like any other external effect: allowlist, policy, approval, budget, kill, circuit and evidence all apply unchanged.

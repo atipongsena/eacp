@@ -1,6 +1,6 @@
 # Phase 26b: the result channel (design)
 
-Status: Accepted 2026-09-30 (the owner asked for the phase to run to the end without stopping, so every
+Status: Accepted 2026-09-30; implemented as ADR-034 (the owner asked for the phase to run to the end without stopping, so every
 choice below is the most conservative option and is recorded in ADR-034 for review afterwards).
 
 ## 1. Why

@@ -324,6 +324,8 @@ The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is bu
 4. **Tool and connector registry.** HTTP connectors with contracts that state what a failure means, MCP servers whose
    tools are discovered and fingerprinted, and A2A agents
    ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md), [ADR-030](docs/adr/ADR-030-a2a-delegation.md)).
+   A contract may let the calling agent, and no one else, read a successful call's output for a limited time
+   ([ADR-034](docs/adr/ADR-034-result-channel.md)).
 5. **Dependency graph.** Recorded dependencies and a conservative blast radius
    ([ADR-015](docs/adr/ADR-015-dependency-graph.md)).
 6. **Fleet operations.** Atomic lifecycle changes across many agents, and kill switches
@@ -372,7 +374,6 @@ EACP is under active development. Everything described above exists and is teste
 yet. Not built yet:
 
 - **Inbound A2A.** EACP delegates to remote agents but does not yet accept delegations from them.
-- **Returning MCP tool output.** A worker calls a certified MCP tool at most once and records a digest of the result, but never stores or returns the output.
 - **Global and run kill scopes.** They wait for platform authority and authenticated run bindings. Tenant, team,
   agent, version, action, connector, tool and model kills work.
 - **Multi-region.** One PostgreSQL is the authority; replicas share it.

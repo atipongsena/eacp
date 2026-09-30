@@ -85,6 +85,8 @@ Residual risk: the server may change the tool between the listing and the call. 
 
 Only ids, states, counts and the digest. The tool's output, its `content`, its `structuredContent` and any error text from the server are untrusted and never stored, journaled or logged (ADR-030 §6). The credential is redacted from every log line and refused in a reference.
 
+> **Phase 26b (ADR-034):** a success's whole `CallToolResult` is now returned to the worker as `Result.Output`. It is kept for the calling agent only when the contract has a `result_retention_seconds`, and it is still never journaled or logged. Error text and every non-success output are still never kept.
+
 ### S3.7 Changes outside `internal/connector/mcp`
 
 - `worker.Call` gains the tool's `RemoteName` and the certified `Definition` (canonical text), read by `Store.Load` through the contract's `definition_id`; both are empty for other protocols.
@@ -108,7 +110,7 @@ Each becomes a test first.
 - An MCP tool call is governed like any other external effect: allowlist, policy, approval, budget, kill, circuit and evidence apply unchanged.
 - No MCP call is ever retried, not even a `READ_ONLY` one. A lost write needs a human once it settles; a lost `READ_ONLY` call ends `FAILED` (`retry budget exhausted: attempts`) and is not escalated.
 - A tool that changes between scans is never called. The cost is one full listing per call and a failed check when the server cannot list.
-- The calling agent sees a digest, not the tool's output. A workflow that needs the result waits for Phase 26b.
+- The calling agent sees a digest, not the tool's output. A workflow that needs the result waits for Phase 26b (delivered: ADR-034, opt-in per contract).
 - A tool whose schema uses `x-mcp-header` cannot be called until its encoding is verified against the specification.
 
 ## Unresolved assumptions

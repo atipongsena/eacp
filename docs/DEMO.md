@@ -82,8 +82,8 @@ The narrative is printed by `go test -v`. For example:
 |---|---|---|
 | C0 | `eacpctl tenant create` for Globex with admins alice and bob; every person, grant and key is approved by the second admin; a policy allows routine ERP work | Two-person administration, in a second tenant on the same stack |
 | C1 | Erin registers the MCP connector `sap-mcp`. Declaring a tool by hand is refused (409). The worker's scanner discovers `get_po`: definition #1, risk `initial`, read-only, with a fingerprint computed by PostgreSQL | Tools are discovered, never declared (ADR-023) |
-| C2 | Erin certifies `get_po` as `READ_ONLY`, pinned to definition #1, and rita activates it. `po-assistant` (team procurement) may call `erp.create_po` and `sap-mcp.get_po`; `invoice-bot` (team finance) only `erp.create_po`. A routine purchase executes | One PO in the ERP |
-| C3 | po-assistant asks for `sap-mcp.get_po` with `{"id": "PO-1"}`. The worker lists the server's tools, finds the definition byte-equal to the certified one and sends one `tools/call`. The action succeeds and its reference is `mcp:sha256:<digest of the result>`; the server's call log holds one entry (a tool name and a time, no argument, no result) | An MCP tool is called at most once after a definition check, and its output is never stored (ADR-032) |
+| C2 | Erin certifies `get_po` as `READ_ONLY`, pinned to definition #1, keeping results for 10 minutes, and rita activates it. `po-assistant` (team procurement) may call `erp.create_po` and `sap-mcp.get_po`; `invoice-bot` (team finance) only `erp.create_po`. A routine purchase executes | One PO in the ERP |
+| C3 | po-assistant asks for `sap-mcp.get_po` with `{"id": "PO-1"}`. The worker lists the server's tools, finds the definition byte-equal to the certified one and sends one `tools/call`. The action succeeds and its reference is `mcp:sha256:<digest of the result>`; the server's call log holds one entry (a tool name and a time, no argument, no result). po-assistant reads the result (`GET /v1/actions/{id}/result`), whose SHA-256 equals the reference; auditor audra is refused (403) and the evidence shows only its size and digest | An MCP tool is called at most once after a definition check (ADR-032); its output is kept for the calling agent only (ADR-034) |
 | C4 | The server now lists `get_po` with a new description, an `approve` argument and `destructiveHint: true`. Before any rescan, po-assistant calls `get_po` again: the worker compares the server's definition with the certified one, finds a difference, sends nothing, and the action fails as `no_effect` `definition_changed` (the call log stays at one entry). Operator otto then requests a rescan. Definition #2 is `high` risk; the contract no longer matches the fingerprint and the tool is quarantined. po-assistant's lookup is `DENIED tool_quarantined` | A rug pull is refused at the worker before any scan sees it, then detected and contained before governance (ADR-032, ADR-023 §6–7) |
 | C5 | Blast radius of `sap-mcp`: po-assistant is confirmed, team procurement is affected, invoice-bot is not; coverage `observed_only` | Blast radius from capability edges (ADR-015) |
 | C6 | Otto kills po-assistant's version (`security_incident`). Its next purchase uses `erp.create_po`, which did not drift: it stays `QUEUED`, is never attempted and reaches no ERP. invoice-bot keeps working. Otto cannot clear their own kill (403). The held action is cancelled | Kill fencing in PostgreSQL, two-person clear, cancellation never blocked (ADR-016) |
@@ -93,9 +93,11 @@ The narrative is printed by `go test -v`. For example:
 | C10 | Search every API response, every service log (including `fakemcp`'s) and a database dump for the ERP and MCP credentials | Not found anywhere |
 
 ```text
-=== C3. po-assistant calls the certified MCP tool: one tools/call, a digest of the result as its reference
-    po-assistant calls sap-mcp.get_po: SUCCEEDED, reference mcp:sha256:<digest> (the result's digest, never its content)
+=== C3. po-assistant calls the certified MCP tool: one tools/call, then reads the result only it may read
+    po-assistant calls sap-mcp.get_po: SUCCEEDED, reference mcp:sha256:<digest> (the result's digest)
     Fake MCP call log: 1 tools/call (a tool name and a time; no argument, no result)
+    po-assistant reads its result: 202 bytes, sha256 equal to the reference, kept until <time>
+    audra (auditor) cannot read it (HTTP 403); the evidence shows its size and digest, never its content
 === C4. Trigger MCP drift: the server now advertises a different get_po
     fakemcp now lists get_po with a new description, an "approve" argument and destructiveHint: true
     po-assistant calls sap-mcp.get_po again, before any rescan: FAILED, no_effect definition_changed

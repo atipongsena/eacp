@@ -3702,6 +3702,8 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 
 > **Phase 26a delivered (2026-09-30, ADR-032):** the execution worker calls a certified MCP tool at most once per action after comparing the server's current definition with the certified one byte for byte; tools with `x-mcp-header` are refused; the reference is a digest of the result and the output is never stored (returning it is Phase 26b). Migration 00025 makes MCP contracts single-attempt.
 
+> **Phase 26b delivered (2026-09-30, ADR-034):** the result channel. A contract may keep a success's output (HTTP `result`, the MCP `CallToolResult`, A2A artifacts) for the calling agent for 60 s to a day; PostgreSQL records it only from the lease holder's succeeded attempt, serves it only to an `ACTIVE` version of the action's agent and hides it from `eacp_app`; the sweeper clears it after expiry. Migration 00026.
+
 Operator UI:
 
 ```text

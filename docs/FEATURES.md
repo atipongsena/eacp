@@ -128,7 +128,7 @@ explains the ideas; this page is the inventory. [INVARIANTS.md](INVARIANTS.md) m
 | A contract pins the reviewed definition. A high-risk change, or a certified tool that disappears, quarantines the tool and its contract stops matching; an approved action is denied at release. Quarantine is containment (operator or registry approver); release needs a second registry approver and never recertifies. | `TestMCPDefinitionDriftBeforeReleaseDenies`, `TestMissingCertifiedToolIsQuarantined`, `TestToolQuarantineRules` |
 | Operators see tools, definition history and scans, request a rescan, and quarantine or release a tool. | `GET /v1/connectors/{id}/tools`, `GET /v1/connectors/{id}/mcp[/scans]`, `POST /v1/connectors/{id}/mcp/scan`, `GET /v1/tools/{id}[/definitions]`, `POST /v1/tools/{id}/quarantine\|release`; `eacpctl connector tools\|mcp\|scans\|scan`, `eacpctl tool` |
 
-Calling MCP tools (`tools/call`) is Phase 26a ([ADR-032](adr/ADR-032-mcp-tools-call.md)): the execution worker sends at most one `tools/call` per action, after listing the server's tools and finding the tool's definition byte-equal to the certified one (`definition_changed`, `tool_missing` and `definition_unverified` send nothing). Tools that use `x-mcp-header` are refused (`unsupported_header_mirroring`). A success's reference is `mcp:sha256:<digest of the result>`; the tool's output is never stored, journaled or logged, and returning it is a later phase. An `isError` result, invalid output, `input_required` and a transport failure after the send are `UNKNOWN_OUTCOME` unless the class is certified. Evidence: `TestTheWorkerCallsAnMCPTool`, `TestAChangedDefinitionBetweenScansIsNeverCalled`, `TestAnMCPActionIsNeverRetried`, `TestNothingOfTheOutputIsPersisted`, `TestAToolWithHeaderMirroringIsRefused`.
+Calling MCP tools (`tools/call`) is Phase 26a ([ADR-032](adr/ADR-032-mcp-tools-call.md)): the execution worker sends at most one `tools/call` per action, after listing the server's tools and finding the tool's definition byte-equal to the certified one (`definition_changed`, `tool_missing` and `definition_unverified` send nothing). Tools that use `x-mcp-header` are refused (`unsupported_header_mirroring`). A success's reference is `mcp:sha256:<digest of the result>`; the tool's output is never journaled or logged, and it is kept for the calling agent only when the contract opts in (Phase 26b below). An `isError` result, invalid output, `input_required` and a transport failure after the send are `UNKNOWN_OUTCOME` unless the class is certified. Evidence: `TestTheWorkerCallsAnMCPTool`, `TestAChangedDefinitionBetweenScansIsNeverCalled`, `TestAnMCPActionIsNeverRetried`, `TestNothingOfTheOutputIsPersisted`, `TestAToolWithHeaderMirroringIsRefused`.
 
 ## Slice C (Phase 15): dependency graph and blast radius
 
@@ -334,6 +334,18 @@ eacpctl llm-model register --name sonnet --provider anthropic --base-url https:/
 Every call is decided in PostgreSQL before it is sent: the model must be on the allowlist, no kill scope may match (an operator can now kill a `model`), and a hard budget reservation must fit at the rate card's price. The gateway alone holds provider keys (`EACP_LLM_SECRETS_FILE`, the worker's manifest format), cuts a killed call within seconds, and settles the provider's reported usage at PostgreSQL's price. `eacpctl llm-calls list` shows the ledger: tokens, cost and outcome, never content. `DEMO=L scripts/demo.sh` runs the LLM gateway demo.
 
 The worker registers the Phase 6 HTTP connector and runs the Phase 7 reconciler. Fake ERP requires a credential for privileged calls and keeps its operation log in a durable Compose volume.
+
+## Phase 26b: the result channel
+
+A contract may keep a successful call's output for the agent that made it, for 60 seconds to a day (`result_retention_seconds`; [ADR-034](adr/ADR-034-result-channel.md)). Turning it on is a new contract version, so a second person activates it. HTTP returns the execute response's `result`, MCP the whole `CallToolResult` (its digest is the reference) and A2A the task's artifacts.
+
+| Capability | Evidence |
+|---|---|
+| Only a success is kept, recorded by the lease holder in the transaction that moves the action to `SUCCEEDED`; PostgreSQL computes the digest, size and expiry | `migrations/00026_result_channel.sql`, `TestOnlyTheLeaseHolderRecordsASuccess`, `TestASuccessKeepsItsOutputForTheAgent`, `TestAKilledSuccessKeepsNoOutput` |
+| Only an `ACTIVE` version of the calling agent reads the content (`GET /v1/actions/{id}/result`); operators see its size and digest in the evidence | `TestOnlyTheActionsAgentReadsTheResult`, `TestResultContentIsNotSelectable`, `TestTheCallingAgentReadsItsResult` |
+| Bounded: RFC 8785 JSON up to 64 KiB; an output with a worker-held credential or over the limit is withheld and the action still succeeds | `TestPrepareOutput`, `TestACredentialInTheOutputIsWithheld`, `TestAnOversizedOutputIsWithheldAndTheActionSucceeds`, `TestAWithheldResultSaysWhy` |
+| Time-limited: not served after it expires, and the sweeper clears the content once | `TestTheSweeperClearsExpiredResultsOnce`, `TestPruneNeedsTheSweeper` |
+| Never in a log, the journal or a message | `TestASuccessKeepsItsOutputForTheAgent` |
 
 ## Benchmarks
 

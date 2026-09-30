@@ -28,6 +28,8 @@ Phase 23a adds high availability without a leader (ADR-029). `internal/worker` T
 
 Phase 26a (MCP `tools/call`, ADR-032) adds TestAnMCPActionIsNeverRetried and TestAnUnknownMCPReadEndsFailedAndIsNeverResent to invariant 4 and TestNothingOfTheOutputIsPersisted to invariant 11; `test/demo` TestSliceCDemo calls a tool, refuses a rug pull and scans the database and the logs for the MCP credential.
 
+Phase 26b (the result channel, ADR-034) keeps a success's output for the calling agent only. `internal/worker` TestOnlyTheLeaseHolderRecordsASuccess joins invariant 1, TestOnlyTheActionsAgentReadsTheResult and TestResultContentIsNotSelectable join invariant 8, and TestACredentialInTheOutputIsWithheld joins invariant 11.
+
 Phase 25b adds the LLM gateway (ADR-031): an agent's model calls are admitted, reserved against its hard budget and settled in PostgreSQL through an insert-only ledger, and only the gateway holds provider keys. Its tests join invariants 3, 11 and 17. `internal/llm/schema_test.go` also checks every `llm_admit` denial in order, the settle outcomes and costs, the sweeper and the kill scopes in raw SQL; `internal/llmgateway` checks validation, forwarding, the SSE relay, kills, limits and interoperability with the official Anthropic and OpenAI Go SDKs. `test/demo` TestLLMGatewayDemo scans responses, logs and the database for the provider key, the agent key and the prompt.
 
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
@@ -49,6 +51,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestStaleScannerCannotRecord — a scanner whose scan lease was taken over records nothing
 - `internal/worker` TestRawDispatchIntentIsDatabaseFencedByKill — raw T16 cannot commit an attempt under a killed scope
 - `internal/registry` TestScanLeaseFencesStaleScanners — the database fences scan records by worker, generation and expiry
+- `internal/worker` TestOnlyTheLeaseHolderRecordsASuccess — only the lease holder at the current generation keeps a result, and only for its succeeded attempt (ADR-034)
 
 ## 2 [A] One-time approval cannot release two execution claims
 
@@ -146,6 +149,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/api` TestFinOpsOfOtherTenantsAreNotFound — the FinOps API shows another tenant no spend, and its agents, accounts and alerts are not found
 - `internal/bundle` TestChangeSetsAreTenantIsolated — change sets, bundles and steps are tenant rows under RLS
 - `internal/api` TestChangeSetsOfOtherTenantsAreNotFound — the change-set and drift API answers 404 across tenants
+- `internal/worker` TestOnlyTheActionsAgentReadsTheResult — another agent, a principal, a worker and the sweeper read no result content (ADR-034)
+- `internal/worker` TestResultContentIsNotSelectable — the application role cannot select a result's content
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -188,6 +193,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestNothingSecretIsPersistedByADelegation — after the worker scans a remote A2A agent and delegates to it, the agent's token appears in no row, journal, outbox or log (ADR-030)
 - `internal/llmgateway` TestNothingSecretIsPersistedByTheGateway — after metered, killed and swept LLM calls, neither the provider key, the agent key nor the prompt appears in any row, journal, outbox or log (ADR-031)
 - `internal/config` TestProviderSecretsOnlyInTheGateway — only the LLM gateway accepts provider secrets, and it refuses connector secrets
+- `internal/worker` TestACredentialInTheOutputIsWithheld — an output carrying a credential the worker holds is withheld, never kept (ADR-034)
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 

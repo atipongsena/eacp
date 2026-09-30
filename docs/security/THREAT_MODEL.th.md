@@ -21,6 +21,7 @@ A2A agent ระยะไกล, message ในคิว และคำตอ�
 | การอนุมัติและ grant | PostgreSQL ([ADR-005](../adr/ADR-005-approval-ownership-and-atomic-execution-boundary.md)) | การตัดสินใจของมนุษย์ที่อนุญาต action ที่ระบุตรงตัวหนึ่งรายการ |
 | audit journal | PostgreSQL เป็น hash chain ราย tenant ([ADR-003](../adr/ADR-003-agent-registry-identity-and-capability.md)) | หลักฐานว่าเกิดอะไรขึ้น ใครทำ และทำไม |
 | ข้อมูลของ tenant | PostgreSQL ภายใต้ Row-Level Security | registry, action, payload, งบประมาณ และค่าใช้จ่ายของแต่ละ tenant |
+| ผลลัพธ์ของ tool ที่เก็บไว้ | PostgreSQL นานสูงสุดหนึ่งวันต่อ contract ที่เลือกเปิด ([ADR-034](../adr/ADR-034-result-channel.md)) | เนื้อหาจากระบบระยะไกลที่เชื่อถือไม่ได้และอาจเป็นข้อมูลส่วนบุคคล มีเพียง agent ที่เรียกเท่านั้นที่อ่านได้ |
 | API key | เก็บเฉพาะ hash ใน PostgreSQL ([`internal/identity`](../../internal/identity)) | ใช้ยืนยันตัวตนของ agent และคน |
 
 ## ขอบเขตความเชื่อถือ
@@ -81,6 +82,7 @@ disclosure (ข้อมูลรั่วไหล), **D**enial of service (ท
 | T | reconcile ได้ผลลบลวง: "ไม่พบ" นำไปสู่การ retry และรายการซ้ำ | หลักฐานเชิงลบนับเฉพาะเมื่อ contract เป็น `AUTHORITATIVE` และทุกการเรียกได้ยุติแล้ว นอกนั้นให้คนตัดสิน | [ADR-004](../adr/ADR-004-action-state-machine-and-execution-semantics.md) Rev 2.5 | `internal/worker` `TestNegativeEvidenceNeedsAnAuthoritativeContract`, `TestDecideAppliesTheProofStandard` |
 | R | ไม่มีบันทึกว่าระบบปลายทางทำอะไร | attempt, external reference และการตรวจเพื่อ reconcile เป็นส่วนหนึ่งของหลักฐาน | [ADR-004](../adr/ADR-004-action-state-machine-and-execution-semantics.md) | `internal/worker` `TestEvidenceReconstructsTheWholeActionFromItsID` |
 | I | credential ถูกขโมย หรือ connector ส่ง secret กลับมา | credential อยู่เฉพาะใน worker ไม่เคยถูกเก็บหรือบันทึกลง journal ถูกปิดบังจาก log และ field ที่ connector ส่งกลับมาซึ่งมี secret อยู่จะถูกทิ้ง | [ADR-001](../adr/ADR-001-product-boundary-and-enforcement-point.md), [ADR-019](../adr/ADR-019-credential-custody.md) | `internal/worker` `TestSecretCanaryNeverLeaks`; `internal/logging` `TestRegisteredSecretValuesAreRedactedInMessageAndAttrs` |
+| I | ผลลัพธ์ของ tool ไปถึง agent อื่น คน log หรือ journal หรือมี credential ติดอยู่ | เก็บผลลัพธ์เฉพาะความสำเร็จของ contract ที่เลือกเปิด อ่านได้เฉพาะเวอร์ชัน `ACTIVE` ของ agent ที่เรียกผ่าน PostgreSQL ไม่เก็บถ้ามี credential ของ worker อยู่ มีขนาดจำกัด หมดอายุและถูกลบ ไม่เคยลง log, journal หรือข้อความ | [ADR-034](../adr/ADR-034-result-channel.md) | `internal/worker` `TestOnlyTheActionsAgentReadsTheResult`, `TestResultContentIsNotSelectable`, `TestACredentialInTheOutputIsWithheld`, `TestASuccessKeepsItsOutputForTheAgent` |
 | D | retry storm หรือ connector ที่ล้มทำให้ connector อื่นขาดทรัพยากร | retry budget จำกัดจำนวนครั้ง ค่าใช้จ่าย และเวลา circuit breaker และ bulkhead แยก connector ออกจากกัน | [ADR-022](../adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) | `internal/action` `TestRetryBudgetBoundsRetryCost`; `internal/worker` `TestConnectorFailureDoesNotStarveUnrelatedConnectors` |
 | E | agent ที่ถูก kill ยังทำงานต่อ | สถานะ kill ถูกตรวจใน PostgreSQL ตอน claim และ dispatch และ poll ระหว่างการเรียก kill ระหว่างการเรียกทำให้ผลลัพธ์เป็นไม่รู้แน่ชัด ไม่เคย retry | [ADR-016](../adr/ADR-016-distributed-kill-switch.md) | `internal/worker` `TestRawDispatchIntentIsDatabaseFencedByKill`, `TestKillDuringCallForcesUnknownOutcome` |
 
@@ -147,6 +149,9 @@ disclosure (ข้อมูลรั่วไหล), **D**enial of service (ท
 - **ตรวจไม่พบการ bypass** ใน deployment ที่ไม่ conforming EACP มองไม่เห็นการเรียกที่อ้อมผ่าน การอ่าน audit log ของระบบปลายทางเพื่อหา principal
   ที่ไม่ใช่ EACP เป็นงานในอนาคต (ADR-001 §3a)
 - **ข้อมูลส่วนบุคคลใน payload** payload ของ action ถูกเก็บตามที่ส่งมาภายใต้ Row-Level Security EACP ไม่ได้จำแนกหรือปิดบังข้อมูลส่วนบุคคลในนั้น
+- **ผลลัพธ์ของ tool ที่เก็บไว้เป็นข้อมูลธรรมดาในฐานข้อมูล** contract ที่เลือกเปิดช่องทางรับผลลัพธ์จะเก็บผลลัพธ์ของความสำเร็จไว้นานสูงสุดหนึ่งวัน
+  ได้รับการปกป้องด้วย Row-Level Security สิทธิ์ระดับคอลัมน์ และการป้องกันข้อมูลที่เก็บของ PostgreSQL เอง ไม่ได้เข้ารหัสในระดับแอปพลิเคชัน
+  ([ADR-034](../adr/ADR-034-result-channel.md))
 - **สองคนที่สมรู้ร่วมคิดกัน** กฎสองคนหยุดคนหนึ่งคนได้ แต่หยุดสองคนที่ตกลงกันไม่ได้
 - **ยังไม่มี kill scope แบบ global และ run** ต้องรอ platform authority และการผูก action ที่ยืนยันตัวตนแล้ว
   ([ADR-016](../adr/ADR-016-distributed-kill-switch.md)) ส่วน kill ทั้ง tenant ใช้งานได้แล้ว

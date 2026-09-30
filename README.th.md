@@ -311,6 +311,8 @@ policy และงบ นักพัฒนา agent ส่งคำขอแ�
 4. **ทะเบียน tool และ connector** HTTP connector ที่มี contract บอกว่า error แต่ละแบบแปลว่าอะไร MCP server ที่ระบบไปค้นหา tool
    และทำ fingerprint ให้เอง และ agent แบบ A2A
    ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md), [ADR-030](docs/adr/ADR-030-a2a-delegation.md))
+   contract เปิดให้ agent ที่เรียก และเฉพาะ agent นั้น อ่านผลลัพธ์ของการเรียกที่สำเร็จได้ภายในเวลาที่กำหนด
+   ([ADR-034](docs/adr/ADR-034-result-channel.md))
 5. **แผนผัง dependency** จดว่าอะไรพึ่งอะไร และคำนวณ blast radius แบบเผื่อไว้ก่อน
    ([ADR-015](docs/adr/ADR-015-dependency-graph.md))
 6. **จัดการ agent ทีละหลายตัว** เปลี่ยนสถานะ agent จำนวนมากในคำสั่งเดียว และ kill switch
@@ -356,7 +358,6 @@ policy และงบ นักพัฒนา agent ส่งคำขอแ�
 EACP ยังพัฒนาอยู่ ทุกอย่างที่เล่ามาข้างบนมีอยู่จริงและผ่าน test แล้ว แต่ยังไม่เคยออก release ส่วนที่ยังไม่ได้ทำ:
 
 - **รับงานจาก A2A ขาเข้า** ตอนนี้ EACP ส่งงานต่อให้ agent อื่นได้ แต่ยังไม่รับงานที่ agent อื่นส่งเข้ามา
-- **ส่งผลลัพธ์ของ MCP tool กลับ** worker เรียก MCP tool ที่รับรองแล้วได้ไม่เกินหนึ่งครั้งและบันทึก digest ของผลลัพธ์ แต่ไม่เก็บหรือส่งผลลัพธ์กลับ
 - **kill แบบ global และแบบ run** ยังรอเรื่องสิทธิ์ระดับ platform และการผูก run ที่ยืนยันตัวตนได้ ส่วน kill ระดับ tenant, team, agent,
   version, คำขอ, connector, tool และ model ใช้ได้แล้ว
 - **หลาย region** ตอนนี้ PostgreSQL ตัวเดียวเป็นคนตัดสิน replica ทุกตัวใช้ร่วมกัน

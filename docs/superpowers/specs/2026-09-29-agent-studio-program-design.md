@@ -73,7 +73,7 @@ limits:   max steps, max tokens, timeout, budget account
 
 ## 5. The runtime (`agent-runtime`)
 
-> **Dependency found 2026-09-29:** no connector returns a tool's output today (HTTP and A2A return only a reference), so the per-step results below need Phase 26b, the result channel, before 27a.
+> **Dependency found 2026-09-29:** no connector returns a tool's output today (HTTP and A2A return only a reference), so the per-step results below need Phase 26b, the result channel, before 27a. **Delivered 2026-09-30 (ADR-034):** a contract may keep a success's output for the calling agent (`GET /v1/actions/{id}/result`).
 
 A binary like `execution-worker`. It claims a run under a lease and a fence, executes steps in order and records
 each step's result before the next, so a crash resumes at a step boundary.
@@ -173,8 +173,8 @@ the wider parts.
 
 | Phase | Content | ADR | State |
 |---|---|---|---|
-| 26a | **MCP `tools/call`:** the execution worker calls a certified MCP tool at most once, checking the server's current definition against the certified one before every call; it returns a reference, never output ([design](2026-09-29-phase-26a-mcp-tools-call-design.md)) | 032 (new) | next |
-| 26b | **The result channel:** a governed way for the calling agent to read a tool's output (bounded, retained for a limited time, never in logs or the audit journal), for HTTP, MCP and A2A alike. Added after the review found that no connector returns output and section 5's per-step results and the leave-balance template need it | 034 (new) | before 27a |
+| 26a | **MCP `tools/call`:** the execution worker calls a certified MCP tool at most once, checking the server's current definition against the certified one before every call; it returns a reference, never output ([design](2026-09-29-phase-26a-mcp-tools-call-design.md)) | 032 | done (`608c9a1`) |
+| 26b | **The result channel:** a governed way for the calling agent to read a tool's output (bounded, retained for a limited time, never in logs or the audit journal), for HTTP, MCP and A2A alike. Added after the review found that no connector returns output and section 5's per-step results and the leave-balance template need it ([design](2026-09-30-phase-26b-result-channel-design.md)) | 034 | done (branch `phase-26b-result-channel`) |
 | 26-UI | Console design system and a redesign of every existing view (section 8.2) | 028 Rev 1.1 | done (`e275c4a`) |
 | 27-0 | **Credential ADR first:** how `agent-runtime` obtains an agent's credential (section 5.1), its threat model, custody of the master secret, rotation and the privilege it holds. Written and reviewed before any 27a code | 033 (new) | before 27a |
 | 27a | **The thin slice** (section 8.3; its template reads a result, so it needs 26b): definition, immutable versions, derived capability, `agent-runtime`, agent credentials, and one form with one template, from creation through approval to a run | 033 Rev 1.1 | after 26b and 27-0 |

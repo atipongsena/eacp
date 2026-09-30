@@ -23,6 +23,7 @@ works when the agent behaves is not a control.
 | Approvals and grants | PostgreSQL ([ADR-005](../adr/ADR-005-approval-ownership-and-atomic-execution-boundary.md)) | A human decision that authorises one exact action. |
 | The audit journal | PostgreSQL, hash-chained per tenant ([ADR-003](../adr/ADR-003-agent-registry-identity-and-capability.md)) | The evidence of what happened, by whom, and why. |
 | Tenant data | PostgreSQL, under Row-Level Security | Registry, actions, payloads, budgets and costs of each tenant. |
+| Kept tool output | PostgreSQL, for at most a day per opted-in contract ([ADR-034](../adr/ADR-034-result-channel.md)) | Untrusted remote content that may be personal data; only the calling agent may read it. |
 | API keys | Only their hashes, in PostgreSQL ([`internal/identity`](../../internal/identity)) | They authenticate agents and people. |
 
 ## Trust boundaries
@@ -83,6 +84,7 @@ service and **E**levation of privilege. Tests are named as package and function.
 | T | False-negative reconciliation: "not found" leads to a retry and a duplicate | Negative evidence counts only under an `AUTHORITATIVE` contract after every call has settled; otherwise a person decides | [ADR-004](../adr/ADR-004-action-state-machine-and-execution-semantics.md) Rev 2.5 | `internal/worker` `TestNegativeEvidenceNeedsAnAuthoritativeContract`, `TestDecideAppliesTheProofStandard` |
 | R | No record of what the target did | Attempts, external references and reconciliation checks are part of the evidence | [ADR-004](../adr/ADR-004-action-state-machine-and-execution-semantics.md) | `internal/worker` `TestEvidenceReconstructsTheWholeActionFromItsID` |
 | I | Credential theft, or a connector echoing its secret | Credentials live only in the worker, are never stored or journaled, are redacted from logs, and connector-returned fields that contain one are dropped | [ADR-001](../adr/ADR-001-product-boundary-and-enforcement-point.md), [ADR-019](../adr/ADR-019-credential-custody.md) | `internal/worker` `TestSecretCanaryNeverLeaks`; `internal/logging` `TestRegisteredSecretValuesAreRedactedInMessageAndAttrs` |
+| I | Tool output reaches another agent, a person, a log or the journal, or keeps a credential | Output is kept only for an opted-in contract's success, readable only by an `ACTIVE` version of the calling agent through PostgreSQL, withheld when it holds a worker credential, bounded, expired and cleared; never logged, journaled or messaged | [ADR-034](../adr/ADR-034-result-channel.md) | `internal/worker` `TestOnlyTheActionsAgentReadsTheResult`, `TestResultContentIsNotSelectable`, `TestACredentialInTheOutputIsWithheld`, `TestASuccessKeepsItsOutputForTheAgent` |
 | D | Retry storm or a failing connector starves others | Retry budgets bound attempts, cost and time; circuit breakers and bulkheads isolate connectors | [ADR-022](../adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md) | `internal/action` `TestRetryBudgetBoundsRetryCost`; `internal/worker` `TestConnectorFailureDoesNotStarveUnrelatedConnectors` |
 | E | A killed agent keeps acting | Kill states are checked in PostgreSQL at claim and dispatch and polled during the call; a kill during a call leaves the outcome unknown, never retried | [ADR-016](../adr/ADR-016-distributed-kill-switch.md) | `internal/worker` `TestRawDispatchIntentIsDatabaseFencedByKill`, `TestKillDuringCallForcesUnknownOutcome` |
 
@@ -153,6 +155,9 @@ service and **E**levation of privilege. Tests are named as package and function.
   target audit logs for non-EACP principals is future work (ADR-001 §3a).
 - **Personal data in payloads.** Action payloads are stored as submitted, under Row-Level Security. EACP does not
   classify or redact personal data in them.
+- **Kept tool output is plain data at rest.** A contract that opts into the result channel keeps its successes'
+  output for up to a day, protected by Row-Level Security, column privileges and PostgreSQL's own at-rest
+  protection, not by application-level encryption ([ADR-034](../adr/ADR-034-result-channel.md)).
 - **Two colluding people.** Two-person rules stop one person, not two who agree.
 - **Global and run kill scopes do not exist yet.** They wait for platform authority and authenticated action
   bindings ([ADR-016](../adr/ADR-016-distributed-kill-switch.md)). A tenant-wide kill is available.

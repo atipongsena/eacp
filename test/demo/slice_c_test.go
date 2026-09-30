@@ -57,7 +57,7 @@ func TestSliceCDemo(t *testing.T) {
 	d.until(routine, "SUCCEEDED")
 	d.onePO(routine)
 
-	d.step("C3. po-assistant calls the certified MCP tool: one tools/call, a digest of the result as its reference")
+	d.step("C3. po-assistant calls the certified MCP tool: one tools/call, then reads the result only it may read")
 	d.callGetPO()
 
 	d.step("C4. Trigger MCP drift: the server now advertises a different get_po")
@@ -160,13 +160,13 @@ func (d *demo) certifyAndRegister(getPO map[string]any) {
 	c := d.must(201, "erin", "POST", path+"/contracts", map[string]any{"definition_id": def["id"],
 		"side_effects": []string{"READ_ONLY"}, "idempotency_mode": "none", "reconciliation_lookup": "none",
 		"reconciliation_consistency": "none", "proof_standard": "none", "no_effect_errors": []string{"definition_changed"},
-		"max_attempts": 1})
+		"max_attempts": 1, "result_retention_seconds": 600})
 	d.must(204, "rita", "POST", path+"/contract", map[string]any{"contract_id": c["id"]})
 	tool := d.must(200, "audra", "GET", path, nil)
 	if tool["contract_matches"] != true {
 		d.t.Fatalf("certified tool = %v", tool)
 	}
-	d.logf("erin certifies get_po as READ_ONLY, one attempt, pinned to definition #%v, with definition_changed as a certified no-effect; rita activates the contract", def["seq"])
+	d.logf("erin certifies get_po as READ_ONLY, one attempt, pinned to definition #%v, with definition_changed as a certified no-effect, keeping results for 10 minutes; rita activates the contract", def["seq"])
 	d.ids["tool get_po"] = getPO["id"].(string)
 
 	erp := d.must(201, "erin", "POST", "/v1/connectors", map[string]any{"name": "erp", "protocol": "http",
@@ -222,8 +222,23 @@ func (d *demo) callGetPO() {
 	if calls := d.mcpCalls(); len(calls) != 1 || calls[0].Tool != "get_po" {
 		d.t.Fatalf("Fake MCP call log = %+v, want one get_po call", calls)
 	}
-	d.logf("po-assistant calls sap-mcp.get_po: SUCCEEDED, reference %.28s… (the result's digest, never its content)", ref)
+	d.logf("po-assistant calls sap-mcp.get_po: SUCCEEDED, reference %.28s… (the result's digest)", ref)
 	d.logf("Fake MCP call log: 1 tools/call (a tool name and a time; no argument, no result)")
+
+	// ADR-034: the calling agent reads the output; its digest is the reference.
+	code, res := d.call("po-assistant", "GET", "/v1/actions/"+id+"/result", nil)
+	if code != 200 || res["sha256"] != digest || !strings.Contains(fmt.Sprint(res["output"]), "Purchase order PO-1") {
+		d.t.Fatalf("result = %d %v", code, res)
+	}
+	d.logf("po-assistant reads its result: %v bytes, sha256 equal to the reference, kept until %v", res["bytes"], res["expires_at"])
+	if code, body := d.call("audra", "GET", "/v1/actions/"+id+"/result", nil); code != 403 {
+		d.t.Fatalf("an auditor read a result: %d %v", code, body)
+	}
+	ev := d.must(200, "audra", "GET", "/v1/actions/"+id+"/evidence", nil)
+	if meta, _ := ev["result"].(map[string]any); meta == nil || meta["sha256"] != digest || meta["output"] != nil {
+		d.t.Fatalf("evidence result = %v", ev["result"])
+	}
+	d.logf("audra (auditor) cannot read it (HTTP 403); the evidence shows its size and digest, never its content")
 }
 
 // refuseRugPull is the rug pull's second call: the server already advertises
