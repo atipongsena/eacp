@@ -312,3 +312,7 @@ dialog.confirm ul { padding-left: 18px; overflow-wrap: anywhere; }
 .badge-ready, .badge-succeeded { background: var(--success-soft); color: var(--success-text); }
 .badge-rejected, .badge-failed { background: var(--danger-soft); color: var(--danger-text); }
 .badge-waiting_for_approval, .badge-waiting_for_credential, .badge-queued, .badge-running { background: var(--warning-soft); color: var(--warning-text); }
+/* The Agent Hub (Phase 27b): a listing's state and how widely it is shared. */
+.badge-listing-published { background: var(--success-soft); color: var(--success-text); }
+.badge-listing-deprecated { background: var(--warning-soft); color: var(--warning-text); }
+.badge-scope-org { background: var(--info-soft); color: var(--info-text); }

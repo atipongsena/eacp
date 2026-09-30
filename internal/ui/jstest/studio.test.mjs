@@ -119,7 +119,8 @@ test('Thai has its own words for the status sentences', () => {
 });
 
 test('the Studio page has its own areas; anything else falls back to its home', () => {
-  assert.deepEqual(STUDIO_AREAS, ['agents', 'new', 'requests', 'runs']);
+  assert.deepEqual(STUDIO_AREAS, ['agents', 'new', 'hub', 'requests', 'runs']);
+  assert.deepEqual(parse(`#/hub?tag=leave`, {areas: STUDIO_AREAS}), {area: 'hub', parts: [], query: {tag: 'leave'}});
   const opts = {areas: STUDIO_AREAS, home: 'agents'};
   assert.deepEqual(parse(`#/runs/${ID}`, opts), {area: 'runs', parts: [ID], query: {}});
   assert.deepEqual(parse('#/new?template=leave-balance', opts), {area: 'new', parts: [], query: {template: 'leave-balance'}});

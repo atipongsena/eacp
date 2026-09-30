@@ -1,7 +1,7 @@
 // common.js holds what the Studio views share: a definition shown in plain
 // form, a stage badge and the side effects of a tool in words. Everything a
 // definition holds came from its author and is shown as text only.
-import {h, badge} from '../dom.js';
+import {h, badge, cls} from '../dom.js';
 import {t} from '../i18n.js';
 
 const STAGE_LABELS = {
@@ -53,3 +53,14 @@ export function definitionView(def) {
 // hasPageBar says whether the shell titles the page: a list has the page
 // bar; the form, an agent and a run carry their own heading and back link.
 export const hasPageBar = route => route.parts.length === 0 && route.area !== 'new';
+
+const SCOPES = {DEPARTMENT: () => t('department'), ORG: () => t('organisation')};
+const LISTING_STATES = {PUBLISHED: () => t('published'), DEPRECATED: () => t('deprecated'), WITHDRAWN: () => t('withdrawn')};
+
+// scopeBadge and stateBadge word a Hub listing's scope and state (Phase
+// 27b); an unknown value is shown as sent.
+export const scopeBadge = l => badge(`scope-${cls(l.scope)}`, SCOPES[l.scope]?.() ?? l.scope);
+export const stateBadge = l => badge(`listing-${cls(l.state)}`, LISTING_STATES[l.state]?.() ?? l.state);
+
+// approverOf names who decides a Hub proposal at scope.
+export const approverOf = scope => (scope === 'ORG' ? t('an admin or a registry approver') : t('a lead of the department'));

@@ -1,13 +1,14 @@
 // agents.js lists the caller's Studio agents (all of them for approvers and
 // auditors) and shows one: where it is on the way to running, what it does,
 // and, once it is ready, a form to run it.
-import {h, section, notice, table, link, badge, input, field, kv, relTime, replace, emptyState, values as formValues} from '../dom.js';
+import {h, section, notice, table, link, badge, input, field, kv, relTime, replace, emptyState, button, ok, select,
+  values as formValues} from '../dom.js';
 import {format, isUUID} from '../router.js';
 import {ask} from '../confirm.js';
 import {t} from '../i18n.js';
 import {STAGES, stageIndex, statusSentence} from './status.js';
 import {tools} from './definition.js';
-import {definitionView, stageBadge} from './common.js';
+import {definitionView, stageBadge, scopeBadge, stateBadge, approverOf} from './common.js';
 
 export async function render(ctx) {
   return ctx.route.parts.length > 0 ? detail(ctx, ctx.route.parts[0]) : list(ctx);
@@ -44,6 +45,7 @@ async function detail(ctx, id) {
   if (['waiting_for_approval', 'waiting_for_credential'].includes(v.status)) ctx.pollEvery(5000);
   const mine = ctx.session.me().principalId === agent.owner_id;
   const runs = ctx.started.filter(r => r.agentId === agent.id);
+  const hub = mine ? await hubSection(ctx, agent, v) : null;
   return h('div', {},
     h('p', {}, link(t('← Agents'), format('agents'))),
     h('h1', {}, agent.display_name),
@@ -52,7 +54,9 @@ async function detail(ctx, id) {
     stepper(v),
     h('p', {class: 'status-line', role: 'status'}, statusSentence(v)),
     mine ? h('div', {class: 'actions'}, link(t('Save a new version…'), format('new', [], {agent: agent.id}))) : null,
-    v.status === 'ready' ? runForm(ctx, agent, v) : null,
+    v.status === 'ready' ? runForm(ctx, {agentId: agent.id, displayName: agent.display_name, version: v.version,
+      definition: v.definition}) : null,
+    hub,
     runs.length ? section(t('Runs you started in this tab'), table([
       [t('Run'), r => link(r.id.slice(0, 8), format('runs', [r.id]))],
       [t('Started'), r => relTime(r.at, Date.now(), {node: true})],
@@ -77,29 +81,82 @@ function stepper(v) {
   }));
 }
 
-// runForm asks for the version's declared inputs and starts a run as the
-// signed-in person. The server checks department membership and the inputs.
-function runForm(ctx, agent, v) {
-  const inputs = Object.entries(v.definition?.inputs ?? {});
+// runForm asks for a version's declared inputs and starts a run of the agent
+// as the signed-in person. The server checks who may run it (the owner, or
+// someone its Hub listing reaches) and the inputs.
+export function runForm(ctx, {agentId, displayName, version, definition}) {
+  const inputs = Object.entries(definition?.inputs ?? {});
   const out = h('div');
   const f = h('form', {class: 'stack', onsubmit: async e => {
     e.preventDefault();
     const given = formValues(f);
     const values = Object.fromEntries(inputs.map(([name]) => [name, given[name] ?? '']));
-    const c = await ask({title: t('Run {agent}', {agent: agent.display_name}), confirmLabel: t('Run'),
-      lines: [t('It runs as you, with version {version}.', {version: v.version}),
-        t('It may call: {tools}.', {tools: tools(v.definition).join(', ') || '—'}),
+    const c = await ask({title: t('Run {agent}', {agent: displayName}), confirmLabel: t('Run'),
+      lines: [t('It runs as you, with version {version}.', {version}),
+        t('It may call: {tools}.', {tools: tools(definition).join(', ') || '—'}),
         t('Each step is an action: policy, approvals, budgets and kill switches apply to it.')]});
     if (!c) return;
-    const r = await ctx.client.call('studio.runstart', {params: {id: agent.id}, body: {inputs: values}});
+    const r = await ctx.client.call('studio.runstart', {params: {id: agentId}, body: {inputs: values}});
     if (!r.ok) {
       replace(out, notice(r));
       return;
     }
-    ctx.started.unshift({id: r.data.id, agentId: agent.id, at: new Date().toISOString()});
+    ctx.started.unshift({id: r.data.id, agentId, at: new Date().toISOString()});
     ctx.go(format('runs', [r.data.id]));
   }},
   inputs.map(([name, spec]) => field(name, input(name, {required: true, maxlength: spec.max_length}))),
   h('button', {type: 'submit', class: 'primary'}, t('Run…')));
   return section(t('Run it'), f, out);
+}
+
+// hubSection shows the owner where their agent stands in the Hub (Phase
+// 27b): its listing, its open or last proposal, and, for a ready version
+// with nothing open, a form to propose it to the department or the
+// organisation. A lead or an approver other than the owner decides.
+async function hubSection(ctx, agent, v) {
+  const res = await ctx.client.call('hub.listing', {params: {id: agent.id}});
+  if (!res.ok) return section(t('Hub'), notice(res));
+  const {listing, proposal} = res.data ?? {};
+  const out = h('div');
+  const open = proposal != null && proposal.decision == null;
+  const lines = [];
+  if (listing) {
+    lines.push(h('p', {}, t('In the Hub:'), ' ', scopeBadge(listing), ' ', stateBadge(listing), ' ',
+      t('version {version}', {version: listing.version}), ' · ', link(t('Open its listing'), format('hub', [listing.id]))));
+  } else {
+    lines.push(h('p', {class: 'hint'}, t('Not in the Hub: only you run it.')));
+  }
+  if (open) {
+    lines.push(h('p', {class: 'status-line', role: 'status'}, t('Waiting for {who} to publish version {version}.',
+      {who: approverOf(proposal.scope), version: proposal.version})),
+    h('div', {class: 'actions'}, button(t('Cancel proposal…'), async () => {
+      const c = await ask({title: t('Cancel the proposal'), reason: 'required', confirmLabel: t('Cancel proposal'),
+        lines: [t('Nothing is published; you can propose again later.')]});
+      if (!c) return;
+      const r = await ctx.client.call('hub.cancel', {params: {id: proposal.id}, body: {reason: c.reason}});
+      replace(out, r.ok ? ok(t('Cancelled.')) : notice(r));
+      if (r.ok) ctx.refresh();
+    })));
+  } else if (proposal?.decision === 'rejected') {
+    lines.push(h('p', {class: 'hint'}, t('Your last proposal was rejected: {reason}', {reason: proposal.decision_reason ?? ''})));
+  }
+  const f = !open && v.status === 'ready' ? h('form', {class: 'stack', onsubmit: async e => {
+    e.preventDefault();
+    const given = formValues(f);
+    const tags = given.tags.split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+    const c = await ask({title: t('Publish {agent} to the Hub', {agent: agent.display_name}), confirmLabel: t('Propose'),
+      lines: [t('Version {version} is proposed; {who} decides.', {version: v.version, who: approverOf(given.scope)}),
+        t('Once published, whoever it reaches can run it as themselves and copy it; nobody else can change it.')]});
+    if (!c) return;
+    const r = await ctx.client.call('hub.propose', {params: {id: agent.id},
+      body: {version_id: v.id, scope: given.scope, tags, note: given.note}});
+    replace(out, r.ok ? ok(t('Proposed.')) : notice(r));
+    if (r.ok) ctx.refresh();
+  }},
+  h('div', {class: 'form-grid'},
+    field(t('Share with'), select('scope', [['DEPARTMENT', t('my department')], ['ORG', t('the whole organisation')]], 'DEPARTMENT')),
+    field(t('Tags, separated by commas'), input('tags', {placeholder: t('for example leave, hr')})),
+    field(t('Note for the approver'), input('note', {maxlength: 500}))),
+  h('button', {type: 'submit'}, t('Publish to the Hub…'))) : null;
+  return section(t('Hub'), lines, f, out);
 }

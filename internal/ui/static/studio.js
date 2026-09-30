@@ -1,7 +1,8 @@
 // studio.js boots the Agent Studio page at /studio/ (ADR-028 Rev 1.2,
 // ADR-033): an employee saves an agent from a form, sees where it is on the
 // way to running, and runs it; a registry approver approves requests and the
-// runtime's keys. It shares the console's modules and rules and holds no
+// runtime's keys; everyone finds, runs and copies agents in the Hub, and a
+// department lead or an approver publishes them there (Phase 27b). It shares the console's modules and rules and holds no
 // authority: the API and PostgreSQL decide every request. The key lives in
 // session.js memory only, so this page signs in on its own.
 import {createSession} from './session.js';
@@ -14,6 +15,7 @@ import * as agents from './studio/agents.js';
 import * as form from './studio/form.js';
 import * as requests from './studio/requests.js';
 import * as runs from './studio/run.js';
+import * as hub from './studio/hub.js';
 import {hasPageBar} from './studio/common.js';
 
 const AUTHORS = ['studio_author'];
@@ -25,11 +27,16 @@ const NAV = [
     ['new', () => t('New agent'), 'run', AUTHORS],
     ['runs', () => t('Runs'), 'execution', null],
   ]],
+  [() => t('Share'), [
+    ['hub', () => t('Hub'), 'globe', null],
+  ]],
   [() => t('Review'), [
-    ['requests', () => t('Requests'), 'approvals', ['registry_approver']],
+    // Everyone: a department lead has no role, and the server lists only
+    // what each person may decide.
+    ['requests', () => t('Requests'), 'approvals', null],
   ]],
 ];
-const VIEWS = {agents, new: form, requests, runs};
+const VIEWS = {agents, new: form, hub, requests, runs};
 const IDLE_CHECK_MS = 30000;
 
 setLang(detectLang({search: location.search, languages: navigator.languages}));
@@ -68,8 +75,8 @@ const languageSwitch = () => LANGS.map(code => h('button', {
 const brandContent = () => [h('span', {class: 'brand-mark'}, icon('run')),
   h('span', {}, 'EACP', h('small', {}, t('Agent Studio')))];
 
-// home is where a signed-in person starts: their agents, or their runs.
-const home = () => (session.hasAny(READERS) ? 'agents' : 'runs');
+// home is where a signed-in person starts: their agents, or the Hub.
+const home = () => (session.hasAny(READERS) ? 'agents' : 'hub');
 
 function signOut(message) {
   session.signOut();

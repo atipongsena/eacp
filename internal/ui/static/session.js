@@ -26,7 +26,7 @@ export function createSession({fetch: f = (...a) => globalThis.fetch(...a), now 
         const body = await res.json();
         key = candidate;
         me = {principalId: body.principal_id, tenantId: body.tenant_id, roles: [...(body.roles ?? [])],
-          groups: (body.groups ?? []).map(g => ({id: g.id, name: g.name, displayName: g.display_name}))};
+          groups: (body.groups ?? []).map(g => ({id: g.id, name: g.name, displayName: g.display_name, lead: g.lead === true}))};
         last = now();
         return {ok: true};
       }

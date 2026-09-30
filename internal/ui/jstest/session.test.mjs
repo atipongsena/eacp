@@ -82,11 +82,12 @@ test('me() returns a copy', async () => {
 });
 
 test('keeps the caller’s groups from /v1/me, as a copy', async () => {
-  const body = {...ME, groups: [{id: 'g-1', name: 'hr', display_name: 'HR'}]};
+  const body = {...ME, groups: [{id: 'g-1', name: 'hr', display_name: 'HR', lead: true}, {id: 'g-2', name: 'it', display_name: 'IT'}]};
   const s = createSession({fetch: fetchReturning(200, body)});
   await s.signIn('k');
-  assert.deepEqual(s.me().groups, [{id: 'g-1', name: 'hr', displayName: 'HR'}]);
+  const want = [{id: 'g-1', name: 'hr', displayName: 'HR', lead: true}, {id: 'g-2', name: 'it', displayName: 'IT', lead: false}];
+  assert.deepEqual(s.me().groups, want);
   s.me().groups[0].name = 'x';
-  s.me().groups.push({id: 'g-2'});
-  assert.deepEqual(s.me().groups, [{id: 'g-1', name: 'hr', displayName: 'HR'}]);
+  s.me().groups.push({id: 'g-3'});
+  assert.deepEqual(s.me().groups, want);
 });

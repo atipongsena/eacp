@@ -5,7 +5,7 @@ export const AREAS = ['overview', 'incidents', 'inventory', 'fleet', 'security',
   'dependencies', 'cost'];
 
 // STUDIO_AREAS are the Agent Studio page's areas (ADR-028 Rev 1.2).
-export const STUDIO_AREAS = ['agents', 'new', 'requests', 'runs'];
+export const STUDIO_AREAS = ['agents', 'new', 'hub', 'requests', 'runs'];
 
 const SEGMENT = /^[A-Za-z0-9._-]{1,128}$/;
 const KEY = /^[a-z_]{1,32}$/;

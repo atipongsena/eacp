@@ -52,6 +52,17 @@ export const ROUTES = [
   ['studio.reject', 'POST', '/v1/studio/versions/{id}/reject', []],
   ['studio.runstart', 'POST', '/v1/studio/agents/{id}/runs', []],
   ['studio.run', 'GET', '/v1/studio/runs/{id}', []],
+  ['hub.list', 'GET', '/v1/studio/hub', ['q', 'tag', 'department']],
+  ['hub.get', 'GET', '/v1/studio/hub/{id}', []],
+  ['hub.listing', 'GET', '/v1/studio/agents/{id}/listing', []],
+  ['hub.propose', 'POST', '/v1/studio/agents/{id}/listing', []],
+  ['hub.requests', 'GET', '/v1/studio/listing-requests', []],
+  ['hub.approve', 'POST', '/v1/studio/listing-proposals/{id}/approve', []],
+  ['hub.reject', 'POST', '/v1/studio/listing-proposals/{id}/reject', []],
+  ['hub.cancel', 'POST', '/v1/studio/listing-proposals/{id}/cancel', []],
+  ['hub.deprecate', 'POST', '/v1/studio/listings/{id}/deprecate', []],
+  ['hub.withdraw', 'POST', '/v1/studio/listings/{id}/withdraw', []],
+  ['hub.clone', 'POST', '/v1/studio/listings/{id}/clone', []],
   ['credential.approve', 'POST', '/v1/credentials/{id}/approve', []],
 ];
 
