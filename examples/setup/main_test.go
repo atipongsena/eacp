@@ -44,14 +44,17 @@ func envFile(t *testing.T, env map[string]string) string {
 	return path
 }
 
-var fullEnv = map[string]string{"EACP_API": "x", "ADMIN_KEY": "admin", "OPERATOR_KEY": "otto", "AGENT_KEY": "agent"}
+var fullEnv = map[string]string{"EACP_API": "x", "ADMIN_KEY": "admin", "OPERATOR_KEY": "otto", "AGENT_KEY": "agent",
+	"STUDIO_AUTHOR_KEY": "stella", "STUDIO_RUNTIME_KEY": "runtime"}
+
+var allPeople = []string{"admin", "otto", "stella", "runtime"}
 
 func setupFor(srv *httptest.Server) *setup {
 	return &setup{api: srv.URL, http: srv.Client(), keys: map[string]string{}, env: map[string]string{}, ids: map[string]string{}}
 }
 
 func TestAlreadySetUpWhenEveryKeyWorks(t *testing.T) {
-	srv := fakeAPI(t, []string{"admin", "otto"}, []string{"agent"})
+	srv := fakeAPI(t, allPeople, []string{"agent"})
 	done, err := setupFor(srv).alreadySetUp(context.Background(), envFile(t, fullEnv))
 	if err != nil || !done {
 		t.Fatalf("done=%v err=%v, want a working .env to be reused", done, err)
@@ -62,8 +65,9 @@ func TestAlreadySetUpWhenEveryKeyWorks(t *testing.T) {
 // reset): setup must not say "nothing to do" while the examples get 401.
 func TestAlreadySetUpRefusesAnyKeyThatNoLongerWorks(t *testing.T) {
 	for name, srv := range map[string]*httptest.Server{
-		"AGENT_KEY":    fakeAPI(t, []string{"admin", "otto"}, nil),
-		"OPERATOR_KEY": fakeAPI(t, []string{"admin"}, []string{"agent"}),
+		"AGENT_KEY":          fakeAPI(t, allPeople, nil),
+		"OPERATOR_KEY":       fakeAPI(t, []string{"admin", "stella", "runtime"}, []string{"agent"}),
+		"STUDIO_RUNTIME_KEY": fakeAPI(t, []string{"admin", "otto", "stella"}, []string{"agent"}),
 	} {
 		done, err := setupFor(srv).alreadySetUp(context.Background(), envFile(t, fullEnv))
 		if done || err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), resetHint) {
@@ -90,5 +94,22 @@ func TestAFailedStepSaysHowToStartOver(t *testing.T) {
 	if !strings.Contains(err.Error(), "policy") || !strings.Contains(err.Error(), "HTTP 503") ||
 		!strings.Contains(err.Error(), resetHint) {
 		t.Fatalf("stepError = %v", err)
+	}
+}
+
+// An .env written before the Agent Studio setup (Phase 27a-3b) lacks the
+// Studio keys: setup must say so rather than leave the screenshots without
+// an author or a runtime.
+func TestAnEnvWithoutTheStudioKeysAsksForAReset(t *testing.T) {
+	srv := fakeAPI(t, allPeople, []string{"agent"})
+	old := map[string]string{}
+	for k, v := range fullEnv {
+		if k != "STUDIO_AUTHOR_KEY" && k != "STUDIO_RUNTIME_KEY" {
+			old[k] = v
+		}
+	}
+	done, err := setupFor(srv).alreadySetUp(context.Background(), envFile(t, old))
+	if done || err == nil || !strings.Contains(err.Error(), "STUDIO_AUTHOR_KEY") || !strings.Contains(err.Error(), resetHint) {
+		t.Fatalf("done=%v err=%v, want an error naming the missing Studio key and the reset instructions", done, err)
 	}
 }

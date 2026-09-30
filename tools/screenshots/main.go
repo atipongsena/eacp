@@ -1,5 +1,6 @@
-// Command screenshots signs in to the operator console of a running EACP
-// stack and saves one PNG per view, for the README. It is its own module so
+// Command screenshots signs in to the operator console (or, with -page
+// studio, the Agent Studio page) of a running EACP stack and saves one PNG
+// per view, for the README and the user guide. It is its own module so
 // that chromedp never enters the main module. Run it through
 // scripts/screenshots.sh, which prepares the data the views show.
 //
@@ -25,6 +26,12 @@ import (
 
 type shot struct{ name, keyEnv, hash string }
 
+// pages maps -page to the page's path and the prefix of its PNG files.
+var pages = map[string]struct{ path, prefix string }{
+	"ui":     {"/ui/", "console-"},
+	"studio": {"/studio/", "studio-"},
+}
+
 var (
 	nameRE   = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
 	keyEnvRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
@@ -41,6 +48,7 @@ func parseShot(arg string) (shot, error) {
 
 func main() {
 	api := flag.String("api", "http://localhost:8080", "the control plane API; the console is at /ui/")
+	page := flag.String("page", "ui", "the page to capture: ui (the operator console) or studio (Agent Studio)")
 	out := flag.String("out", "docs/images", "directory for the PNG files")
 	browser := flag.String("chrome", "", "Chrome or Edge executable (default: chromedp's search)")
 	width := flag.Int("width", 1440, "viewport width")
@@ -53,13 +61,17 @@ func main() {
 			whole[n] = true
 		}
 	}
-	if err := run(*api, *out, *browser, *width, *height, whole, flag.Args()); err != nil {
+	if _, ok := pages[*page]; !ok {
+		fmt.Fprintln(os.Stderr, "screenshots: -page must be ui or studio")
+		os.Exit(2)
+	}
+	if err := run(*api, *page, *out, *browser, *width, *height, whole, flag.Args()); err != nil {
 		fmt.Fprintln(os.Stderr, "screenshots:", err)
 		os.Exit(1)
 	}
 }
 
-func run(api, out, browser string, width, height int, whole map[string]bool, args []string) error {
+func run(api, page, out, browser string, width, height int, whole map[string]bool, args []string) error {
 	if len(args) == 0 {
 		return errors.New("no shots; each argument is NAME:KEY_ENV:#/route")
 	}
@@ -100,7 +112,7 @@ func run(api, out, browser string, width, height int, whole map[string]bool, arg
 			if err := chromedp.Run(tab); err != nil {
 				return fmt.Errorf("start the browser: %w", err)
 			}
-			if err := signIn(tab, api, os.Getenv(s.keyEnv), width, height); err != nil {
+			if err := signIn(tab, strings.TrimRight(api, "/")+pages[page].path, os.Getenv(s.keyEnv), width, height); err != nil {
 				return fmt.Errorf("sign in with %s: %w", s.keyEnv, err)
 			}
 			signedIn = s.keyEnv
@@ -109,7 +121,7 @@ func run(api, out, browser string, width, height int, whole map[string]bool, arg
 		if err != nil {
 			return fmt.Errorf("shot %s: %w", s.name, err)
 		}
-		path := filepath.Join(out, "console-"+s.name+".png")
+		path := filepath.Join(out, pages[page].prefix+s.name+".png")
 		if err := os.WriteFile(path, png, 0o644); err != nil {
 			return err
 		}
@@ -118,13 +130,13 @@ func run(api, out, browser string, width, height int, whole map[string]bool, arg
 	return nil
 }
 
-func signIn(tab context.Context, api, key string, width, height int) error {
+func signIn(tab context.Context, url, key string, width, height int) error {
 	ctx, cancel := context.WithTimeout(tab, 30*time.Second)
 	defer cancel()
 	var ok bool
 	return chromedp.Run(ctx,
 		chromedp.EmulateViewport(int64(width), int64(height)),
-		chromedp.Navigate(strings.TrimRight(api, "/")+"/ui/"),
+		chromedp.Navigate(url),
 		chromedp.WaitVisible(`#key`, chromedp.ByQuery),
 		chromedp.SendKeys(`#key`, key, chromedp.ByQuery),
 		chromedp.Click(`form.signin button[type=submit]`, chromedp.ByQuery),
@@ -136,7 +148,7 @@ func signIn(tab context.Context, api, key string, width, height int) error {
 				return err
 			}
 			if failed {
-				return errors.New("the console refused the key")
+				return errors.New("the page refused the key")
 			}
 			return nil
 		}),

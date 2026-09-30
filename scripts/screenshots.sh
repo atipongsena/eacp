@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Regenerates docs/images/console-*.png from a running stack: the examples'
-# data, plus the situations an operator console exists for (an approval
-# waiting, an outcome only a human can settle, a kill switch and the
-# incidents they open). Needs Docker, Go, curl, jq and Chrome or Edge.
+# Regenerates docs/images/console-*.png and studio-*.png from a running
+# stack: the examples' data, plus the situations an operator console exists
+# for (an approval waiting, an outcome only a human can settle, a kill switch
+# and the incidents they open) and an Agent Studio agent from its template to
+# an answer. Needs Docker, Go, curl, jq and Chrome or Edge.
 # Keys come from examples/.env and are never printed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -92,6 +93,60 @@ echo "screenshots: incidents are open"
 evidence=$(api "$OPERATOR_KEY" GET '/v1/actions?state=SUCCEEDED&limit=50' |
 	"$JQ" -r '[.actions[] | select(.operation == "purchase_high_value")][0].id')
 
+# Agent Studio (Phase 27a-3b). The runtime gets a fresh random master, written
+# once through stdin into its volume (never printed, never in the repository),
+# and its own key from examples/.env; then stella's leave-balance agent is
+# approved by rita, the runtime proposes its key, rita approves that, and
+# stella runs it. A second agent is left waiting for the approver's queue.
+studio_file() { # studio_file NAME [keep]: stdin into the runtime's volume, readable by the runtime only
+	MSYS_NO_PATHCONV=1 docker run --rm -i -v eacp_studio_runtime:/v busybox:1.37 sh -c \
+		"if [ -n '${2:-}' ] && [ -s /v/$1 ]; then cat >/dev/null; else cat > /v/$1; fi; chown 65532:65532 /v/$1; chmod 0400 /v/$1"
+}
+docker compose --profile studio create agent-runtime >/dev/null
+"$python" -c 'import secrets, sys; sys.stdout.write(secrets.token_hex(32))' | studio_file master keep
+printf '%s\n' "$STUDIO_RUNTIME_KEY" | studio_file keys
+docker compose --profile studio up -d agent-runtime >/dev/null
+echo "screenshots: agent-runtime is running"
+
+studio_agent() { # studio_agent NAME prints the agent's id, or nothing
+	api "$STUDIO_AUTHOR_KEY" GET /v1/studio/agents | "$JQ" -r --arg n "$1" '.agents[] | select(.name == $n) | .id'
+}
+save_agent() { # save_agent NAME DISPLAY_NAME prints the new agent's id
+	api "$STUDIO_AUTHOR_KEY" POST /v1/studio/agents "$("$JQ" -cn --arg n "$1" --arg d "$2" --arg g "$HR_GROUP_ID" \
+		--slurpfile def test/demo/testdata/leave-balance.json '{name: $n, display_name: $d,
+		description: "Tells an employee how many days of leave they have left.", department_id: $g,
+		definition: $def[0]}')" | "$JQ" -r .agent_id
+}
+agent=$(studio_agent leave-bot)
+[ -n "$agent" ] || agent=$(save_agent leave-bot "Leave balance")
+latest() { api "$STUDIO_AUTHOR_KEY" GET /v1/studio/agents | "$JQ" -c --arg a "$agent" '.agents[] | select(.id == $a) | .latest'; }
+if [ "$(latest | "$JQ" -r .status)" = waiting_for_approval ]; then
+	api "$REGISTRY_APPROVER_KEY" POST "/v1/studio/versions/$(latest | "$JQ" -r .id)/approve" \
+		'{"reason": "reads leave balances only"}' >/dev/null
+fi
+# The runtime proposes the key within EACP_RUNTIME_ROTATE_INTERVAL (a minute).
+for _ in $(seq 1 180); do
+	status=$(latest | "$JQ" -r .status)
+	[ "$status" = ready ] && break
+	for key in $(api "$REGISTRY_APPROVER_KEY" GET /v1/studio/requests |
+		"$JQ" -r --arg v "$(latest | "$JQ" -r .id)" '.keys[] | select(.version_id == $v and .proposed_by_runtime) | .id'); do
+		api "$REGISTRY_APPROVER_KEY" POST "/v1/credentials/$key/approve" >/dev/null
+	done
+	sleep 1
+done
+[ "$status" = ready ] || { echo "leave-bot is $status, not ready" >&2; exit 1; }
+echo "screenshots: leave-bot is ready"
+studio_run=$(api "$STUDIO_AUTHOR_KEY" POST "/v1/studio/agents/$agent/runs" '{"inputs": {"employee_id": "E-1"}}' | "$JQ" -r .id)
+for _ in $(seq 1 120); do
+	state=$(api "$STUDIO_AUTHOR_KEY" GET "/v1/studio/runs/$studio_run" | "$JQ" -r .state)
+	[ "$state" = SUCCEEDED ] || [ "$state" = FAILED ] && break
+	sleep 1
+done
+[ "$state" = SUCCEEDED ] || { echo "run $studio_run is $state" >&2; exit 1; }
+echo "screenshots: a leave-balance run answered"
+[ -n "$(studio_agent team-leave)" ] || save_agent team-leave "Team leave overview" >/dev/null
+echo "screenshots: a second agent waits for a registry approver"
+
 chrome=${CHROME:-}
 if [ -z "$chrome" ]; then
 	for c in google-chrome chromium chrome msedge \
@@ -117,3 +172,4 @@ out=$(pwd)/docs/images
 	"fleet:OPERATOR_KEY:#/fleet" \
 	"dependencies:OPERATOR_KEY:#/dependencies?kind=tool&id=$TOOL_CREATE_PO_ID" \
 	"cost:OPERATOR_KEY:#/cost")
+(cd tools/screenshots && go run . -page studio -api "$EACP_API" -out "$out" -chrome "$chrome" 	"new:STUDIO_AUTHOR_KEY:#/new?template=leave-balance" 	"agent:STUDIO_AUTHOR_KEY:#/agents/$agent" 	"run:STUDIO_AUTHOR_KEY:#/runs/$studio_run" 	"requests:REGISTRY_APPROVER_KEY:#/requests")

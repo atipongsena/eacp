@@ -1,6 +1,6 @@
 // Command setup prepares the examples tenant on a running `docker compose`
 // stack: people with their roles, a policy, the Fake ERP connector, the
-// fake LLM model and one agent. It writes their keys to examples/.env and
+// fake LLM model, one agent and the Agent Studio cast. It writes their keys to examples/.env and
 // never prints one. Run it through examples/setup.sh.
 package main
 
@@ -36,6 +36,7 @@ const policy = `{"format_version": 1, "rules": [
 	 "reason": "a high-value purchase needs two approvers",
 	 "approval": {"quorum": 2, "eligible_roles": ["approver"], "ttl_seconds": 3600}},
 	{"id": "routine", "match": {"target": "erp"}, "verdict": "allow", "reason": "a routine purchase"},
+	{"id": "hr-lookups", "match": {"target": "hr"}, "verdict": "allow", "reason": "a read-only HR lookup"},
 	{"id": "llm", "match": {"operation": "llm.generate"}, "verdict": "allow", "reason": "model use"}]}`
 
 // keyDays is how long the people's and the agent's keys last: as long as
@@ -51,8 +52,13 @@ var people = []struct{ name, role, env string }{
 	{"olga", "operator", "OPERATOR2_KEY"},
 	{"amy", "approver", "APPROVER_KEY"},
 	{"ben", "approver", "APPROVER2_KEY"},
-	{"sam", "", ""}, // owns the agent and is every action's subject
+	{"sam", "", ""},                                  // owns the agent and is every action's subject
+	{"stella", "studio_author", "STUDIO_AUTHOR_KEY"}, // saves Studio agents in the HR group
 }
+
+// requiredKeys are the keys a reusable examples/.env must hold: one written
+// before a newer setup step is refused with the reset instructions.
+var requiredKeys = []string{"ADMIN_KEY", "AGENT_KEY", "STUDIO_AUTHOR_KEY", "STUDIO_RUNTIME_KEY"}
 
 type setup struct {
 	api   string
@@ -94,6 +100,7 @@ func main() {
 		{"policy", s.policy},
 		{"Fake ERP connector and fake LLM model", s.registry},
 		{"agent procurement-bot", s.agent},
+		{"Agent Studio: the HR group, the runtime's principal and the HR tool", s.studio},
 	} {
 		fmt.Printf("examples: %s\n", step.what)
 		if err := step.fn(ctx); err != nil {
@@ -165,6 +172,11 @@ func (s *setup) alreadySetUp(ctx context.Context, path string) (bool, error) {
 	sort.Strings(names)
 	if len(names) == 0 {
 		return false, fmt.Errorf("examples/.env holds no key; %s", resetHint)
+	}
+	for _, k := range requiredKeys {
+		if env[k] == "" {
+			return false, fmt.Errorf("examples/.env has no %s: it was written by an older setup; %s", k, resetHint)
+		}
 	}
 	for _, k := range names {
 		route := "/v1/me"
@@ -368,6 +380,88 @@ func (s *setup) agent(ctx context.Context) error {
 	s.env["AGENT_ID"] = id(a)
 	s.env["AGENT_VERSION_ID"] = id(v)
 	return nil
+}
+
+// studio sets up Agent Studio (ADR-033) for scripts/screenshots.sh: stella
+// (studio_author) in the HR group, the agent runtime's service principal
+// holding studio_runtime alone, and the HR MCP server's get_leave_balance,
+// discovered by the worker and certified read-only with results kept for
+// ten minutes. The runtime itself is started by the script that needs it.
+func (s *setup) studio(ctx context.Context) error {
+	g, err := s.must(ctx, 201, "alice", "POST", "/v1/groups", map[string]any{"name": "hr", "display_name": "HR"})
+	if err != nil {
+		return err
+	}
+	if _, err := s.must(ctx, 201, "alice", "POST", "/v1/groups/"+id(g)+"/members",
+		map[string]any{"principal_id": s.ids["stella"]}); err != nil {
+		return err
+	}
+	p, err := s.must(ctx, 201, "alice", "POST", "/v1/principals", map[string]any{"kind": "service",
+		"name": "studio-runtime", "display_name": "Agent runtime"})
+	if err != nil {
+		return err
+	}
+	grant, err := s.must(ctx, 201, "alice", "POST", "/v1/role-grants", map[string]any{"principal_id": id(p), "role": "studio_runtime"})
+	if err != nil {
+		return err
+	}
+	if _, err := s.must(ctx, 204, "bob", "POST", "/v1/role-grants/"+id(grant)+"/approve", nil); err != nil {
+		return err
+	}
+	cred, hash, err := s.newKey("studio-runtime", identity.KindPrincipal)
+	if err != nil {
+		return err
+	}
+	if _, err := s.must(ctx, 201, "alice", "POST", "/v1/credentials", map[string]any{"id": cred,
+		"kind": identity.KindPrincipal, "principal_id": id(p), "hash": hash, "expires_in_days": keyDays}); err != nil {
+		return err
+	}
+	if _, err := s.must(ctx, 204, "bob", "POST", "/v1/credentials/"+cred.String()+"/approve", nil); err != nil {
+		return err
+	}
+	conn, err := s.must(ctx, 201, "erin", "POST", "/v1/connectors", map[string]any{"name": "hr-mcp", "protocol": "mcp",
+		"endpoint": "http://fakemcp-hr:8091/mcp", "secret_ref": "hr-mcp"})
+	if err != nil {
+		return err
+	}
+	tool, err := s.discovered(ctx, id(conn))
+	if err != nil {
+		return err
+	}
+	def, _ := tool["definition"].(map[string]any)
+	c, err := s.must(ctx, 201, "erin", "POST", "/v1/tools/"+id(tool)+"/contracts", map[string]any{"definition_id": def["id"],
+		"side_effects": []string{"READ_ONLY"}, "idempotency_mode": "none", "reconciliation_lookup": "none",
+		"reconciliation_consistency": "none", "proof_standard": "none", "no_effect_errors": []string{"definition_changed"},
+		"max_attempts": 1, "result_retention_seconds": 600})
+	if err != nil {
+		return err
+	}
+	if _, err := s.must(ctx, 204, "rita", "POST", "/v1/tools/"+id(tool)+"/contract", map[string]any{"contract_id": id(c)}); err != nil {
+		return err
+	}
+	s.env["STUDIO_RUNTIME_KEY"] = s.keys["studio-runtime"]
+	s.env["HR_GROUP_ID"] = id(g)
+	return nil
+}
+
+// discovered waits for the worker's scanner to record connector's tool.
+func (s *setup) discovered(ctx context.Context, connector string) (map[string]any, error) {
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		out, err := s.must(ctx, 200, "erin", "GET", "/v1/connectors/"+connector+"/tools", nil)
+		if err != nil {
+			return nil, err
+		}
+		if tools, _ := out["tools"].([]any); len(tools) == 1 {
+			if t, _ := tools[0].(map[string]any); t != nil && t["definition"] != nil {
+				return t, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.New("the worker did not discover the HR MCP tool within 90 s (is fakemcp-hr running?)")
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 // call sends one API request as who.
