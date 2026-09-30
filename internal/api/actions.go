@@ -214,6 +214,29 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request, c identity.Ca
 	return nil
 }
 
+// actionResult is GET /v1/actions/{id}/result (ADR-034): the calling agent
+// reads a success's kept output. Anything it may not read, or that is gone,
+// is 404 result_not_available; a withheld output is 409 with its reason.
+func (s *Server) actionResult(w http.ResponseWriter, r *http.Request, c identity.Caller) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	v, err := s.actions.Result(r.Context(), actionActor(c), id)
+	var withheld *action.WithheldError
+	switch {
+	case errors.Is(err, action.ErrResultNotAvailable):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "result_not_available"})
+	case errors.As(err, &withheld):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "result_withheld", "reason": withheld.Reason})
+	case err != nil:
+		return err
+	default:
+		writeJSON(w, http.StatusOK, v)
+	}
+	return nil
+}
+
 // cancelAction is POST /v1/actions/{id}/cancel. The database decides who
 // may cancel: the submitting agent, the subject or an operator.
 func (s *Server) cancelAction(w http.ResponseWriter, r *http.Request, c identity.Caller) error {

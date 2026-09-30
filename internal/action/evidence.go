@@ -166,6 +166,8 @@ type Evidence struct {
 	Budget      []ReservationView `json:"budget_reservations"`
 	Journal     []JournalEntry    `json:"journal"`
 	Chain       ChainView         `json:"chain"`
+	// Result is the kept output's metadata (ADR-034), never its content.
+	Result *ResultMeta `json:"result,omitempty"`
 }
 
 // Evidence reconstructs action id from the database in one read-only
@@ -204,6 +206,9 @@ func (e *Engine) Evidence(ctx context.Context, tenant, id uuid.UUID) (Evidence, 
 			return err
 		}
 		if ev.Checks, err = checks(ctx, tx, id); err != nil {
+			return err
+		}
+		if ev.Result, err = resultMeta(ctx, tx, id); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT `+resolutionColumns+` FROM eacp.action_resolutions
