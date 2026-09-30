@@ -10,13 +10,13 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags="-s -w -X github.com/atipongsena/eacp/internal/version.Version=${VERSION}" -o /out/ \
       ./cmd/controlplane-api ./cmd/execution-worker ./cmd/fakeerp ./cmd/fakemcp ./cmd/fakea2a ./cmd/eacpctl \
-      ./cmd/llm-gateway ./cmd/fakellm \
+      ./cmd/llm-gateway ./cmd/fakellm ./cmd/agent-runtime \
     && mkdir -p /pki /client-key /client-jwks
 
 # The published image (release.yml builds --target release): only the
 # commands a deployment runs, never a fake service.
 FROM gcr.io/distroless/static-debian12:nonroot AS release
-COPY --from=build /out/controlplane-api /out/execution-worker /out/llm-gateway /out/eacpctl /
+COPY --from=build /out/controlplane-api /out/execution-worker /out/llm-gateway /out/agent-runtime /out/eacpctl /
 USER nonroot:nonroot
 
 # The compose image (the default target): every binary, fakes included.

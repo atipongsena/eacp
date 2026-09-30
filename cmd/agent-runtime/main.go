@@ -17,15 +17,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/atipongsena/eacp/internal/config"
 	"github.com/atipongsena/eacp/internal/service"
 	"github.com/atipongsena/eacp/internal/studioruntime"
 )
-
-// rotateInterval is how often due keys are proposed.
-const rotateInterval = time.Hour
 
 func main() {
 	service.Main("agent-runtime", config.Options{StudioRuntime: true, DefaultHTTPAddr: ":8084"},
@@ -61,7 +57,7 @@ func main() {
 			d.Log.Info("agent runtime ready", "runtime_id", id, "tenants", len(keys),
 				"master_version", master.Version())
 			d.Background(rt.Run)
-			d.Background(func(ctx context.Context) { rt.Rotate(ctx, rotateInterval) })
+			d.Background(func(ctx context.Context) { rt.Rotate(ctx, d.Config.RuntimeRotateInterval) })
 			return nil
 		})
 }

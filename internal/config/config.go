@@ -133,15 +133,17 @@ type Config struct {
 	// Agent runtime (StudioRuntime only, ADR-033 §4): the API it calls, its
 	// principal keys (one per tenant), the Studio master and its version,
 	// this replica's id (default the host name at startup), the run lease,
-	// how many runs it drives at once and how often it claims.
-	APIURL              string
-	RuntimeKeyFile      string
-	StudioMasterFile    string
-	StudioMasterVersion string
-	RuntimeID           string
-	RuntimeLease        time.Duration
-	RuntimeConcurrency  int
-	RuntimePollInterval time.Duration
+	// how many runs it drives at once, how often it claims and how often it
+	// proposes due keys.
+	APIURL                string
+	RuntimeKeyFile        string
+	StudioMasterFile      string
+	StudioMasterVersion   string
+	RuntimeID             string
+	RuntimeLease          time.Duration
+	RuntimeConcurrency    int
+	RuntimePollInterval   time.Duration
+	RuntimeRotateInterval time.Duration
 }
 
 var (
@@ -399,6 +401,10 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 		}
 		cfg.RuntimeConcurrency = n
 		cfg.RuntimePollInterval = duration("EACP_RUNTIME_POLL_INTERVAL", "1s", time.Minute)
+		cfg.RuntimeRotateInterval = duration("EACP_RUNTIME_ROTATE_INTERVAL", "1m", time.Hour)
+		if cfg.RuntimeRotateInterval > 0 && cfg.RuntimeRotateInterval < 5*time.Second {
+			errs = append(errs, errors.New("EACP_RUNTIME_ROTATE_INTERVAL: must be at least 5s"))
+		}
 	} else if get("EACP_STUDIO_MASTER_FILE", "") != "" {
 		errs = append(errs, errors.New("EACP_STUDIO_MASTER_FILE: only agent-runtime may hold the Studio master (ADR-033 §4)"))
 	}
@@ -462,6 +468,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("runtime_lease", c.RuntimeLease),
 		slog.Int("runtime_concurrency", c.RuntimeConcurrency),
 		slog.Duration("runtime_poll_interval", c.RuntimePollInterval),
+		slog.Duration("runtime_rotate_interval", c.RuntimeRotateInterval),
 	)
 }
 

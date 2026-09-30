@@ -89,6 +89,21 @@ pdp:
     requests: {cpu: 100m, memory: 192Mi}
     limits: {cpu: "1", memory: 768Mi}
 
+# agent-runtime runs approved Agent Studio agents (ADR-033 Rev 1.2). Off by
+# default. It reaches EACP through the API only: no database, no connector or
+# provider secret. Both Secrets are mounted read-only at /run/studio.
+studio:
+  enabled: false
+  replicas: 1
+  masterSecret: ""       # Secret with key "master": the Studio master, at least 32 random bytes
+  runtimeKeySecret: ""   # Secret with key "keys": the runtime principal's pk keys, one per tenant and line
+  masterVersion: v1      # EACP_STUDIO_MASTER_VERSION
+  terminationGracePeriodSeconds: 30
+  env: {}
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
 migrate:
   backoffLimit: 3
   resources:

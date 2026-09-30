@@ -62,6 +62,7 @@ def write_oauth_client(secret_ref, client_id, filename):
 
 write_verifier("fakeerp", "fakeerp:8090", "fakeerp-token.dev")
 write_verifier("fakemcp", "fakemcp:8091", "fakemcp-token.dev")
+write_verifier("hr-mcp", "fakemcp-hr:8091", "fakemcp-hr-token.dev")
 write_verifier("fakea2a", "fakea2a:8092", "fakea2a-token.dev")
 write_verifier("fakellm", "fakellm:8093", "fakellm-key.dev", llm_manifest)
 write_oauth_client("fakeerp-jit", "eacp-worker", "fakeerp-oauth-client.dev")

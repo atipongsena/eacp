@@ -1,0 +1,74 @@
+{{- if .Values.studio.enabled -}}
+{{- $c := dict "root" . "component" "agent-runtime" -}}
+# agent-runtime (ADR-033 Rev 1.2): runs approved Agent Studio agents through
+# the API only. Its own ServiceAccount (no token), no database, connector or
+# provider secret; the Studio master and its keys are read-only files.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-agent-runtime
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-agent-runtime
+  labels:
+    {{- include "eacp.labels" $c | nindent 4 }}
+spec:
+  replicas: {{ .Values.studio.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "eacp.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eacp.labels" $c | nindent 8 }}
+    spec:
+      {{- include "eacp.podSecurity" (dict "root" . "sa" true "runtime" true) | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.studio.terminationGracePeriodSeconds }}
+      {{- include "eacp.spread" $c | nindent 6 }}
+      {{- include "eacp.goDNS" . | nindent 6 }}
+      containers:
+        - name: agent-runtime
+          image: {{ include "eacp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/agent-runtime"]
+          ports:
+            - {name: http, containerPort: 8084}
+          env:
+            - {name: EACP_HTTP_ADDR, value: ":8084"}
+            - {name: EACP_LOG_FORMAT, value: json}
+            - {name: EACP_ENV, value: {{ .Values.environment | quote }}}
+            - {name: EACP_API_URL, value: "http://{{ .Release.Name }}-api:8080"}
+            - {name: EACP_STUDIO_MASTER_FILE, value: /run/studio/master}
+            - {name: EACP_STUDIO_MASTER_VERSION, value: {{ .Values.studio.masterVersion | quote }}}
+            - {name: EACP_RUNTIME_KEY_FILE, value: /run/studio/keys}
+            {{- include "eacp.shutdownEnv" . | nindent 12 }}
+            {{- include "eacp.extraEnv" .Values.studio.env | nindent 12 }}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, failureThreshold: 2}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
+          startupProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 2, failureThreshold: 60}
+          resources:
+            {{- toYaml .Values.studio.resources | nindent 12 }}
+          {{- include "eacp.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: studio, mountPath: /run/studio, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: studio
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.studio.masterSecret }}
+                  items: [{key: master, path: master}]
+              - secret:
+                  name: {{ .Values.studio.runtimeKeySecret }}
+                  items: [{key: keys, path: keys}]
+{{- end }}

@@ -50,5 +50,18 @@
 {{- if not (or (kindIs "int" $vexp) (kindIs "int64" $vexp) (kindIs "float64" $vexp)) -}}{{- fail "worker.vaultIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
 {{- if or (lt (float64 $vexp) 600.0) (gt (float64 $vexp) 86400.0) (ne (float64 $vexp) (float64 (int $vexp))) -}}{{- fail "worker.vaultIdentity.expirationSeconds must be whole seconds from 600 to 86400" -}}{{- end -}}
 {{- if and $v.worker.spiffe.enabled (or (not $v.worker.spiffe.csiDriver) (regexMatch "[[:space:]]" (toString $v.worker.spiffe.csiDriver))) -}}{{- fail "worker.spiffe.csiDriver must name the SPIFFE CSI driver when worker.spiffe is enabled" -}}{{- end -}}
+{{- if $v.studio.enabled -}}
+{{- if or (not $v.studio.masterSecret) (not $v.studio.runtimeKeySecret) -}}{{- fail "studio.masterSecret and studio.runtimeKeySecret must name existing Secrets when studio is enabled" -}}{{- end -}}
+{{- if not (regexMatch "^v[0-9]{1,4}$" (toString $v.studio.masterVersion)) -}}{{- fail "studio.masterVersion must be v followed by 1 to 4 digits, like v1" -}}{{- end -}}
+{{- if lt (int $v.studio.replicas) 1 -}}{{- fail "studio.replicas must be at least 1" -}}{{- end -}}
+{{- if lt (int $v.studio.terminationGracePeriodSeconds) (add $delay $timeout) -}}{{- fail (printf "studio.terminationGracePeriodSeconds must be at least shutdown.delay + shutdown.timeout (%d)" (add $delay $timeout)) -}}{{- end -}}
+{{- $runtimeReserved := list "EACP_API_URL" "EACP_STUDIO_MASTER_FILE" "EACP_STUDIO_MASTER_VERSION" "EACP_RUNTIME_KEY_FILE" -}}
+{{- range $k, $val := $v.studio.env -}}
+{{- if or (eq $k "EACP_DATABASE_URL") (hasSuffix "SECRETS_FILE" $k) -}}{{- fail (printf "studio.env.%s: agent-runtime holds no database, connector or provider secret (ADR-033)" $k) -}}{{- end -}}
+{{- if or (has $k $reserved) (has $k $runtimeReserved) -}}{{- fail (printf "studio.env.%s is set by the chart; use its value instead" $k) -}}{{- end -}}
+{{- if or (kindIs "map" $val) (kindIs "slice" $val) -}}{{- fail (printf "studio.env.%s must be a string" $k) -}}{{- end -}}
+{{- if regexMatch "://[^/?#]*@" (toString $val) -}}{{- fail (printf "studio.env.%s: a URL with credentials belongs in a Secret" $k) -}}{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if not $v.database.peers -}}{{- fail "database.peers must select PostgreSQL for NetworkPolicy egress" -}}{{- end -}}
 {{- if and $v.nats.enabled (not $v.nats.peers) -}}{{- fail "nats.peers must select NATS for NetworkPolicy egress (or set nats.enabled=false)" -}}{{- end -}}

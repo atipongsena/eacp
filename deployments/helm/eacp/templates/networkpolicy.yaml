@@ -50,6 +50,14 @@ spec:
       {{- end }}
       ports:
         - {protocol: TCP, port: 8080}
+    {{- if and $v.studio.enabled $v.api.ingress.from }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "agent-runtime") | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 8080}
+    {{- end }}
   egress:
     - to:
         {{- toYaml $v.database.peers | nindent 8 }}
@@ -140,3 +148,24 @@ spec:
     - to:
         {{- toYaml $v.database.peers | nindent 8 }}
       ports: [{protocol: TCP, port: {{ $v.database.port }}}]
+{{- if $v.studio.enabled }}
+---
+# agent-runtime (ADR-033 Rev 1.2) calls the API and nothing else; nothing calls it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-agent-runtime
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" . "component" "agent-runtime") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "api") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8080}]
+{{- end }}

@@ -399,3 +399,23 @@ func TestOnlyTheRuntimeHoldsTheStudioMaster(t *testing.T) {
 		}
 	}
 }
+
+// TestTheRuntimeRotationInterval: a newly approved version gets its key
+// proposed within a minute by default (ADR-033 §5).
+func TestTheRuntimeRotationInterval(t *testing.T) {
+	runtime := Options{StudioRuntime: true}
+	base := map[string]string{"EACP_API_URL": "http://api:8080", "EACP_RUNTIME_KEY_FILE": "/k", "EACP_STUDIO_MASTER_FILE": "/m"}
+	cfg, err := Load(env(base), runtime)
+	if err != nil || cfg.RuntimeRotateInterval != time.Minute {
+		t.Fatalf("default = %v, %v", cfg.RuntimeRotateInterval, err)
+	}
+	for v, ok := range map[string]bool{"5s": true, "1h": true, "4s": false, "2h": false, "x": false} {
+		m := map[string]string{"EACP_RUNTIME_ROTATE_INTERVAL": v}
+		for k, x := range base {
+			m[k] = x
+		}
+		if _, err := Load(env(m), runtime); (err == nil) != ok {
+			t.Errorf("%s: err = %v", v, err)
+		}
+	}
+}

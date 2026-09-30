@@ -9,7 +9,7 @@ import (
 // releaseCommands are the commands a deployment runs. The fake services
 // (fakeerp, fakemcp, fakea2a, fakellm) exist for tests and demos only:
 // SECURITY.md says they are not shipped, so no release artefact holds one.
-var releaseCommands = []string{"controlplane-api", "execution-worker", "llm-gateway", "eacpctl"}
+var releaseCommands = []string{"controlplane-api", "execution-worker", "llm-gateway", "agent-runtime", "eacpctl"}
 
 func TestReleaseArchivesShipNoFakeService(t *testing.T) {
 	m := regexp.MustCompile(`(?m)^commands="([^"]*)"`).FindStringSubmatch(read(t, "scripts/ci/release-binaries.sh"))

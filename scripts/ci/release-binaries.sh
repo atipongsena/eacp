@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../.."
 
 version=${1:?usage: scripts/ci/release-binaries.sh <version> [outdir]}
 out=${2:-dist}
-commands="controlplane-api execution-worker llm-gateway eacpctl"
+commands="controlplane-api execution-worker llm-gateway agent-runtime eacpctl"
 targets="linux/amd64 linux/arm64 darwin/arm64 windows/amd64"
 ldflags="-s -w -X github.com/atipongsena/eacp/internal/version.Version=$version"
 
