@@ -253,6 +253,36 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A kept result (ADR-034): a success of a tool whose contract keeps
+	// output, recorded by the lease holder as the worker records it.
+	keep := v.f.ActiveToolWith(t, "hr", "balance", retainedContractSQL)
+	reader := v.f.ActiveAgent(t, "hr-bot", keep.Tool)
+	read := v.f.QueuedAction(t, reader.Version, "carol", "hr.balance")
+	if err := storage.InTenantTx(ctx, v.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		if err := storage.SetWorker(ctx, tx, "w-result", 1); err != nil {
+			return err
+		}
+		for _, sql := range []string{claimSQL, intentSQL} {
+			args := []any{read, 60}
+			if sql == claimSQL {
+				args = []any{read, "w-result", 60}
+			}
+			if _, err := tx.Exec(ctx, sql, args...); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, completeSQL, read, 1, "succeeded", "R-1", ""); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, recordSQL, read, `{"days":12}`, nil); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, finishSQL, read, "SUCCEEDED", "succeeded", nil)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	admin, err := pgx.Connect(ctx, v.f.DB.AdminDSN)
 	if err != nil {
 		t.Fatal(err)
