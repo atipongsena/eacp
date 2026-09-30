@@ -107,7 +107,8 @@ Design that satisfies them and stores no key:
   secret as `HMAC-SHA-256(master_secret, tenant_id || credential_id)`, then registers only the hash.
   The master secret exists only in the runtime (env or file, through the ADR-019 providers) and is redacted through
   `logging.SecretSet`. No key is stored; no employee ever sees one.
-- The runtime has a service principal with `registry_editor` (never `registry_approver`). It proposes the
+- The runtime has a service principal with a single-purpose role, `studio_runtime` (corrected by ADR-033:
+  `registry_editor` would let it change connectors, tools, contracts and releases). It proposes the
   credential when the capability request for a version is approved; the approver of that request, who is a
   different person, approves the credential. Both approvals are visible in one queue.
 - **Rotation.** The runtime proposes a new credential at 60 days. If nobody approves it before the old one
@@ -176,7 +177,7 @@ the wider parts.
 | 26a | **MCP `tools/call`:** the execution worker calls a certified MCP tool at most once, checking the server's current definition against the certified one before every call; it returns a reference, never output ([design](2026-09-29-phase-26a-mcp-tools-call-design.md)) | 032 | done (`608c9a1`) |
 | 26b | **The result channel:** a governed way for the calling agent to read a tool's output (bounded, retained for a limited time, never in logs or the audit journal), for HTTP, MCP and A2A alike. Added after the review found that no connector returns output and section 5's per-step results and the leave-balance template need it ([design](2026-09-30-phase-26b-result-channel-design.md)) | 034 | done (branch `phase-26b-result-channel`) |
 | 26-UI | Console design system and a redesign of every existing view (section 8.2) | 028 Rev 1.1 | done (`e275c4a`) |
-| 27-0 | **Credential ADR first:** how `agent-runtime` obtains an agent's credential (section 5.1), its threat model, custody of the master secret, rotation and the privilege it holds. Written and reviewed before any 27a code | 033 (new) | before 27a |
+| 27-0 | **Credential ADR first:** how `agent-runtime` obtains an agent's credential (section 5.1), its threat model, custody of the master secret, rotation and the privilege it holds. Written and reviewed before any 27a code ([ADR-033](../../adr/ADR-033-agent-studio-and-runtime-credentials.md)) | 033 | written, awaiting the owner's review |
 | 27a | **The thin slice** (section 8.3; its template reads a result, so it needs 26b): definition, immutable versions, derived capability, `agent-runtime`, agent credentials, and one form with one template, from creation through approval to a run | 033 Rev 1.1 | after 26b and 27-0 |
 | **Gate** | Two or three departments try the thin slice (section 8.4). What they say decides what 27b and 27c contain | none | required |
 | 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads. Reordered or reshaped by the gate | 033 Rev 1.2 | after the gate |
