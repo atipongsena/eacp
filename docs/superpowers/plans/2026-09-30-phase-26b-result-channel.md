@@ -75,6 +75,8 @@
 - [ ] Step 1: tests: HTTP `result` passes through on success and is dropped on failure, a 100 KiB response is read; MCP output equals the result object and its sha256 equals the reference; A2A `{"artifacts":...}` for a completed task and `{"parts":...}` for a message; fake ERP create_po returns `result` `{"external_reference", "status":"created"}`.
 - [ ] Step 2: fail; Step 3: implement (`maxResponseBytes = 128 << 10`); Step 4: pass; Step 5: commit `feat(connector): HTTP, MCP and A2A return a success's output`.
 
+> **Deviation (2026-09-30):** the fake ERP was left unchanged. `TestFakeERPRemembersNativeOperationAcrossRestartAndAuditsWorker` requires the execute and lookup bodies to be identical, and HTTP output is already proven by `TestHTTPReturnsASuccessesResult` and, through the worker, by the scripted connector. `TestAnotherTenantSeesAndChangesNothingAfterAFullFlow` records its result with the worker's SQL instead.
+
 ### Task 5: The API reads it
 
 **Files:** `internal/action/result.go` (new), `internal/action/evidence.go`, `internal/api/actions.go`, `internal/api/api.go`, tests.
