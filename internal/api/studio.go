@@ -39,6 +39,7 @@ func (s *Server) registerStudio(mux *http.ServeMux) {
 	mux.Handle("POST /v1/studio/runtime/runs/{id}/finish", p(studioRuntime, s.studioFinish))
 	mux.Handle("GET /v1/studio/runtime/credentials", p(studioRuntime, s.studioDue))
 	mux.Handle("POST /v1/studio/runtime/credentials", p(studioRuntime, s.studioPropose))
+	s.registerStudioHub(mux)
 }
 
 // seesAll reports whether c reads every Studio agent, not only its own.

@@ -390,11 +390,14 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request, c identity.Ca
 	}
 	var in struct {
 		PrincipalID uuid.UUID `json:"principal_id"`
+		// Lead makes the member a lead of the group, who decides its Hub
+		// listings (ADR-033 Rev 1.3); it is set here or never.
+		Lead bool `json:"lead"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	id, err := s.reg.AddMember(r.Context(), actor(c), group, in.PrincipalID)
+	id, err := s.reg.AddMember(r.Context(), actor(c), group, in.PrincipalID, in.Lead)
 	return created(w, idBody{id}, err)
 }
 
