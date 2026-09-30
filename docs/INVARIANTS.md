@@ -32,6 +32,8 @@ Phase 26b (the result channel, ADR-034) keeps a success's output for the calling
 
 Phase 27a-1 (Agent Studio's rules, ADR-033) saves agent definitions whose capability PostgreSQL derives, and activates them only through a second person. `internal/studio` TestTheRegistryCannotWidenAStudioAgent and TestTheOwnerAndNonApproversCannotDecide join invariant 19, TestAStudioSaveCreatesTheAgentItsVersionAndItsAllowlist and TestApprovalActivatesTheVersionAndReplacesThePreviousOne join invariant 17, and the full-flow isolation test now covers the Studio tables (invariant 8). `internal/studio/schema_test.go` also checks every definition rule, the roles' separation and the runtime's credential branch in raw SQL.
 
+Phase 27a-2 (`agent-runtime`, ADR-033 Rev 1.2) runs approved Studio agents through the action path with keys derived from a master only the runtime holds. `internal/studio` TestOnlyTheRequesterReadsTheAnswerBeforeItExpires and TestTwoRuntimesNeverShareARun join invariant 8, `internal/studioruntime` TestNoKeyOrMasterLeaks and `internal/config` TestOnlyTheRuntimeHoldsTheStudioMaster join invariant 11, TestRunsAreJournaledWithoutInputsOrAnswer joins invariant 17, and TestAStepIsTheRunsOwnAction and TestAReplacedVersionStopsTheRun join invariant 19. `internal/studio/runs_schema_test.go` also checks leases, steps, finishes, the sweeper, key proposals, the bulk revocation and the expiry incident in raw SQL.
+
 Phase 25b adds the LLM gateway (ADR-031): an agent's model calls are admitted, reserved against its hard budget and settled in PostgreSQL through an insert-only ledger, and only the gateway holds provider keys. Its tests join invariants 3, 11 and 17. `internal/llm/schema_test.go` also checks every `llm_admit` denial in order, the settle outcomes and costs, the sweeper and the kill scopes in raw SQL; `internal/llmgateway` checks validation, forwarding, the SSE relay, kills, limits and interoperability with the official Anthropic and OpenAI Go SDKs. `test/demo` TestLLMGatewayDemo scans responses, logs and the database for the provider key, the agent key and the prompt.
 
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
@@ -153,6 +155,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/api` TestChangeSetsOfOtherTenantsAreNotFound — the change-set and drift API answers 404 across tenants
 - `internal/worker` TestOnlyTheActionsAgentReadsTheResult — another agent, a principal, a worker and the sweeper read no result content (ADR-034)
 - `internal/worker` TestResultContentIsNotSelectable — the application role cannot select a result's content
+- `internal/studio` TestOnlyTheRequesterReadsTheAnswerBeforeItExpires — a Studio run's answer is read only by its requester, never by another principal or the runtime (ADR-033)
+- `internal/studio` TestTwoRuntimesNeverShareARun — a Studio run is leased to one runtime and generation; a lapsed lease fences the old holder
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
 
@@ -196,6 +200,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/llmgateway` TestNothingSecretIsPersistedByTheGateway — after metered, killed and swept LLM calls, neither the provider key, the agent key nor the prompt appears in any row, journal, outbox or log (ADR-031)
 - `internal/config` TestProviderSecretsOnlyInTheGateway — only the LLM gateway accepts provider secrets, and it refuses connector secrets
 - `internal/worker` TestACredentialInTheOutputIsWithheld — an output carrying a credential the worker holds is withheld, never kept (ADR-034)
+- `internal/studioruntime` TestNoKeyOrMasterLeaks — after a Studio run and a key rotation, neither the master nor a derived key appears in any response, log line, row, journal or outbox entry (ADR-033)
+- `internal/config` TestOnlyTheRuntimeHoldsTheStudioMaster — only agent-runtime accepts the Studio master, and it refuses a database and every other secret
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 
@@ -269,6 +275,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/bundle` TestApprovalIsASecondPersonAgainstTheSealedDigest — plan, submission and approval are journaled; the approver is a second person
 - `internal/studio` TestAStudioSaveCreatesTheAgentItsVersionAndItsAllowlist — a Studio save is journaled with the author as its actor (ADR-033)
 - `internal/studio` TestApprovalActivatesTheVersionAndReplacesThePreviousOne — each Studio decision is journaled; approval retires the replaced version with a reason
+- `internal/studio` TestRunsAreJournaledWithoutInputsOrAnswer — every Studio run change is journaled with its actor, never its inputs or answer
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 
@@ -298,3 +305,5 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestFleetPauseDeniesQueuedAndNewWork — a paused version's queued and new actions are denied; nothing reaches the connector
 - `internal/studio` TestTheRegistryCannotWidenAStudioAgent — a Studio version's allowlist is only its derived capability, and it is activated only by an approval (ADR-033)
 - `internal/studio` TestTheOwnerAndNonApproversCannotDecide — a Studio version becomes ACTIVE only by a registry approver who is not its author
+- `internal/studio` TestAStepIsTheRunsOwnAction — a Studio run records only its own version's action, for its requester, under the step's key and tool
+- `internal/studioruntime` TestAReplacedVersionStopsTheRun — a run whose version is no longer ACTIVE sends nothing more

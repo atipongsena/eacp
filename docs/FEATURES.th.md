@@ -355,6 +355,21 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | `studio_runtime` ถือได้โดย service principal เพียงลำพัง และเสนอ key ของ agent ได้เฉพาะเวอร์ชันของ Studio ที่อนุมัติแล้ว | `TestStudioRuntimeIsHeldAlone`, `TestStudioRolesKeepTheirPrincipalKind`, `TestTheRuntimeProposesCredentialsOnlyForApprovedStudioVersions` |
 | API (`/v1/studio/...`) แสดงขั้นของแต่ละเวอร์ชันและผู้ที่ต้องดำเนินการต่อ คิวของผู้อนุมัติอธิบาย tool เป็นภาษาที่เข้าใจง่าย | `TestStudioAuthorsSaveAndApproversDecide` |
 
+## Phase 27a-2: `agent-runtime` การรัน และ key ที่ derive
+
+สมาชิกในแผนกของ agent สั่งรัน agent ของ Studio ที่อนุมัติแล้วพร้อม input ได้ (`POST /v1/studio/agents/{id}/runs`) service ใหม่ `agent-runtime` รับงานรันผ่าน API ทำงานในนามเวอร์ชันของ agent ด้วย key ที่ derive จาก master secret ซึ่งมีเพียง runtime ที่ถือ และส่งทุกขั้น `tool_call` ผ่านเส้นทาง action ตามปกติ โดยมีพนักงานเป็น subject ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.2) policy, การอนุมัติ, budget และ kill scope มีผลเหมือนกับ agent อื่นทุกตัว พนักงานอ่านคำตอบได้หนึ่งชั่วโมง runtime เสนอ key ของแต่ละเวอร์ชันและ key ถัดไปก่อนหมดอายุ 30 วัน โดย `registry_approver` เป็นผู้อนุมัติ และ operator เพิกถอน key ของ Studio ทั้งหมดได้ในครั้งเดียว
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| เฉพาะสมาชิกในแผนกเริ่มการรันได้ และ input ต้องตรงกับที่ประกาศไว้พอดี | `TestARunIsStartedByADepartmentMemberWithItsInputs`, `TestStudioRunsThroughTheAPI` |
+| runtime ถือการรันได้ทีละหนึ่งตัว และมีเพียงผู้ถือ lease ที่เปลี่ยนสถานะการรันได้ | `TestOnlyTheLeaseHolderMovesARun`, `TestTwoRuntimesNeverShareARun`, `TestRuntimeRoutesAreForTheRuntimeOnly` |
+| แต่ละขั้นเป็น action ของการรันนั้นเอง ภายใต้ `studio:<run>:<index>` หลัง crash จะทำ action เดิมต่อ ไม่ส่งซ้ำ | `TestAStepIsTheRunsOwnAction`, `TestACrashBeforeTheStepRecordResubmitsTheSameAction`, `TestARunEndToEnd` |
+| การรันล้มเหลวแบบปิดพร้อมเหตุผลที่ระบุชื่อ: key ขาด หมดอายุ หรือถูกเพิกถอน ขั้นถูกปฏิเสธ เวอร์ชันถูกแทนที่ หรือเลยกำหนดเวลา | `TestARunFailsClosedWithoutAKey`, `TestARevokedKeyFailsTheRun`, `TestADeniedStepFailsTheRun`, `TestAReplacedVersionStopsTheRun`, `TestAStepAwaitingApprovalFailsAtTheDeadline`, `TestTheSweeperExpiresStudioRuns` |
+| placeholder รับ input ที่ประกาศไว้และผลลัพธ์ก่อนหน้าจากช่องทางรับผลลัพธ์ ค่าที่ขาดจะไม่ถูกส่งออกไป | `TestRenderSubstitutesInputsAndOutputs` |
+| มีเพียงผู้สั่งรันที่อ่านคำตอบได้ภายในหนึ่งชั่วโมง และไม่บันทึก input หรือคำตอบลง journal | `TestOnlyTheRequesterReadsTheAnswerBeforeItExpires`, `TestRunsAreJournaledWithoutInputsOrAnswer` |
+| key derive จาก master ที่มีเพียง runtime ถือ และไม่มี key หรือ master ปรากฏใน response, log, แถว, journal หรือข้อความ | `TestKeyFromSecretAuthenticatesUnchanged`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestNoKeyOrMasterLeaks` |
+| runtime เสนอ key และ key ถัดไปแต่ไม่เคยอนุมัติเอง operator เพิกถอน key ของ Studio ได้ทั้งหมด และ key ใกล้หมดอายุจะเปิด incident | `TestRotationProposesASuccessorAndNeverApproves`, `TestKeysAreDueBeforeTheyExpire`, `TestTheBulkRevocationRevokesOnlyStudioKeys`, `TestOperatorsRevokeEveryStudioKey`, `TestAnExpiringStudioKeyOpensAnIncident` |
+
 ## Benchmark
 
 `scripts/bench.sh` วัดทั้ง stack ภายใต้โหลดแบบ open loop บน stack ของ compose ที่แยกออกมา (MASTER_PLAN §104) ครอบคลุมเส้นทางของ action ทั้งกับ PDP

@@ -360,6 +360,21 @@ An employee with the `studio_author` role saves an agent definition: inputs, `to
 | `studio_runtime` is held alone by a service principal and proposes agent keys only for approved Studio versions | `TestStudioRuntimeIsHeldAlone`, `TestStudioRolesKeepTheirPrincipalKind`, `TestTheRuntimeProposesCredentialsOnlyForApprovedStudioVersions` |
 | The API (`/v1/studio/...`) shows each version's stage and who acts next; the approver's queue describes the tools in plain words | `TestStudioAuthorsSaveAndApproversDecide` |
 
+## Phase 27a-2: `agent-runtime`, runs and derived keys
+
+A member of an agent's department runs an approved Studio agent with its inputs (`POST /v1/studio/agents/{id}/runs`). The new `agent-runtime` service claims the run through the API, acts as the agent's version with a key it derives from a master secret only it holds, and sends each `tool_call` through the ordinary action path with the employee as the subject ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.2). Policy, approvals, budgets and kill scopes apply as to any agent. The employee reads the answer for one hour. The runtime proposes each version's key, and its successor 30 days before expiry, and a `registry_approver` approves it; an operator can revoke every Studio key at once.
+
+| Capability | Evidence |
+|---|---|
+| Only department members start a run; its inputs are exactly the declared ones | `TestARunIsStartedByADepartmentMemberWithItsInputs`, `TestStudioRunsThroughTheAPI` |
+| One runtime holds a run at a time; only the lease holder moves it | `TestOnlyTheLeaseHolderMovesARun`, `TestTwoRuntimesNeverShareARun`, `TestRuntimeRoutesAreForTheRuntimeOnly` |
+| Each step is the run's own action, under `studio:<run>:<index>`; after a crash the same action is resumed, never sent twice | `TestAStepIsTheRunsOwnAction`, `TestACrashBeforeTheStepRecordResubmitsTheSameAction`, `TestARunEndToEnd` |
+| A run fails closed with a named reason: a missing, expired or revoked key, a denied step, a replaced version, the deadline | `TestARunFailsClosedWithoutAKey`, `TestARevokedKeyFailsTheRun`, `TestADeniedStepFailsTheRun`, `TestAReplacedVersionStopsTheRun`, `TestAStepAwaitingApprovalFailsAtTheDeadline`, `TestTheSweeperExpiresStudioRuns` |
+| Placeholders take the declared inputs and earlier outputs from the result channel; a missing value is never sent | `TestRenderSubstitutesInputsAndOutputs` |
+| The answer is read only by the requester, for one hour; inputs and answer are never journaled | `TestOnlyTheRequesterReadsTheAnswerBeforeItExpires`, `TestRunsAreJournaledWithoutInputsOrAnswer` |
+| Keys are derived from a master only the runtime holds; no key or master appears in a response, log, row, journal or message | `TestKeyFromSecretAuthenticatesUnchanged`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestNoKeyOrMasterLeaks` |
+| The runtime proposes keys and successors and never approves; an operator revokes every Studio key; an expiring key opens an incident | `TestRotationProposesASuccessorAndNeverApproves`, `TestKeysAreDueBeforeTheyExpire`, `TestTheBulkRevocationRevokesOnlyStudioKeys`, `TestOperatorsRevokeEveryStudioKey`, `TestAnExpiringStudioKeyOpensAnIncident` |
+
 ## Benchmarks
 
 `scripts/bench.sh` measures the whole stack under open-loop load on an isolated compose stack (MASTER_PLAN §104):

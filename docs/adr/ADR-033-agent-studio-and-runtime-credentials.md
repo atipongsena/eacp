@@ -1,6 +1,6 @@
 # ADR-033: Agent Studio and the runtime's agent credentials
 
-Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built. Scope: Phase 27-0 and 27a.
+Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built; Rev 1.2 (2026-09-30) records what Phase 27a-2 built. Scope: Phase 27-0 and 27a.
 Related: ADR-001 (the product boundary, agents never hold enterprise credentials), ADR-003 §5 (API keys), ADR-019 (credential custody and providers), ADR-029 (replicas), ADR-031 (the LLM gateway authenticates agent keys), ADR-034 (the result channel); the program spec `docs/superpowers/specs/2026-09-29-agent-studio-program-design.md` sections 2, 5 and 11.
 
 ## Context
@@ -150,6 +150,21 @@ Phase 27a-1 (spec `docs/superpowers/specs/2026-09-30-phase-27a-1-studio-rules-de
 
 The record of the master version behind each derived credential, derived keys, rotation and the bulk revocation are Phase 27a-2.
 
+## Revision 1.2: what Phase 27a-2 built
+
+Phase 27a-2 (spec `docs/superpowers/specs/2026-09-30-phase-27a-2-agent-runtime-design.md`) adds `agent-runtime`, runs and derived keys. Migration 00028 and `cmd/agent-runtime`:
+
+- **The derivation, exactly.** The label is the ASCII text `eacp-studio-ak-`, the master version (`v1`), then the tenant and credential ids in their canonical lower-case hyphenated form, with no separators: `HMAC-SHA-256(master, "eacp-studio-ak-" + version + tenant + credential)`. `identity.KeyFromSecret` builds the key from those 32 bytes and refuses any other length; `identity.Authenticate` is unchanged (invariant 4).
+- **Custody.** Only `agent-runtime` accepts `EACP_STUDIO_MASTER_FILE`; every other service refuses it, and the runtime refuses `EACP_DATABASE_URL`, connector secrets and provider keys (invariant 5). The master's source in 27a-2 is a file; Vault KV v2 stays open for a later revision. The runtime reaches EACP only through the API, with one `pk` key per tenant (`EACP_RUNTIME_KEY_FILE`).
+- **Keys.** `eacp.studio_credentials` records the master version of each derived key. `eacp.studio_credentials_due` lists `ACTIVE`, approved Studio versions with no pending proposal and no approved key with more than 30 days left under the current master; the runtime proposes a new random credential id for each, sending only the hash, and a `registry_approver` approves it in the Studio queue beside the capability requests. The runtime never approves.
+- **Runs.** A live member of the agent's department starts a run (`eacp.studio_run_start`, inputs validated against the definition). The runtime leases runs by runtime id and generation, and only the lease holder heartbeats, records a step or finishes. Each `tool_call` is an ordinary `POST /v1/actions` as the run's version, with the requester as subject and the idempotency key `studio:<run>:<index>`; `eacp.studio_run_step` accepts only that action. After a crash, a recorded step is waited on and an unrecorded one is resubmitted under the same key, so the action API returns the same action.
+- **Failing closed.** A run fails with a named reason: `credential_pending` or `credential_expired` at claim (invariant 6), `credential_revoked` when the agent key is refused mid-run, `version_replaced` when the heartbeat reports that the version is no longer `ACTIVE` (the runtime then sends nothing more), `action_denied`, `action_failed`, `action_cancelled`, `action_unknown`, `result_unavailable`, `answer_too_large`, or `deadline_exceeded` (also from the sweeper).
+- **Answers and inputs.** The answer is kept one hour for the requester only (`eacp.studio_run_answer`), then cleared by the sweeper; inputs are cleared when the run ends. Neither is readable by `eacp_app` directly, journaled (`eacp.audit_row_change_redacted`) or logged.
+- **Revocation and expiry.** `eacp.studio_credentials_revoke_all`, by an operator with a reason, revokes every live Studio key and no other (invariant 7). The incident evaluator opens one `studio_credential` incident per version and expiry when its last approved key has 7 days or less left.
+- **Narrower than the spec:** the heartbeat returns whether the run's version is still `ACTIVE`, and the fixed failure reasons gain `credential_revoked`, so a revoked key is never reported as an expired one.
+
+Packaging (the image, compose and the Helm chart), the Studio page and the template are Phase 27a-3.
+
 ## Verification
 
-Rev 1.0 is a decision document; it changes no code. Rev 1.1's rules are tested in raw SQL as `eacp_app` in `internal/studio/schema_test.go`, and the API in `internal/api/studio_test.go`. Invariants 4 to 7 above are tested in 27a-2.
+Rev 1.0 is a decision document; it changes no code. Rev 1.1's rules are tested in raw SQL as `eacp_app` in `internal/studio/schema_test.go`, and the API in `internal/api/studio_test.go`. Rev 1.2's rules are tested in raw SQL in `internal/studio/runs_schema_test.go`, the routes in `internal/api/studio_runs_test.go`, and the runtime against a real API, worker and database in `internal/studioruntime` (invariants 4 to 7: `TestKeyFromSecretAuthenticatesUnchanged`, `TestNoKeyOrMasterLeaks`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestARunFailsClosedWithoutAKey`, `TestTheBulkRevocationRevokesOnlyStudioKeys`).

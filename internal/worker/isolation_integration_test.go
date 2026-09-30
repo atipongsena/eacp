@@ -25,6 +25,7 @@ import (
 	"github.com/atipongsena/eacp/internal/llm"
 	"github.com/atipongsena/eacp/internal/messaging"
 	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/registry/registrytest"
 	"github.com/atipongsena/eacp/internal/release"
 	"github.com/atipongsena/eacp/internal/storage"
 	"github.com/atipongsena/eacp/internal/storage/pgtest"
@@ -296,6 +297,26 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 			`{"id":"answer","kind":"respond","text":"done"}]}`)
 	if err := v.f.Exec("rita", `SELECT eacp.studio_decide($1, true, 'isolation fixture')`, studioVersion); err != nil {
 		t.Fatal(err)
+	}
+	// Studio runs (Phase 27a-2): stella runs it; the runtime proposes its key,
+	// claims the run, records its step's action and finishes it.
+	v.f.AddPrincipal(t, "rt", "service", "studio_runtime")
+	studioAgent := v.f.ID(t, "alice", `SELECT agent_id FROM eacp.agent_versions WHERE id = $1`, studioVersion)
+	studioRun := v.f.ID(t, "stella", `SELECT eacp.studio_run_start($1, '{}'::jsonb)`, studioAgent)
+	studioAction := v.f.AgentID(t, studioVersion, registrytest.ReceivedActionSQL, studioVersion,
+		fmt.Sprintf("studio:%s:0", studioRun), "stella@tenant-a.test", "hr.balance")
+	for _, step := range []struct {
+		sql  string
+		args []any
+	}{
+		{`SELECT eacp.studio_credential_propose($1, gen_random_uuid(), decode(repeat('cd', 32), 'hex'), 'v1')`, []any{studioVersion}},
+		{`SELECT eacp.studio_run_claim('r1', 'v1', 30, 1)`, nil},
+		{`SELECT eacp.studio_run_step($1, 'r1', 1, 0, $2)`, []any{studioRun, studioAction}},
+		{`SELECT eacp.studio_run_finish($1, 'r1', 1, 'SUCCEEDED', 'done', NULL)`, []any{studioRun}},
+	} {
+		if err := v.f.Exec("rt", step.sql, step.args...); err != nil {
+			t.Fatalf("%s: %v", step.sql, err)
+		}
 	}
 
 	admin, err := pgx.Connect(ctx, v.f.DB.AdminDSN)
