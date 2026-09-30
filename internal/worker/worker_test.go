@@ -73,12 +73,25 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, nil)
+}
+
+// newEnvWith is newEnv with extra tools: "connector.tool" to the SQL of its
+// contract ($1 tool id). Each extra connector gets a canary secret too.
+func newEnvWith(t *testing.T, extra map[string]string) *env {
+	t.Helper()
 	f := registrytest.New(t)
 	v := &env{t: t, f: f, conn: &fake{}, logs: &bytes.Buffer{}, tools: map[string]registrytest.Tooling{}}
 	v.tools["erp.lookup"] = f.ActiveTool(t, "erp", "lookup")
 	v.tools["ledger.post"] = f.ActiveToolWith(t, "ledger", "post", registrytest.WriteContractSQL)
 	v.tools["bank.pay"] = f.ActiveToolWith(t, "bank", "pay", registrytest.IdempotentContractSQL)
 	v.tools["fast.post"] = f.ActiveToolWith(t, "fast", "post", fastWriteContractSQL)
+	refs := []string{"erp", "ledger", "bank", "fast"}
+	for name, contract := range extra {
+		conn, tool, _ := strings.Cut(name, ".")
+		v.tools[name] = f.ActiveToolWith(t, conn, tool, contract)
+		refs = append(refs, conn)
+	}
 	var ids []uuid.UUID
 	for _, tl := range v.tools {
 		ids = append(ids, tl.Tool)
@@ -86,7 +99,7 @@ func newEnv(t *testing.T) *env {
 	v.agent = f.ActiveAgent(t, "buyer", ids...)
 	f.ActivatePolicy(t, registrytest.AllowPolicy)
 	var entries []string
-	for _, ref := range []string{"erp", "ledger", "bank", "fast"} {
+	for _, ref := range refs {
 		entries = append(entries, fmt.Sprintf(`{"tenant_id":%q,"secret_ref":%q,"host":"fakeerp:8090","value":"%s-%s"}`,
 			pgtest.TenantA, ref, canary, ref))
 	}

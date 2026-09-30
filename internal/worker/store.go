@@ -197,7 +197,7 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 			COALESCE(k.idempotency_key_field, ''), COALESCE(k.correlation_field, ''),
 			k.no_effect_errors, k.max_attempts,
 			extract(epoch FROM eacp.call_timeout(a.connector_contract_id))::float8,
-			COALESCE(t.remote_name, ''), COALESCE(d.definition, '')
+			COALESCE(t.remote_name, ''), COALESCE(d.definition, ''), COALESCE(k.result_retention_seconds, 0)
 			FROM eacp.actions a
 			JOIN eacp.tool_contracts k ON k.tenant_id = a.tenant_id AND k.id = a.connector_contract_id
 			JOIN eacp.tools t ON t.tenant_id = a.tenant_id AND t.id = a.tool_id
@@ -208,7 +208,7 @@ func (s *Store) Load(ctx context.Context, l Lease) (Job, error) {
 			&input, &enforced, &j.EnforcedDigest, &j.Attempts, &j.ConnectorID, &j.Protocol, &j.Endpoint, &j.SecretRef,
 			&j.Contract.Version, &j.Contract.SideEffects, &j.Contract.IdempotencyMode,
 			&j.Contract.IdempotencyKeyField, &j.Contract.CorrelationField, &j.Contract.NoEffectErrors,
-			&j.Contract.MaxAttempts, &callSecs, &j.RemoteName, &j.Definition)
+			&j.Contract.MaxAttempts, &callSecs, &j.RemoteName, &j.Definition, &j.Contract.ResultRetention)
 		if err != nil {
 			return err
 		}
@@ -442,6 +442,21 @@ func (s *Store) Complete(ctx context.Context, l Lease, r Result, backoff time.Du
 			c.State, reason = "UNKNOWN_OUTCOME", "cancelled during the call"
 		default:
 			c.State, reason = "UNKNOWN_OUTCOME", "ambiguous result"
+		}
+		// ADR-034: a success keeps its output for the calling agent, before
+		// the action leaves EXECUTING; PostgreSQL checks the lease, the
+		// attempt and the contract's retention.
+		if c.State == "SUCCEEDED" && (len(r.Output) > 0 || r.withheld != "") {
+			var output, withheld any
+			if r.withheld != "" {
+				withheld = r.withheld
+			} else {
+				output = string(r.Output)
+			}
+			if _, err := tx.Exec(ctx, `SELECT eacp.action_result_record($1, $2, $3)`,
+				l.ActionID, output, withheld); err != nil {
+				return err
+			}
 		}
 		var next any
 		if c.State == "RETRY_WAIT" {

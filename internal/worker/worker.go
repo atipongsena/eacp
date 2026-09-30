@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -412,7 +413,13 @@ func (w *Worker) execute(ctx context.Context, l Lease) {
 	cancel()
 	stop()
 	// Scrub the value that was sent too: the store may have rotated it away.
-	res = classify(scrub(res, append(w.o.Secrets.Values(), secret.values()...)), job.Contract)
+	secrets := append(w.o.Secrets.Values(), secret.values()...)
+	res = classify(scrub(res, secrets), job.Contract)
+	if res.Outcome == Succeeded && job.Contract.ResultRetention > 0 {
+		res.Output, res.withheld = prepareOutput(res.Output, secrets)
+	} else {
+		res.Output = nil
+	}
 	if res.ErrorClass == "unauthorized" {
 		// The target refused the credential: a minted token is dropped so
 		// the next attempt mints another. The outcome stays as classified.
@@ -535,10 +542,41 @@ func classify(r Result, c Contract) Result {
 	ref := strings.TrimSpace(r.ExternalReference)
 	switch {
 	case r.Outcome == Succeeded && ref != "" && len(ref) <= 512:
-		return Result{Outcome: Succeeded, ExternalReference: ref}
+		return Result{Outcome: Succeeded, ExternalReference: ref, Output: r.Output}
 	case r.Outcome == NoEffect && ref == "" && class != "" && slices.Contains(c.NoEffectErrors, class):
 		return Result{Outcome: NoEffect, ErrorClass: class, RemoteReference: remote}
 	default:
 		return Result{Outcome: Ambiguous, ErrorClass: class, RemoteReference: remote}
 	}
+}
+
+// maxOutputBytes bounds a kept output (ADR-034), as eacp.action_results.
+const maxOutputBytes = 64 << 10
+
+// prepareOutput turns a success's output into what the result channel keeps
+// (ADR-034): its RFC 8785 form, or the reason it is withheld. An output that
+// contains a credential the worker holds, raw, canonical or JSON-escaped,
+// is withheld before its size is considered. An empty output keeps nothing.
+func prepareOutput(out json.RawMessage, secrets []string) (json.RawMessage, string) {
+	if len(out) == 0 {
+		return nil, ""
+	}
+	canon, err := governance.Canonicalize(out)
+	if err != nil {
+		return nil, "invalid_output"
+	}
+	for _, s := range secrets {
+		if s == "" {
+			continue
+		}
+		escaped, _ := json.Marshal(s)
+		if bytes.Contains(out, []byte(s)) || bytes.Contains(canon, []byte(s)) ||
+			bytes.Contains(canon, escaped[1:len(escaped)-1]) {
+			return nil, "contains_credential"
+		}
+	}
+	if len(canon) > maxOutputBytes {
+		return nil, "too_large"
+	}
+	return canon, ""
 }

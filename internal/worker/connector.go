@@ -30,6 +30,9 @@ type Contract struct {
 	CorrelationField    string
 	NoEffectErrors      []string
 	MaxAttempts         int
+	// ResultRetention is how long a success's output is kept for the
+	// calling agent, in seconds; zero keeps none (ADR-034).
+	ResultRetention int
 }
 
 // Call is one dispatch of an action, made only after its dispatch intent
@@ -67,6 +70,12 @@ type Result struct {
 	// evidence for the human who settles it. It never proves a success and
 	// is dropped from one.
 	RemoteReference string
+	// Output is the tool's output (a JSON value), set by a connector only
+	// with Succeeded (ADR-034). The worker keeps it for the calling agent
+	// when the pinned contract has a result retention, and never logs it.
+	Output json.RawMessage
+	// withheld names why an output is not kept (ADR-034); the worker sets it.
+	withheld string
 }
 
 // LookupCall asks a connector for evidence about the stable operation key.
