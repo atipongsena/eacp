@@ -48,6 +48,8 @@ type Stats struct {
 	Tenants, Expired, Reclaimed, Retried, Advanced int
 	// Escalated counts unknown outcomes sent to a human (T29, T34).
 	Escalated int
+	// Pruned counts expired results whose content this pass cleared (ADR-034).
+	Pruned int
 }
 
 // RunOnce makes one pass over every tenant with open actions.
@@ -73,10 +75,49 @@ func (s *Sweeper) RunOnce(ctx context.Context) (Stats, error) {
 			st.Tenants++
 		}
 		if len(tenants) < 100 {
-			return st, nil
+			break
 		}
 		after = &tenants[len(tenants)-1]
 	}
+	return st, s.pruneResults(ctx, &st)
+}
+
+// pruneResults clears the content of expired results (ADR-034) in every
+// tenant that has some, open actions or not. Replicas race harmlessly:
+// eacp.action_results_prune skips locked rows and counts only real clears.
+func (s *Sweeper) pruneResults(ctx context.Context, st *Stats) error {
+	rows, err := s.e.pool.Query(ctx, `SELECT eacp.action_result_tenants()`)
+	if err != nil {
+		return err
+	}
+	tenants, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return err
+	}
+	batch := max(s.Batch, 1) // as eacp.action_results_prune reads it
+	for _, t := range tenants {
+		for {
+			var n int
+			err := storage.InTenantTx(ctx, s.e.pool, t.String(), func(tx pgx.Tx) error {
+				if err := storage.SetSystem(ctx, tx, SweeperComponent); err != nil {
+					return err
+				}
+				return tx.QueryRow(ctx, `SELECT eacp.action_results_prune($1)`, batch).Scan(&n)
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				s.e.o.Log.ErrorContext(ctx, "result pruning failed", "tenant", t.String(), "err", err)
+				break
+			}
+			st.Pruned += n
+			if n < batch {
+				break
+			}
+		}
+	}
+	return nil
 }
 
 // Run sweeps every interval until ctx is cancelled.
