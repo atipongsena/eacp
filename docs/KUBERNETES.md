@@ -31,6 +31,8 @@ Create these Secrets yourself (or with your secret manager's operator). Values n
 | `nats.relaySecret` | `url` — the `relay` user | api (only with `nats.enabled`) |
 | `nats.workerSecret` | `url` — the `worker` user | worker (only with `nats.enabled`) |
 | `worker.connectorSecrets` | `connector-secrets.json` | worker only |
+| `studio.masterSecret` | `master` — the Studio master, at least 32 random bytes | agent-runtime only (only with `studio.enabled`) |
+| `studio.runtimeKeySecret` | `keys` — the runtime principal's `pk` keys, one per tenant and line | agent-runtime only (only with `studio.enabled`) |
 
 The PDP certificate must name the PDP Service (`<release>-pdp`, `<release>-pdp.<namespace>.svc`). For
 development, `EACP_ENV=development eacpctl pdp-dev-certs --dir <dir> --name eacp-pdp --name
@@ -108,7 +110,10 @@ The chart fails at render time (`helm template` / `install` stops with a message
 - `shutdown.delay` is not whole seconds from `0s` to `60s`, `shutdown.timeout` is not positive whole seconds, or
   `worker.maxCallSeconds` is not a whole number of at least 1;
 - replicas are below 1 or a grace period is too short (below);
-- the governance provider is not `microsoft-agt` (or `local` with `governance.allowLocal`, for tests).
+- the governance provider is not `microsoft-agt` (or `local` with `governance.allowLocal`, for tests);
+- with `studio.enabled`: a Studio Secret name is missing, `studio.masterVersion` is not `v` and 1 to 4 digits,
+  or `studio.env` sets a secret file, the database URL, a URL with credentials or a variable the chart sets
+  (also `EACP_API_URL`, `EACP_STUDIO_MASTER_FILE`, `EACP_STUDIO_MASTER_VERSION` and `EACP_RUNTIME_KEY_FILE`).
 
 ## Install and upgrade
 
@@ -131,7 +136,11 @@ A failed migration fails the install or upgrade and leaves the running pods unto
 | worker | none (kubelet probes only) | PostgreSQL, NATS, `worker.connectorEgress`, OTLP |
 | pdp | 8443 from api pods only | none |
 | migrate Job | none | PostgreSQL |
+| agent-runtime (with `studio.enabled`) | none | api 8080 only |
 
+With `studio.enabled` and a narrowed `api.ingress.from`, the API also admits the agent-runtime pods. `agent-runtime`
+(ADR-033) runs Agent Studio agents through the API only: its own ServiceAccount without a token, no database URL
+and no connector or provider secret; its two Secrets are mounted read-only at `/run/studio`. It is off by default.
 Everything else in the namespace is denied both ways. An agent namespace reaches only the API; your enterprise
 systems should also accept only the worker, as the dev Fake ERP does.
 

@@ -1,10 +1,10 @@
 [English](DEMO.md) | [ไทย](DEMO.th.md)
 
-# Demo ของ Slice A, Slice C, A2A, LLM gateway และ JIT credential
+# Demo ของ Slice A, Slice C, A2A, LLM gateway, JIT credential และ Agent Studio
 
-demo ห้าชุดรันบน stack ที่แยกออกมาชุดเดียว แต่ละชุดใช้ tenant ของตัวเอง ได้แก่ Slice A (tenant Acme), Slice C (tenant Globex, [ด้านล่าง](#slice-c-demo)),
-A2A delegation (tenant Initech, [ด้านล่าง](#a2a-delegation-demo)), LLM gateway (tenant Hooli-AI, [ด้านล่าง](#llm-gateway-demo)) และ JIT credential
-(tenant Umbrella, [ด้านล่าง](#jit-credential-demo))
+demo หกชุดรันบน stack ที่แยกออกมาชุดเดียว แต่ละชุดใช้ tenant ของตัวเอง ได้แก่ Slice A (tenant Acme), Slice C (tenant Globex, [ด้านล่าง](#slice-c-demo)),
+A2A delegation (tenant Initech, [ด้านล่าง](#a2a-delegation-demo)), LLM gateway (tenant Hooli-AI, [ด้านล่าง](#llm-gateway-demo)), JIT credential
+(tenant Umbrella, [ด้านล่าง](#jit-credential-demo)) และ Agent Studio (tenant Wonka, [ด้านล่าง](#agent-studio-demo))
 
 ## Slice A demo
 
@@ -38,7 +38,7 @@ scripts/demo.sh
 1. เตรียม credential ของ Fake ERP, Fake MCP, Fake A2A และ Fake LLM บนเครื่อง และ OAuth client secret ของ Fake ERP
 2. เริ่ม stack **ใหม่ที่แยกออกมา** เป็น compose project `eacp-demo` (API ที่ `127.0.0.1:18080`, LLM gateway ที่ `127.0.0.1:18083`,
    PostgreSQL ที่ `127.0.0.1:55433` พร้อม volume ของตัวเอง)
-3. รันทุก demo (`DEMO` ใช้เลือกบางชุด ด้วยตัวอักษรจาก `A`, `C`, `D`, `J` และ `L` เช่น `DEMO=J`)
+3. รันทุก demo (`DEMO` ใช้เลือกบางชุด ด้วยตัวอักษรจาก `A`, `C`, `D`, `J`, `L` และ `S` เช่น `DEMO=J`)
 4. ลบ stack ของ demo และ volume ทิ้ง
 
 stack สำหรับ development (project `eacp` พอร์ต 8080) จะไม่ถูกแตะ ถ้าต้องการเก็บ stack ของ demo ไว้สำรวจต่อ ให้รัน `KEEP=1 scripts/demo.sh`
@@ -298,6 +298,32 @@ binding ใดเลย
   ออกให้ session นั้น audit ของ ERP แสดง key id, SHA-256 ของ session token และ SHA-256 ของ subject token ไม่เคยบันทึก token หรือ key
 - **Y2** ไม่มี web identity token, secret key (ซึ่งคำนวณคืนจาก key id แต่ละตัวที่ audit ไว้) หรือ session token ปรากฏในคำตอบของ API, log ของ
   service หรือ dump ของฐานข้อมูล
+
+## Agent Studio demo
+
+`TestStudioDemo` แสดง Phase 27a (ADR-033) และรันด้วย `DEMO=S` บน compose เท่านั้น Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
+`erp` ที่มีเพียง worker เข้าได้ และมี token ของตัวเอง) มี tool เดียวคือ `get_leave_balance` ซึ่งตอบ `{"days": N}` ตาม id ของพนักงาน (E-1 มี 12 วัน)
+และตอบ tool error สำหรับ `ERR` `agent-runtime` รันใต้ compose profile `studio` บนเครือข่าย `agents` เท่านั้น ไม่มี URL ของฐานข้อมูล และไม่มี secret
+ของ connector หรือ provider demo เขียน master และ key ของมันลงใน volume `studio_runtime` ผ่าน stdin แล้วจึงเริ่มมัน
+
+- **S0** bootstrap tenant Wonka stella (`studio_author`) อยู่ในกลุ่ม HR ส่วน carol ไม่อยู่ service principal `studio-runtime` ถือ `studio_runtime`
+  เพียงบทบาทเดียว policy อนุญาตการค้นข้อมูล HR แบบอ่านอย่างเดียว
+- **S1** erin ลงทะเบียน connector `hr-mcp` scanner ค้นพบ `get_leave_balance` erin รับรองให้เป็น `READ_ONLY` ลองครั้งเดียว และเก็บผลลัพธ์ 10 นาที
+  rita เปิดใช้ contract
+- **S2** agent-runtime เริ่มด้วย master แบบสุ่มขนาด 32 ไบต์ที่สร้างใหม่ และ key ของตัวเอง
+- **S3** stella บันทึก template ยอดวันลา PostgreSQL คำนวณ capability ของมัน stella อนุมัติ agent ของตัวเองไม่ได้ rita อนุมัติให้ run ที่เริ่มก่อน key
+  ได้รับอนุมัติจะล้มเหลวแบบปิด (`credential_pending`) และไม่ส่ง action ใดเลย runtime เสนอ key ของ version นั้น rita อนุมัติจากคิวของ Studio
+- **S4** run ของ stella สำหรับ E-1 ตอบว่า "You have 12 days of leave left." step ของมันเป็น action ปกติของ agent version นั้น ในนามของ stella
+  ผ่าน `hr-mcp.get_leave_balance` carol ซึ่งอยู่นอก HR รัน agent ไม่ได้ (HTTP 403) rita เห็น run และ step ของมันแต่ไม่เห็นคำตอบ fakemcp-hr
+  บันทึกการเรียกหนึ่งครั้ง
+- **S5** run สำหรับ `ERR` ได้ tool error ซึ่งไม่ได้รับรองว่าไม่มีผล แต่การเรียกแบบ `READ_ONLY` ไม่มีผลที่ต้องสงสัย เมื่อใช้ความพยายามครั้งเดียวไปแล้ว
+  action จึงจบด้วย `FAILED` และ run จบด้วย `FAILED` (`action_failed`) โดยไม่มีคำตอบ
+- **S6** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
+- **S7** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
+  คำตอบไม่อยู่ใน log บรรทัดใดและไม่อยู่ใน journal และ audit chain ตรวจสอบผ่าน
+
+runtime เข้าถึงได้เพียง API และมีเพียงมันที่ถือ master ของ Studio (`test/security` `TestTheRuntimeReachesOnlyTheAPI`,
+`TestOnlyTheRuntimeHoldsTheStudioMaster`)
 
 ## ขอบเขต
 

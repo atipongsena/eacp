@@ -370,6 +370,17 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | key derive จาก master ที่มีเพียง runtime ถือ และไม่มี key หรือ master ปรากฏใน response, log, แถว, journal หรือข้อความ | `TestKeyFromSecretAuthenticatesUnchanged`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestNoKeyOrMasterLeaks` |
 | runtime เสนอ key และ key ถัดไปแต่ไม่เคยอนุมัติเอง operator เพิกถอน key ของ Studio ได้ทั้งหมด และ key ใกล้หมดอายุจะเปิด incident | `TestRotationProposesASuccessorAndNeverApproves`, `TestKeysAreDueBeforeTheyExpire`, `TestTheBulkRevocationRevokesOnlyStudioKeys`, `TestOperatorsRevokeEveryStudioKey`, `TestAnExpiringStudioKeyOpensAnIncident` |
 
+## Phase 27a-3a: การแพ็กเกจ `agent-runtime` และ demo ของ Studio
+
+`agent-runtime` มาพร้อม image และไบนารีของ release ใน compose มันรันใต้ profile `studio` บนเครือข่าย `agents` เท่านั้น ใน Helm `studio.enabled` เพิ่มมันพร้อม ServiceAccount และ NetworkPolicy ของตัวเอง และ Secret สองตัวที่อ้างอิงด้วยชื่อ ([docs/KUBERNETES.md](KUBERNETES.md)) `DEMO=S scripts/demo.sh` พา agent ยอดวันลาของ HR จาก template ผ่านการอนุมัติไปจนถึงการรัน ([docs/DEMO.th.md](DEMO.th.md#agent-studio-demo))
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| runtime เข้าถึงได้เพียง API และไม่มี URL ของฐานข้อมูล secret ของ connector หรือ provider มีเพียงมันที่ mount master ของ Studio | `TestTheRuntimeReachesOnlyTheAPI`, `TestOnlyTheRuntimeHoldsTheStudioMaster` (compose), `TestTheRuntimePodIsHardened`, `TestTheRuntimeReachesOnlyTheAPIInTheCluster` (Helm) |
+| chart ปฏิเสธ runtime ที่ไม่มี Secret ของมัน หรือมี secret, URL ของฐานข้อมูล หรือตัวแปรที่ chart ตั้งเองใน `studio.env` | `TestTheRuntimeNeedsItsSecrets`, `TestRuntimeEnvIsValidated`, `TestTheRuntimeIsOffByDefault` |
+| Fake MCP ตอบเฉพาะ tool ที่อยู่ในรายการ และ `get_leave_balance` คืน structured content | `TestAToolOutsideTheListIsRefused`, `TestLeaveBalanceAnswersStructuredContent`, `TestLeaveBalanceErrIsAToolError` |
+| จาก template ถึงคำตอบ โดยมีผู้อนุมัติคนที่สอง รันได้เฉพาะในแผนก key ล้มเหลวแบบปิด และไม่มี secret หรือคำตอบรั่วไหล | `TestStudioDemo` |
+
 ## Benchmark
 
 `scripts/bench.sh` วัดทั้ง stack ภายใต้โหลดแบบ open loop บน stack ของ compose ที่แยกออกมา (MASTER_PLAN §104) ครอบคลุมเส้นทางของ action ทั้งกับ PDP

@@ -375,6 +375,17 @@ A member of an agent's department runs an approved Studio agent with its inputs 
 | Keys are derived from a master only the runtime holds; no key or master appears in a response, log, row, journal or message | `TestKeyFromSecretAuthenticatesUnchanged`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestNoKeyOrMasterLeaks` |
 | The runtime proposes keys and successors and never approves; an operator revokes every Studio key; an expiring key opens an incident | `TestRotationProposesASuccessorAndNeverApproves`, `TestKeysAreDueBeforeTheyExpire`, `TestTheBulkRevocationRevokesOnlyStudioKeys`, `TestOperatorsRevokeEveryStudioKey`, `TestAnExpiringStudioKeyOpensAnIncident` |
 
+## Phase 27a-3a: packaging `agent-runtime` and the Studio demo
+
+`agent-runtime` ships in the image and the release binaries. In compose it runs under the profile `studio` on the `agents` network only; in Helm, `studio.enabled` adds it with its own ServiceAccount and NetworkPolicy and two Secrets by name ([docs/KUBERNETES.md](KUBERNETES.md)). `DEMO=S scripts/demo.sh` takes an HR leave-balance agent from its template through approval to a run ([docs/DEMO.md](DEMO.md#agent-studio-demo)).
+
+| Capability | Evidence |
+|---|---|
+| The runtime reaches only the API and holds no database URL, connector or provider secret; only it mounts the Studio master | `TestTheRuntimeReachesOnlyTheAPI`, `TestOnlyTheRuntimeHoldsTheStudioMaster` (compose), `TestTheRuntimePodIsHardened`, `TestTheRuntimeReachesOnlyTheAPIInTheCluster` (Helm) |
+| The chart refuses a runtime without its Secrets or with a secret, database URL or chart-set variable in `studio.env` | `TestTheRuntimeNeedsItsSecrets`, `TestRuntimeEnvIsValidated`, `TestTheRuntimeIsOffByDefault` |
+| Fake MCP answers only the tools it lists; `get_leave_balance` returns structured content | `TestAToolOutsideTheListIsRefused`, `TestLeaveBalanceAnswersStructuredContent`, `TestLeaveBalanceErrIsAToolError` |
+| From a template to an answer, with a second approver, department-only runs, fail-closed keys and no secret or answer leaked | `TestStudioDemo` |
+
 ## Benchmarks
 
 `scripts/bench.sh` measures the whole stack under open-loop load on an isolated compose stack (MASTER_PLAN §104):

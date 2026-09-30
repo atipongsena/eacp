@@ -3708,6 +3708,8 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 >
 > **Phase 27a-2 delivered (2026-09-30, ADR-033 Rev 1.2):** `agent-runtime` runs approved Studio agents through the API only. A department member starts a run; the runtime leases it, derives the version's key from a master secret only it holds (HMAC-SHA-256, `identity.KeyFromSecret`), sends each `tool_call` as an ordinary action with the requester as subject and the idempotency key `studio:<run>:<index>`, re-reads earlier outputs through the result channel and finishes with an answer kept one hour for the requester. Runs fail closed with named reasons; the runtime proposes keys and successors (approved by a `registry_approver`), an operator revokes every Studio key at once, and an expiring key opens an incident. Migration 00028; the image, compose and Helm are Phase 27a-3.
 
+> **Phase 27a-3a delivered (2026-09-30, ADR-033):** `agent-runtime` ships in the image, the release binaries, compose (profile `studio`, the `agents` network only) and the Helm chart (`studio.enabled`, egress to the API only). Fake MCP gains `get_leave_balance` on a second instance, `fakemcp-hr`, and `DEMO=S` runs the Agent Studio demo from a template through approval to a run, a tool error, a revocation and a secret scan. The `/studio/` page is Phase 27a-3b.
+
 Operator UI:
 
 ```text

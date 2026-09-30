@@ -57,7 +57,7 @@ action path and answers its requester. Nothing in the API, the schema or the run
 
 ### 3.3 The demo (`DEMO=S`, `test/demo/studio_test.go`)
 
-Tenant `…00f5` (Initech). Steps, each logged:
+Tenant `…00f5` (Wonka; the A2A demo already uses the name Initech). Steps, each logged:
 
 1. **S0.** The tenant with alice and bob as admins; erin (registry editor), rita (registry approver), otto
    (operator), stella (HR, `studio_author`), carol (not in HR); the runtime principal `studio-runtime` (service,
@@ -70,8 +70,9 @@ Tenant `…00f5` (Initech). Steps, each logged:
    `credential_pending`.
 5. **S4.** stella runs it for `E-1` and reads "You have 12 days of leave left."; carol is refused (403); rita sees
    the run without its answer; fakemcp-hr's log holds one call naming no argument.
-6. **S5.** A run for `ERR`: the action ends `UNKNOWN_OUTCOME` (an uncertified `isError`) and the run
-   `FAILED action_unknown`.
+6. **S5.** A run for `ERR`: the uncertified `isError` is ambiguous, but a `READ_ONLY` contract treats an
+   ambiguous read as retryable; with one attempt the action ends `FAILED` (retry budget exhausted) and the
+   run `FAILED action_failed`. (Corrected during implementation: the first draft expected `UNKNOWN_OUTCOME`.)
 7. **S6.** otto revokes every Studio key; a new run fails `credential_pending`.
 8. **S7.** The scan: no master, derived key (derived again from the master and the recorded credential ids), runtime
    key, input canary or answer appears in any API response, service log (the runtime's included) or database dump;

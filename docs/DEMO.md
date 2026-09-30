@@ -1,8 +1,8 @@
 [English](DEMO.md) | [ไทย](DEMO.th.md)
 
-# Slice A, Slice C, A2A, LLM gateway and JIT credential demos
+# Slice A, Slice C, A2A, LLM gateway, JIT credential and Agent Studio demos
 
-Five demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)), A2A delegation (tenant Initech, [below](#a2a-delegation-demo)), the LLM gateway (tenant Hooli-AI, [below](#llm-gateway-demo)) and JIT credentials (tenant Umbrella, [below](#jit-credential-demo)).
+Six demos run against one isolated stack, each in its own tenant: Slice A (tenant Acme), Slice C (tenant Globex, [below](#slice-c-demo)), A2A delegation (tenant Initech, [below](#a2a-delegation-demo)), the LLM gateway (tenant Hooli-AI, [below](#llm-gateway-demo)) JIT credentials (tenant Umbrella, [below](#jit-credential-demo)) and Agent Studio (tenant Wonka, [below](#agent-studio-demo)).
 
 ## Slice A demo
 
@@ -29,7 +29,7 @@ scripts/demo.sh
 The script:
 1. prepares the local Fake ERP, Fake MCP, Fake A2A and Fake LLM credentials and the Fake ERP's OAuth client secret;
 2. starts a **fresh, isolated** stack as the compose project `eacp-demo` (API on `127.0.0.1:18080`, LLM gateway on `127.0.0.1:18083`, PostgreSQL on `127.0.0.1:55433`, with its own volumes);
-3. runs every demo (`DEMO` picks some: letters from `A`, `C`, `D`, `J` and `L`, e.g. `DEMO=J`);
+3. runs every demo (`DEMO` picks some: letters from `A`, `C`, `D`, `J`, `L` and `S`, e.g. `DEMO=J`);
 4. removes the demo stack and its volumes.
 
 A development stack (project `eacp`, port 8080) is not touched. To keep the demo stack for exploring afterwards, run `KEEP=1 scripts/demo.sh`. The two demos take about two minutes after the images are built. The first build also pulls the sidecar's pinned Python packages and the OPA binary.
@@ -218,6 +218,21 @@ A withheld purchase is not shown: the worker keeps using an SVID it already hold
 - **Y0.** Bootstrap tenant Soylent and a policy that allows routine ERP work.
 - **Y1.** Two connectors, `erp` and `erp-oauth`, one per binding: a purchase through each ends `SUCCEEDED` with one purchase order, as principal `aws:arn:aws:sts::000000000000:assumed-role/eacp-erp/eacp-worker-k8s` and `…/eacp-worker-spiffe`. Each execute is signed by a key the STS issued to that session: the ERP audit shows the key id, the session token's SHA-256 and the subject token's SHA-256, never a token or key.
 - **Y2.** No web identity token, no secret key (re-derived from each audited key id) and no session token appears in API responses, service logs or a database dump.
+
+## Agent Studio demo
+
+`TestStudioDemo` shows Phase 27a (ADR-033) and runs with `DEMO=S` on compose only. A second Fake MCP server, `fakemcp-hr` (`fakemcp-hr:8091`, on the worker-only `erp` network, its own token), lists one tool, `get_leave_balance`: it answers `{"days": N}` for an employee id (E-1 has 12 days) and a tool error for `ERR`. `agent-runtime` runs under the compose profile `studio` on the `agents` network only, with no database URL and no connector or provider secret; the demo writes its master and its key into the `studio_runtime` volume through stdin and then starts it.
+
+- **S0.** Bootstrap tenant Wonka. stella (`studio_author`) is in the HR group; carol is not. The service principal `studio-runtime` holds `studio_runtime` alone. A policy allows read-only HR lookups.
+- **S1.** erin registers connector `hr-mcp`; the scanner discovers `get_leave_balance`. erin certifies it `READ_ONLY`, one attempt, keeping results for 10 minutes; rita activates the contract.
+- **S2.** agent-runtime starts with a fresh random 32-byte master and its own key.
+- **S3.** stella saves the leave-balance template; PostgreSQL derives its capability. stella cannot approve her own agent; rita approves it. A run before its key is approved fails closed (`credential_pending`) and sends no action. The runtime proposes the version's key; rita approves it from the Studio queue.
+- **S4.** stella's run for E-1 answers "You have 12 days of leave left." Its step is an ordinary action of the agent version, for stella, through `hr-mcp.get_leave_balance`. carol, outside HR, cannot run the agent (HTTP 403). rita sees the run and its steps but not the answer. fakemcp-hr logged one call.
+- **S5.** A run for `ERR` gets a tool error. It is not certified as no effect, but a `READ_ONLY` call has no effect to be unsure of: with its one attempt spent the action ends `FAILED` and the run ends `FAILED` (`action_failed`) with no answer.
+- **S6.** otto revokes every Studio key; the next run fails closed (`credential_pending`).
+- **S7.** The master, every derived key and the runtime's key appear in no API response, service log (the runtime's included) or database dump. The answer is in no log line and no journal entry, and the audit chain verifies.
+
+The runtime reaches only the API, and only it holds the Studio master (`test/security` `TestTheRuntimeReachesOnlyTheAPI`, `TestOnlyTheRuntimeHoldsTheStudioMaster`).
 
 ## Scope
 
