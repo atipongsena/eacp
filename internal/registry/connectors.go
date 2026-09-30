@@ -67,6 +67,10 @@ type Contract struct {
 	CostFixed       json.Number `json:"cost_fixed,omitempty"`
 	CostAmountField string      `json:"cost_amount_field,omitempty"`
 	CostUnitField   string      `json:"cost_unit_field,omitempty"`
+
+	// ResultRetentionSeconds keeps a success's output for the calling agent
+	// that long (60 to 86 400; ADR-034). Zero keeps none.
+	ResultRetentionSeconds int `json:"result_retention_seconds,omitempty"`
 }
 
 // RegisterConnector registers an immutable connector (registry_editor).

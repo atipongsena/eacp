@@ -459,3 +459,30 @@ func TestPruneDoesNotRetireAVersionActivatedDuringTheApproval(t *testing.T) {
 	wantCode(t, <-approved, bundle.CodeStale)
 	wantActive(t, f, version)
 }
+
+// A contract's result retention (ADR-034) is applied, read back and so
+// never drifts: replanning the applied bundle proposes nothing.
+func TestAResultRetentionIsAppliedAndDoesNotDrift(t *testing.T) {
+	f, s := setup(t)
+	ctx := context.Background()
+	doc := strings.Replace(ledgerDoc, `"max_attempts": 3`, `"max_attempts": 3, "result_retention_seconds": 600`, 1)
+	if doc == ledgerDoc {
+		t.Fatal("the fixture has no max_attempts to extend")
+	}
+	apply(t, f, s, doc)
+	if n := count(t, f, `SELECT count(*) FROM eacp.tool_contracts WHERE result_retention_seconds = 600`); n != 1 {
+		t.Fatalf("contracts keeping results = %d", n)
+	}
+	again, err := s.Plan(ctx, as(f, "erin"), req(doc))
+	ok(t, err)
+	if len(again.Steps) != 0 {
+		t.Fatalf("replan after apply = %+v", again.Steps)
+	}
+	// Changing it is a new contract, activated by a second person.
+	changed := strings.Replace(doc, `"result_retention_seconds": 600`, `"result_retention_seconds": 900`, 1)
+	p, err := s.Plan(ctx, as(f, "erin"), req(changed))
+	ok(t, err)
+	if len(p.Steps) != 2 {
+		t.Fatalf("steps for a changed retention = %+v", p.Steps)
+	}
+}

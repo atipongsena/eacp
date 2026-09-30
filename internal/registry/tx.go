@@ -50,16 +50,17 @@ func (t Tx) ProposeContract(ctx context.Context, toolID uuid.UUID, c Contract) (
 		     reconciliation_lookup, reconciliation_consistency, proof_standard, no_effect_errors,
 		     max_attempts, timeout_ms, concurrency_group, max_inflight, data_sensitivity, schedule_priority,
 		     cost_unit, cost_fixed, cost_amount_field, cost_unit_field,
-		     max_queued, retry_max_elapsed_ms, retry_max_cost, definition_id)
+		     max_queued, retry_max_elapsed_ms, retry_max_cost, definition_id, result_retention_seconds)
 		VALUES (eacp.current_tenant_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-		        $15, $16, COALESCE($17::numeric, 0), $18, $19, $20, $21, $22::numeric, $23)
+		        $15, $16, COALESCE($17::numeric, 0), $18, $19, $20, $21, $22::numeric, $23, $24)
 		RETURNING id`,
 		toolID, c.SideEffects, c.IdempotencyMode, nullStr(c.IdempotencyKeyField), nullStr(c.CorrelationField),
 		c.ReconciliationLookup, c.ReconciliationConsistency, c.ProofStandard, noEffect,
 		c.MaxAttempts, nullInt(c.TimeoutMS), nullStr(c.ConcurrencyGroup), nullInt(c.MaxInflight),
 		nullStr(c.DataSensitivity), c.SchedulePriority, nullStr(c.CostUnit), nullStr(string(c.CostFixed)),
 		nullStr(c.CostAmountField), nullStr(c.CostUnitField),
-		nullInt(c.MaxQueued), nullInt(c.RetryMaxElapsedMS), nullStr(string(c.RetryMaxCost)), c.DefinitionID).Scan(&id)
+		nullInt(c.MaxQueued), nullInt(c.RetryMaxElapsedMS), nullStr(string(c.RetryMaxCost)), c.DefinitionID,
+		nullInt(c.ResultRetentionSeconds)).Scan(&id)
 	return id, err
 }
 

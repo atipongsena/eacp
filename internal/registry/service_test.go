@@ -440,3 +440,32 @@ func TestBackpressureSettingsAndConnectorCircuit(t *testing.T) {
 		t.Fatalf("enabled circuit = %+v", got)
 	}
 }
+
+// A contract may keep a success's output for 60 s to a day (ADR-034); the
+// database refuses anything else.
+func TestContractCarriesResultRetention(t *testing.T) {
+	e := newEnv(t)
+	w := e.wire(t)
+	c := createPOContract
+	c.ResultRetentionSeconds = 900
+	id := must[uuid.UUID](t)(e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c))
+	var keep *int
+	noErr(t, storage.InTenantTx(e.ctx, e.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(e.ctx, `SELECT result_retention_seconds FROM eacp.tool_contracts WHERE id = $1`, id).Scan(&keep)
+	}))
+	if keep == nil || *keep != 900 {
+		t.Fatalf("retention = %v", keep)
+	}
+	c.ResultRetentionSeconds = 30
+	_, err := e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c)
+	wantErr(t, err, registry.ErrInvalid)
+	// Without it the contract keeps nothing, as before.
+	c.ResultRetentionSeconds = 0
+	id = must[uuid.UUID](t)(e.svc.ProposeContract(e.ctx, e.as("erin"), w.tool, c))
+	noErr(t, storage.InTenantTx(e.ctx, e.f.App, pgtest.TenantA, func(tx pgx.Tx) error {
+		return tx.QueryRow(e.ctx, `SELECT result_retention_seconds FROM eacp.tool_contracts WHERE id = $1`, id).Scan(&keep)
+	}))
+	if keep != nil {
+		t.Fatalf("retention without one = %d", *keep)
+	}
+}

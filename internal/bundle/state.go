@@ -115,7 +115,8 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 		       COALESCE(ct.schedule_priority, 0), COALESCE(ct.data_sensitivity, ''), COALESCE(ct.cost_unit, ''),
 		       COALESCE(ct.cost_fixed::text, '0'), COALESCE(ct.cost_amount_field, ''),
 		       COALESCE(ct.cost_unit_field, ''), COALESCE(ct.max_queued, 0),
-		       COALESCE(ct.retry_max_elapsed_ms, 0), COALESCE(ct.retry_max_cost::text, ''), ct.definition_id
+		       COALESCE(ct.retry_max_elapsed_ms, 0), COALESCE(ct.retry_max_cost::text, ''), ct.definition_id,
+		       COALESCE(ct.result_retention_seconds, 0)
 		FROM eacp.tools t
 		JOIN eacp.connectors c ON c.tenant_id = t.tenant_id AND c.id = t.connector_id
 		LEFT JOIN eacp.tool_contracts ct ON ct.tenant_id = t.tenant_id AND ct.id = t.active_contract_id`)
@@ -132,7 +133,7 @@ func loadState(ctx context.Context, tx pgx.Tx, bundle string) (State, error) {
 			&ct.ReconciliationLookup, &ct.ReconciliationConsistency, &ct.ProofStandard, &ct.NoEffectErrors,
 			&ct.MaxAttempts, &ct.TimeoutMS, &ct.ConcurrencyGroup, &ct.MaxInflight, &ct.SchedulePriority,
 			&ct.DataSensitivity, &ct.CostUnit, &costFixed, &ct.CostAmountField, &ct.CostUnitField, &ct.MaxQueued,
-			&ct.RetryMaxElapsedMS, &retryCost, &ct.DefinitionID); err != nil {
+			&ct.RetryMaxElapsedMS, &retryCost, &ct.DefinitionID, &ct.ResultRetentionSeconds); err != nil {
 			rows.Close()
 			return st, err
 		}
