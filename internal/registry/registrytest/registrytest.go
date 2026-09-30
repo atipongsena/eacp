@@ -107,6 +107,39 @@ func (f *Fixture) bootstrap(t testing.TB) {
 	}
 }
 
+// AddPrincipal bootstraps one more principal with approved roles, as the
+// schema owner, and names it in f.P.
+func (f *Fixture) AddPrincipal(t testing.TB, name, kind string, roles ...string) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var id uuid.UUID
+	err := storage.InTenantTx(ctx, f.Owner, f.Tenant.String(), func(tx pgx.Tx) error {
+		var subject *string
+		if kind == "human" {
+			s := name + "@" + f.subjectDomain()
+			subject = &s
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO eacp.principals (tenant_id, kind, name, subject, display_name)
+			VALUES (eacp.current_tenant_id(), $1, $2, $3, $2) RETURNING id`, kind, name, subject).Scan(&id); err != nil {
+			return err
+		}
+		for _, r := range roles {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO eacp.role_grants (tenant_id, principal_id, role, approved_at)
+				VALUES (eacp.current_tenant_id(), $1, $2, now())`, id, r); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("registrytest: add principal %s: %v", name, err)
+	}
+	f.P[name] = id
+	return id
+}
+
 func (f *Fixture) subjectDomain() string {
 	if f.Tenant.String() == pgtest.TenantA {
 		return "tenant-a.test"

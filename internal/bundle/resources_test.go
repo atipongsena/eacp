@@ -63,6 +63,36 @@ func TestValidateReportsIdentityPolicyBudgetAndPriceProblems(t *testing.T) {
 	}
 }
 
+// Studio's roles (ADR-033): studio_runtime is held alone, by a service
+// principal; studio_author is a human role.
+func TestStudioRolesKeepTheirPrincipalKindInABundle(t *testing.T) {
+	ok := strings.Replace(governanceDoc, `"display_name": "CI bot", "roles": ["auditor"]`,
+		`"display_name": "CI bot", "roles": ["studio_runtime"]`, 1)
+	ok = strings.Replace(ok, `"display_name": "Dana", "roles": ["auditor"]`,
+		`"display_name": "Dana", "roles": ["studio_author", "auditor"]`, 1)
+	d, err := Decode(json.RawMessage(ok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs := Validate(d, json.RawMessage(ok)); len(fs) != 0 {
+		t.Fatalf("findings = %+v", fs)
+	}
+	for name, tc := range map[string]struct{ from, to, addr string }{
+		"runtime and more": {`"roles": ["studio_runtime"]`, `"roles": ["studio_runtime", "auditor"]`, "principal.ci-bot"},
+		"human runtime":    {`"roles": ["studio_author", "auditor"]`, `"roles": ["studio_runtime"]`, "principal.dana"},
+		"service author":   {`"roles": ["studio_runtime"]`, `"roles": ["studio_author"]`, "principal.ci-bot"},
+	} {
+		raw := strings.Replace(ok, tc.from, tc.to, 1)
+		d, err := Decode(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := findingKinds(Validate(d, json.RawMessage(raw))); got[tc.addr] != KindInvalid {
+			t.Errorf("%s: findings %v, want invalid at %s", name, got, tc.addr)
+		}
+	}
+}
+
 func TestAmountsAreCanonicalNumeric6(t *testing.T) {
 	for in, want := range map[string]string{"1000": "1000", "1000.000": "1000", "2.50": "2.5", "0": "0",
 		"0.000001": "0.000001", "1e3": "1000"} {

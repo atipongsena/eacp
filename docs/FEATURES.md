@@ -347,6 +347,19 @@ A contract may keep a successful call's output for the agent that made it, for 6
 | Time-limited: not served after it expires, and the sweeper clears the content once | `TestTheSweeperClearsExpiredResultsOnce`, `TestPruneNeedsTheSweeper` |
 | Never in a log, the journal or a message | `TestASuccessKeepsItsOutputForTheAgent` |
 
+## Phase 27a-1: Agent Studio's rules
+
+An employee with the `studio_author` role saves an agent definition: inputs, `tool_call` steps and a closing `respond` step ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md)). PostgreSQL validates it, computes its digest and the tools it needs, and creates a registry agent the employee owns, a `REGISTERED` version and an allowlist holding exactly those tools. A `registry_approver` who is not the author approves or rejects the request, and approval replaces the agent's active version. The runtime that will run Studio agents (Phase 27a-2) holds only `studio_runtime`.
+
+| Capability | Evidence |
+|---|---|
+| The definition is checked in PostgreSQL: schema version 1, at most 10 string inputs, 1 to 20 steps, known tools, placeholders only for declared inputs and earlier steps, no value that looks like a secret, at most 64 KiB | `migrations/00027_studio.sql`, `TestTheDefinitionRules` |
+| The allowlist is exactly the derived capability; nobody widens it or activates it outside a decision | `TestTheCapabilityIsTheSortedDistinctTools`, `TestTheRegistryCannotWidenAStudioAgent` |
+| An author writes registry rows only inside a Studio save, only for their own agent and only in their department | `TestAStudioAuthorWritesNoRegistryRowDirectly`, `TestOnlyAStudioAuthorInTheDepartmentSaves`, `TestOnlyTheOwnerAddsAVersion` |
+| A second person decides, once; approval retires the previous version; a waiting version only | `TestTheOwnerAndNonApproversCannotDecide`, `TestApprovalActivatesTheVersionAndReplacesThePreviousOne`, `TestRejectionRetiresTheVersion`, `TestOnlyAWaitingVersionIsApproved` |
+| `studio_runtime` is held alone by a service principal and proposes agent keys only for approved Studio versions | `TestStudioRuntimeIsHeldAlone`, `TestStudioRolesKeepTheirPrincipalKind`, `TestTheRuntimeProposesCredentialsOnlyForApprovedStudioVersions` |
+| The API (`/v1/studio/...`) shows each version's stage and who acts next; the approver's queue describes the tools in plain words | `TestStudioAuthorsSaveAndApproversDecide` |
+
 ## Benchmarks
 
 `scripts/bench.sh` measures the whole stack under open-loop load on an isolated compose stack (MASTER_PLAN §104):

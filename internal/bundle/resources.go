@@ -67,9 +67,10 @@ const amountRule = "is a non-negative amount below 10^15 with at most 6 decimals
 var (
 	unitRE     = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,15}$`)
 	providerRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
-	roleNames  = []string{"admin", "registry_editor", "registry_approver", "operator", "approver", "auditor"}
-	million    = big.NewRat(1_000_000, 1)
-	amountCap  = new(big.Rat).SetInt64(1_000_000_000_000_000)
+	roleNames  = []string{"admin", "registry_editor", "registry_approver", "operator", "approver", "auditor",
+		"studio_author", "studio_runtime"}
+	million   = big.NewRat(1_000_000, 1)
+	amountCap = new(big.Rat).SetInt64(1_000_000_000_000_000)
 )
 
 // amount returns n in the canonical form of a numeric(21,6) column, if the
@@ -128,8 +129,12 @@ func validateGovernance(d Document) []Finding {
 			switch {
 			case !slices.Contains(roleNames, r):
 				bad(addr, "unknown role %q", r)
-			case p.Kind == "service" && r != "auditor":
-				bad(addr, "a service principal may hold only auditor (ADR-003 §1)")
+			case p.Kind == "service" && r != "auditor" && r != "studio_runtime":
+				bad(addr, "a service principal may hold only auditor or studio_runtime (ADR-003 §1, ADR-033)")
+			case p.Kind == "human" && r == "studio_runtime":
+				bad(addr, "studio_runtime is held only by a service principal (ADR-033)")
+			case r == "studio_runtime" && len(p.Roles) > 1:
+				bad(addr, "studio_runtime is held alone (ADR-033)")
 			case seen[r]:
 				bad(addr, "role %q is listed twice", r)
 			}

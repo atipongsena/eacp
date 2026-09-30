@@ -1,6 +1,6 @@
 # ADR-033: Agent Studio and the runtime's agent credentials
 
-Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Scope: Phase 27-0.
+Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built. Scope: Phase 27-0 and 27a.
 Related: ADR-001 (the product boundary, agents never hold enterprise credentials), ADR-003 §5 (API keys), ADR-019 (credential custody and providers), ADR-029 (replicas), ADR-031 (the LLM gateway authenticates agent keys), ADR-034 (the result channel); the program spec `docs/superpowers/specs/2026-09-29-agent-studio-program-design.md` sections 2, 5 and 11.
 
 ## Context
@@ -134,6 +134,22 @@ hash   = SHA-256(secret)                                                        
 
 The Studio data model, the builder, the runtime's run loop and the Hub (Phase 27a and after), SSO for employees, the `run` kill scope (Phase 28), and delegation-based authentication.
 
+## Revision 1.1: what Phase 27a-1 built
+
+Phase 27a-1 (spec `docs/superpowers/specs/2026-09-30-phase-27a-1-studio-rules-design.md`) adds the roles, the Studio data and the credential branch. Migration 00027:
+
+- **Roles.** `studio_author` is a human role. `studio_runtime` is held only by a service principal and only alone: the role guard serialises a principal's grants and refuses the combination in either order, counting pending grants (invariant 2 above). Governance-as-Code bundles accept both roles under the same rules.
+- **Studio data.** `eacp.studio_agents` marks an agent as a Studio agent (its department and description); `eacp.studio_versions` holds a version's definition, digest, derived capability and one-time decision. Both key on the registry row's `id` (the spec's `agent_id` and `version_id`), because the journal trigger names every row by `id`. The application role only reads them.
+- **Saving.** `eacp.studio_save` (`SECURITY DEFINER`) validates the definition, then creates the agent, the `REGISTERED` version and its allowlist as the author. The registry guards accept a `studio_author` only while the function runs. It proves this with a row in `eacp.studio_save_marks` for the current transaction, opened and closed by the function. The application role can read that table but never write it, and transaction ids never repeat.
+- **Narrower than the spec, for safety:**
+  - no registry editor can add a version or an allowlist to a Studio agent;
+  - a Studio version gets its allowlist and becomes `ACTIVE` only after an approved decision, including after a later containment and release;
+  - so no Studio version enters a release before approval, and `eacp.studio_decide` refuses approval while the agent has an open release.
+- **Deciding.** `eacp.studio_decide` records the decision first, then retires the agent's `ACTIVE` version, activates the allowlist and moves the version to `ACTIVE` through the unchanged guards (or retires it on rejection). An author deciding their own request is a conflict (`55000`, HTTP 409), as the spec says.
+- **The credential branch** (section 1): a `studio_runtime` principal proposes an `ak` credential only for a Studio version with an approved decision and an active allowlist. Every other proposer's path is unchanged, and approval still needs a `registry_approver` other than the proposer (invariants 1 and 3).
+
+The record of the master version behind each derived credential, derived keys, rotation and the bulk revocation are Phase 27a-2.
+
 ## Verification
 
-This revision is a decision document; it changes no code. Phase 27a implements it test-first against the invariants above, and ADR-033 Rev 1.1 records what 27a built.
+Rev 1.0 is a decision document; it changes no code. Rev 1.1's rules are tested in raw SQL as `eacp_app` in `internal/studio/schema_test.go`, and the API in `internal/api/studio_test.go`. Invariants 4 to 7 above are tested in 27a-2.

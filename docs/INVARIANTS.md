@@ -30,6 +30,8 @@ Phase 26a (MCP `tools/call`, ADR-032) adds TestAnMCPActionIsNeverRetried and Tes
 
 Phase 26b (the result channel, ADR-034) keeps a success's output for the calling agent only. `internal/worker` TestOnlyTheLeaseHolderRecordsASuccess joins invariant 1, TestOnlyTheActionsAgentReadsTheResult and TestResultContentIsNotSelectable join invariant 8, and TestACredentialInTheOutputIsWithheld joins invariant 11.
 
+Phase 27a-1 (Agent Studio's rules, ADR-033) saves agent definitions whose capability PostgreSQL derives, and activates them only through a second person. `internal/studio` TestTheRegistryCannotWidenAStudioAgent and TestTheOwnerAndNonApproversCannotDecide join invariant 19, TestAStudioSaveCreatesTheAgentItsVersionAndItsAllowlist and TestApprovalActivatesTheVersionAndReplacesThePreviousOne join invariant 17, and the full-flow isolation test now covers the Studio tables (invariant 8). `internal/studio/schema_test.go` also checks every definition rule, the roles' separation and the runtime's credential branch in raw SQL.
+
 Phase 25b adds the LLM gateway (ADR-031): an agent's model calls are admitted, reserved against its hard budget and settled in PostgreSQL through an insert-only ledger, and only the gateway holds provider keys. Its tests join invariants 3, 11 and 17. `internal/llm/schema_test.go` also checks every `llm_admit` denial in order, the settle outcomes and costs, the sweeper and the kill scopes in raw SQL; `internal/llmgateway` checks validation, forwarding, the SSE relay, kills, limits and interoperability with the official Anthropic and OpenAI Go SDKs. `test/demo` TestLLMGatewayDemo scans responses, logs and the database for the provider key, the agent key and the prompt.
 
 Phase 12 (Slice B) adds fair tenant/team claim order, priority aging and connector capacity (ADR-011). `internal/worker/scheduler_test.go` checks bounded service for small teams and tenants, weight, priority, raw and concurrent capacity claims, and scheduler-state tenant isolation. `BenchmarkSchedulerFairness` covers the 10,000:100:100 backlog.
@@ -131,7 +133,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/storage` TestTenantSeesOnlyItsOwnRows — the RLS convention
 - `internal/storage` TestMissingTenantContextSeesNothing — no tenant context, no rows
 - `internal/service` TestStartRefusesRoleThatCanBypassRLS — services refuse a role that bypasses RLS
-- `internal/worker` TestAnotherTenantSeesAndChangesNothingAfterAFullFlow — after a full flow, another tenant reads and changes nothing in any table
+- `internal/worker` TestAnotherTenantSeesAndChangesNothingAfterAFullFlow — after a full flow, another tenant reads and changes nothing in any table, the Studio tables included (ADR-033)
 - `internal/api` TestActionsOfOtherTenantsAreNotFound — the action API answers 404 across tenants
 - `internal/api` TestOtherTenantsResourcesAreNotFound — the registry API answers 404 across tenants
 - `internal/registry` TestCrossTenantReferencesAreRejected — rows cannot reference another tenant's rows
@@ -265,6 +267,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/bundle` TestClosedChangeSetsAreTerminalAndRejectionNeedsAReason — every change-set move is journaled with its actor, a rejection with its reason
 - `internal/incident` TestTheIncidentLifecycle — every incident event (opened, acknowledged, resolved) is journaled with its actor and reason
 - `internal/bundle` TestApprovalIsASecondPersonAgainstTheSealedDigest — plan, submission and approval are journaled; the approver is a second person
+- `internal/studio` TestAStudioSaveCreatesTheAgentItsVersionAndItsAllowlist — a Studio save is journaled with the author as its actor (ADR-033)
+- `internal/studio` TestApprovalActivatesTheVersionAndReplacesThePreviousOne — each Studio decision is journaled; approval retires the replaced version with a reason
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 
@@ -292,3 +296,5 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/registry` TestToolQuarantineRules — a quarantined tool is denied (`tool_quarantined`) in Go and in PostgreSQL
 - `internal/fleet` TestFleetResumeKeepsVersionSeparationOfDuties — a fleet resume cannot grant what a single activation could not
 - `internal/worker` TestFleetPauseDeniesQueuedAndNewWork — a paused version's queued and new actions are denied; nothing reaches the connector
+- `internal/studio` TestTheRegistryCannotWidenAStudioAgent — a Studio version's allowlist is only its derived capability, and it is activated only by an approval (ADR-033)
+- `internal/studio` TestTheOwnerAndNonApproversCannotDecide — a Studio version becomes ACTIVE only by a registry approver who is not its author

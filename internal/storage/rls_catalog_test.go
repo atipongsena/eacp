@@ -97,6 +97,11 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname IN ('incident_events', 'incidents') ORDER BY relname`); !slices.Equal(got, incidents) {
 		t.Errorf("reviewed incident tables missing: %v", got)
 	}
+	studio := []string{"studio_agents", "studio_save_marks", "studio_versions"}
+	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
+		AND relkind = 'r' AND relname LIKE 'studio%' ORDER BY relname`); !slices.Equal(got, studio) {
+		t.Errorf("reviewed studio tables missing: %v", got)
+	}
 	// Any other policy is a reviewed exception: the schema owner's read-only
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
 	// 00005-00007, 00010, 00012, 00013, 00014, 00016, 00018, 00019 and 00022).
@@ -137,6 +142,9 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// The result channel's functions (ADR-034) run as the owner so that
 	// eacp_app can neither write results nor select their content; each
 	// names the tenant, and action_result_tenants returns only ids.
+	// Studio's save and decision (ADR-033) run as the owner so that eacp_app
+	// cannot write the Studio tables or open a save mark; each names the
+	// tenant and binds the transaction's principal.
 	reviewedDefiners := []string{
 		"eacp.action_result(uuid)",
 		"eacp.action_result_record(uuid,text,text)",
@@ -157,6 +165,8 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.reconcilable_actions(text[],jsonb,integer)",
 		"eacp.release_tenants()",
 		"eacp.set_kill(text,uuid,boolean,text,text)",
+		"eacp.studio_decide(uuid,boolean,text)",
+		"eacp.studio_save(uuid,text,text,text,uuid,text)",
 		"eacp.tenants_with_open_actions(uuid,integer)",
 	}
 	if got := strs(`SELECT p.oid::regprocedure::text FROM pg_proc p

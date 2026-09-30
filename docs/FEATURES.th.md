@@ -342,6 +342,19 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | มีเวลาจำกัด: หมดอายุแล้วอ่านไม่ได้ และ sweeper ลบเนื้อหาทิ้งครั้งเดียว | `TestTheSweeperClearsExpiredResultsOnce`, `TestPruneNeedsTheSweeper` |
 | ไม่อยู่ใน log, journal หรือข้อความใดๆ | `TestASuccessKeepsItsOutputForTheAgent` |
 
+## Phase 27a-1: กฎของ Agent Studio
+
+พนักงานที่มี role `studio_author` บันทึกนิยามของ agent ได้ ได้แก่ input, ขั้น `tool_call` และขั้น `respond` ปิดท้าย ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md)) PostgreSQL ตรวจนิยาม คำนวณ digest และ tool ที่ต้องใช้ แล้วสร้าง agent ใน registry ที่พนักงานเป็นเจ้าของ เวอร์ชันสถานะ `REGISTERED` และ allowlist ที่มีเฉพาะ tool เหล่านั้น `registry_approver` ที่ไม่ใช่ผู้เขียนเป็นผู้อนุมัติหรือปฏิเสธคำขอ และการอนุมัติจะแทนที่เวอร์ชันที่ใช้งานอยู่ของ agent runtime ที่จะรัน agent ของ Studio (Phase 27a-2) ถือเพียง `studio_runtime`
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| PostgreSQL ตรวจนิยาม: schema version 1, input แบบข้อความไม่เกิน 10 ตัว, 1 ถึง 20 ขั้น, tool ที่มีอยู่จริง, placeholder อ้างได้เฉพาะ input ที่ประกาศและขั้นก่อนหน้า, ไม่มีค่าที่ดูเหมือนความลับ และไม่เกิน 64 KiB | `migrations/00027_studio.sql`, `TestTheDefinitionRules` |
+| allowlist คือ capability ที่คำนวณได้พอดี ไม่มีใครขยายหรือเปิดใช้นอกการตัดสิน | `TestTheCapabilityIsTheSortedDistinctTools`, `TestTheRegistryCannotWidenAStudioAgent` |
+| ผู้เขียนเขียนแถวใน registry ได้เฉพาะในการบันทึกของ Studio เฉพาะ agent ของตนเอง และเฉพาะในแผนกของตน | `TestAStudioAuthorWritesNoRegistryRowDirectly`, `TestOnlyAStudioAuthorInTheDepartmentSaves`, `TestOnlyTheOwnerAddsAVersion` |
+| คนที่สองเป็นผู้ตัดสินเพียงครั้งเดียว การอนุมัติปลดเวอร์ชันก่อนหน้า และตัดสินได้เฉพาะเวอร์ชันที่รออยู่ | `TestTheOwnerAndNonApproversCannotDecide`, `TestApprovalActivatesTheVersionAndReplacesThePreviousOne`, `TestRejectionRetiresTheVersion`, `TestOnlyAWaitingVersionIsApproved` |
+| `studio_runtime` ถือได้โดย service principal เพียงลำพัง และเสนอ key ของ agent ได้เฉพาะเวอร์ชันของ Studio ที่อนุมัติแล้ว | `TestStudioRuntimeIsHeldAlone`, `TestStudioRolesKeepTheirPrincipalKind`, `TestTheRuntimeProposesCredentialsOnlyForApprovedStudioVersions` |
+| API (`/v1/studio/...`) แสดงขั้นของแต่ละเวอร์ชันและผู้ที่ต้องดำเนินการต่อ คิวของผู้อนุมัติอธิบาย tool เป็นภาษาที่เข้าใจง่าย | `TestStudioAuthorsSaveAndApproversDecide` |
+
 ## Benchmark
 
 `scripts/bench.sh` วัดทั้ง stack ภายใต้โหลดแบบ open loop บน stack ของ compose ที่แยกออกมา (MASTER_PLAN §104) ครอบคลุมเส้นทางของ action ทั้งกับ PDP

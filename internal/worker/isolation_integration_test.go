@@ -34,7 +34,7 @@ import (
 // Invariant 8: after a complete flow in tenant A (registry, policy,
 // governance, approval, budget, execution, reconciliation, operator
 // resolution, journal, outbox and inbox, MCP discovery, kills, fleet operations,
-// FinOps, releases, change sets), neither tenant B nor a session without a tenant sees
+// FinOps, releases, change sets, Studio), neither tenant B nor a session without a tenant sees
 // or changes a single row of any table.
 func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v := newERPEnvWith(t, reviewPolicy)
@@ -280,6 +280,21 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 		_, err := tx.Exec(ctx, finishSQL, read, "SUCCEEDED", "succeeded", nil)
 		return err
 	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent Studio (ADR-033): a Studio agent saved by its author (with the
+	// save's mark) and approved by a registry approver.
+	v.f.AddPrincipal(t, "stella", "human", "studio_author")
+	dept := v.f.ID(t, "alice", `INSERT INTO eacp.groups (tenant_id, name, display_name)
+		VALUES (eacp.current_tenant_id(), 'hr-dept', 'HR') RETURNING id`)
+	v.f.ID(t, "alice", `INSERT INTO eacp.group_memberships (tenant_id, group_id, principal_id)
+		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, dept, v.f.P["stella"])
+	studioVersion := v.f.ID(t, "stella", `SELECT eacp.studio_save(NULL, 'leave-bot', 'Leave bot', '', $1, $2)`, dept,
+		`{"kind":"agent","limits":{"timeout_seconds":60},"schema_version":1,"steps":[{"id":"read","kind":"tool_call",`+
+			`"operation":"read","payload":{},"resource":"balance","target":"hr","tool":"hr.balance","tool_schema_version":"1"},`+
+			`{"id":"answer","kind":"respond","text":"done"}]}`)
+	if err := v.f.Exec("rita", `SELECT eacp.studio_decide($1, true, 'isolation fixture')`, studioVersion); err != nil {
 		t.Fatal(err)
 	}
 

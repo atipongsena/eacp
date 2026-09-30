@@ -3704,6 +3704,8 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 
 > **Phase 26b delivered (2026-09-30, ADR-034):** the result channel. A contract may keep a success's output (HTTP `result`, the MCP `CallToolResult`, A2A artifacts) for the calling agent for 60 s to a day; PostgreSQL records it only from the lease holder's succeeded attempt, serves it only to an `ACTIVE` version of the action's agent and hides it from `eacp_app`; the sweeper clears it after expiry. Migration 00026.
 
+> **Phase 27a-1 delivered (2026-09-30, ADR-033 Rev 1.1):** Agent Studio's data and rules. A `studio_author` saves a definition; PostgreSQL validates it, derives its capability and creates the agent, a `REGISTERED` version and an allowlist of exactly those tools; a registry approver other than the author approves (retiring the previous version) or rejects it once. `studio_runtime` is held alone by a service principal and proposes agent keys only for approved Studio versions. The author and approver API is `/v1/studio/...`. Migration 00027.
+
 Operator UI:
 
 ```text

@@ -35,6 +35,7 @@ import (
 	"github.com/atipongsena/eacp/internal/registry"
 	"github.com/atipongsena/eacp/internal/release"
 	"github.com/atipongsena/eacp/internal/storage"
+	"github.com/atipongsena/eacp/internal/studio"
 )
 
 const maxBody = 1 << 20
@@ -57,6 +58,7 @@ type Server struct {
 	releases  *release.Service
 	incidents *incident.Service
 	llm       *llm.Store
+	studio    *studio.Service
 }
 
 // New returns a Server using pool (connected as the application role).
@@ -65,7 +67,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger) *Server {
 	return &Server{pool: pool, reg: registry.New(pool), gov: governance.NewStore(pool),
 		appr: approval.New(pool), log: log, budgets: budget.New(pool), kills: kill.New(pool),
 		fleet: fleet.New(pool), finops: finops.New(pool), bundles: bundle.New(pool), incidents: incident.New(pool),
-		llm:      llm.New(pool),
+		llm: llm.New(pool), studio: studio.New(pool),
 		actions:  action.New(pool, action.Options{Provider: local, Log: log}),
 		releases: release.New(pool, release.Options{Provider: local, Log: log})}
 }
@@ -149,6 +151,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerRelease(mux)
 	s.registerIncidents(mux)
 	s.registerLLM(mux)
+	s.registerStudio(mux)
 
 	mux.Handle("GET /v1/agent/self", s.agent(s.agentSelf))
 	mux.Handle("POST /v1/agent/capability-check", s.agent(s.capabilityCheck))
