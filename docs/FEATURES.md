@@ -386,6 +386,18 @@ A member of an agent's department runs an approved Studio agent with its inputs 
 | Fake MCP answers only the tools it lists; `get_leave_balance` returns structured content | `TestAToolOutsideTheListIsRefused`, `TestLeaveBalanceAnswersStructuredContent`, `TestLeaveBalanceErrIsAToolError` |
 | From a template to an answer, with a second approver, department-only runs, fail-closed keys and no secret or answer leaked | `TestStudioDemo` |
 
+## Phase 27a-3b: the Agent Studio page
+
+`/studio/` is a second page built from the console's modules and rules ([ADR-028](adr/ADR-028-operator-console.md) Rev 1.2). An employee starts from the leave-balance template, saves an agent into one of their groups, sees in plain words where it is and who acts next, and runs it; a registry approver decides requests and the runtime's keys in the same page. English and Thai ([user guide](USER_GUIDE.md#for-employees-agent-studio)).
+
+| Capability | Evidence |
+|---|---|
+| The page is the console's files under the console's rules; each page serves only its own HTML and signs in on its own | `TestServesTheStudioWithItsHeaders`, `TestEachPageServesOnlyItsOwnHTML`, `TestIndexLoadsOnlyTheConsole`, `TestConsoleUsesNoDangerousSinks`, `TestEveryConsoleCallIsARealRoute` |
+| The template is the demo's fixture, and the form builds exactly the server's definition | `the leave-balance template is the demo fixture, value for value`, `the form round-trips the template to the same definition`, `the template form saves the fixture definition into the author’s department` (`jstest`) |
+| Every status and failure reason reads in plain words, in English and Thai; an unknown one is shown as sent | `every status has a sentence that says who acts next; an unknown one is shown as sent`, `every failure reason the runtime names has its own sentence; an unknown one is shown as sent`, `TestEveryTranslatedTextHasAThaiEntry` |
+| An approver never decides their own agent; approving a request or a key goes through a confirmation with a reason | `an approver’s own agent is not offered for their decision`, `an approver approves someone else’s agent with a reason, and a runtime key` (`jstest`) |
+| `/v1/me` lists only the caller's active groups | `TestMeListsTheCallersGroups` |
+
 ## Benchmarks
 
 `scripts/bench.sh` measures the whole stack under open-loop load on an isolated compose stack (MASTER_PLAN §104):

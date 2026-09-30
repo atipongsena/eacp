@@ -42,14 +42,18 @@ the API as a client would, except for the first step: creating a tenant and its 
 | amy, ben | `approver` | 01: the two approvals |
 | sam | none | owns the agents; the subject of every action |
 | procurement-bot | an agent | 01 and 02 |
+| stella | `studio_author`, in the group `hr` | the Agent Studio screenshots |
+| studio-runtime | `studio_runtime` (a service principal) | the agent runtime, for the Agent Studio screenshots |
 
 It also adds a policy (high-value purchases need two approvers), the Fake ERP connector with two tools
 (`create_po` for example 01, and `create_po_eventual`, whose orders the ERP shows only later, for the screenshot
 scenarios), two fake LLM models (`sonnet`, which the agent may use, and `opus`, which it may not), a price for them and a
-budget for the agent.
+budget for the agent. For Agent Studio it registers the HR MCP server (`hr-mcp`) and certifies its read-only
+`get_leave_balance` tool.
 
 Every key goes to `examples/.env`. That file is git-ignored and `setup.sh` never prints a key, so keep it that way:
-don't paste it anywhere. Running `setup.sh` again is safe. If `.env` still works, it says so and does nothing.
+don't paste it anywhere. Running `setup.sh` again is safe. If `.env` still works, it says so and does nothing; if it was written by an older
+setup and lacks a key, it says how to start over.
 
 ## Run them
 

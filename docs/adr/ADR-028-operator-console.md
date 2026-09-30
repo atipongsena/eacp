@@ -1,6 +1,6 @@
 # ADR-028: The operator console
 
-Status: Accepted (Rev 1.0, 2026-09-26; Rev 1.1, 2026-09-29). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94); Rev 1.1 is Phase 26-UI (design system and language).
+Status: Accepted (Rev 1.0, 2026-09-26; Rev 1.1, 2026-09-29; Rev 1.2, 2026-09-30). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94); Rev 1.1 is Phase 26-UI (design system and language); Rev 1.2 is Phase 27a-3b (the Agent Studio page, ADR-033).
 Related: ADR-027 (incidents and the SOC summary), ADR-016 (kill switch), ADR-022 (circuits), ADR-023 (MCP tools),
 ADR-024 (fleet operations), ADR-005 (approvals), ADR-014 (NATS carries signals).
 
@@ -142,6 +142,48 @@ The design is informed by `research/STUDIO_REFERENCES.md`: ideas only, no copied
 - Not done here (unchanged from Rev 1.0): any write flow beyond Rev 1.0, a directory of people, a dark/light toggle
   (the browser decides).
 
+## Revision 1.2: the Agent Studio page (Phase 27a-3b)
+
+Rev 1.2 adds a second page built from the console's modules: `/studio/`, where an employee saves an Agent Studio agent,
+sees where it is on the way to running and runs it, and a registry approver decides its request and its runtime key
+(ADR-033). It is a client like the console and holds no authority.
+
+### 10. One set of files, two pages
+
+- `/studio/` serves `studio.html`, which loads only `studio.js` and `app.css`; every other name under `/studio/` is the
+  same embedded file as under `/ui/`, with the same headers (CSP, `no-store`). Each page serves only its own HTML
+  (`/studio/index.html` and `/ui/studio.html` are 404), and `/studio` redirects to `/studio/`.
+- Every Rev 1.0 and 1.1 rule applies unchanged to the Studio modules (`studio.js`, `signin.js`, `studio/*.js`): DOM
+  through `dom.js`, no sink or storage, every call named literally in `api.js` ROUTES, every write through
+  `confirm.js`, every text `t('literal')` with its Thai entry, colours as tokens. `TestIndexLoadsOnlyTheConsole` checks
+  both pages.
+- **The key does not cross pages.** It lives in the page's `session.js` closure only, so moving between `/ui/` and
+  `/studio/` means signing in again. Nothing is shared through storage, cookies or the URL.
+- `router.parse` takes the page's areas; the Studio's are `agents`, `new`, `requests` and `runs`.
+
+### 11. What the page shows
+
+- **Plain words are the page's.** Each version's status and the role that acts next (`GET /v1/studio/agents`,
+  `/versions/{id}`) and each run's failure reason become translated sentences; a value the page does not know is shown
+  as sent. A refusal shows the API's `detail`. The server never sends a sentence the page relies on.
+- **One form** builds a definition (`tool_call` and a final `respond`): it checks only what it needs to produce JSON
+  and leaves every rule to PostgreSQL (`eacp.studio_save`). The leave-balance template is static in the page and equal
+  to the Studio demo's fixture.
+- **Departments come from `/v1/me`**, which now lists the caller's active groups (`groups`). It reads only the
+  caller's own memberships and grants nothing; it is the one API change of this revision.
+- **Runs are not listed.** The API has no run list; the page keeps the ids of runs started in its tab, in memory.
+  A view that waits on the server (a run, an approval) is polled; nothing is re-rendered under an open dialog or a
+  field being edited.
+- The tool picker lists the tenant's tools per connector (`connector.list`, `connector.tools`) as a hint; the
+  definition's validation in PostgreSQL decides which tools it may name.
+
+### Rev 1.2 consequences
+
+- New served files: `studio.html`, `studio.js`, `signin.js` (the sign-in form both pages share) and `studio/*.js`,
+  listed in `consoleFiles`. New routes in ROUTES are existing API routes only.
+- Not done here: a run list or a department directory (Hub work, ADR-033 Rev 1.3), `revoke-all` or the runtime's state
+  in the page, a session shared between the two pages.
+
 ## Unresolved assumptions (conservative choices)
 
 | Assumption | Choice |
@@ -154,3 +196,5 @@ The design is informed by `research/STUDIO_REFERENCES.md`: ideas only, no copied
 | Showing people | Principals are shown as ids: there is no principal directory route, so assignment is "assign to me" or a pasted id. |
 | Tool listing | Per connector (at most 50 connectors fetched on the Security page); there is no tenant-wide tool route. |
 | A browser offering to save the key | Residual risk. The sign-in field is a password field with `autocomplete="off"`, but a browser may still offer to save it after sign-in. Operators decline; managed browsers should disable the password manager for the console's origin. The console itself never stores the key. |
+| Signing in to both pages | Each page signs in on its own; the key never leaves the page's memory. |
+| A Studio run list | None: the page lists only the runs started in its tab, in memory. |

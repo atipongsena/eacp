@@ -8,6 +8,7 @@ This guide is for the people who use EACP day to day. It is organised by role, s
 |---|---|---|
 | An administrator or platform engineer | Set up people, systems, agents, policies and budgets | [For administrators](#for-administrators) |
 | An agent developer | Send actions from an agent and call models | [For agent developers](#for-agent-developers) |
+| An employee building an agent for their team | Save, get approved and run an Agent Studio agent | [For employees: Agent Studio](#for-employees-agent-studio) |
 | An approver | Vote on requests that need a person | [For approvers](#for-approvers) |
 | An operator or on-call engineer | Settle unknown outcomes, stop things and work incidents | [For operators](#for-operators) |
 
@@ -404,6 +405,41 @@ The gateway speaks the Anthropic Messages API (`/v1/messages`) and the OpenAI Ch
 model name and sizes, never your prompt), the kill switch and the budget. A refused call gets a 403 and never reaches
 the provider. The gateway never stores a prompt or a response. [Example 02](../examples/02-llm-gateway/README.md) runs
 this end to end.
+
+## For employees: Agent Studio
+
+### Build an agent from a template
+
+Agent Studio lets you make a small agent for your team without writing code. Open `http://127.0.0.1:8080/studio/` and
+sign in with your own key; you need the `studio_author` role and a group for your department (an administrator sets
+both up). Choose **New agent**. The leave-balance template fills in the form: an input (`employee_id`), one step that
+calls the HR system's read-only `get_leave_balance` tool, and the answer.
+
+![Agent Studio: a new agent from the leave-balance template](images/studio-new.png)
+
+Each step names a tool, what it does (`operation`, `target`, `resource`) and the data it sends. Use `{{inputs.NAME}}`
+for what the person running the agent gives and `{{steps.ID.output...}}` for an earlier step's result. **Save** makes
+an unchangeable version; to change it later, save a new version.
+
+### Get it approved, then run it
+
+After you save, the agent's page shows where it is and who acts next: a registry approver who is not you approves the
+tools it asks for, the agent runtime proposes the agent's key within a minute, and a registry approver approves that
+key. Then it is ready and shows a form with its inputs.
+
+![Agent Studio: an agent that is ready, with its stages and its run form](images/studio-agent.png)
+
+A run goes through the same path as any agent's action: the policy, approvals, budgets and kill switches all apply.
+Its page shows each step's action and the answer, which only you can read, for an hour. When a run fails it says why
+in plain words: for example the agent has no approved key yet, or a step's outcome is unknown and an operator must
+check the system first.
+
+![Agent Studio: a run and its answer](images/studio-run.png)
+
+Registry approvers decide in the same page under **Requests**: each agent waiting for a decision, with the tools it
+asks for in plain words, and each key the agent runtime proposed. You cannot decide an agent you saved yourself.
+
+![Agent Studio: the registry approver's queue](images/studio-requests.png)
 
 ## For approvers
 

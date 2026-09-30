@@ -42,13 +42,17 @@ bash examples/setup.sh
 | amy, ben | `approver` | 01: ผู้อนุมัติสองคน |
 | sam | ไม่มี | เจ้าของ agent และเป็น subject ของทุก action |
 | procurement-bot | agent | 01 และ 02 |
+| stella | `studio_author` อยู่ในกลุ่ม `hr` | ภาพหน้าจอของ Agent Studio |
+| studio-runtime | `studio_runtime` (service principal) | agent runtime สำหรับภาพหน้าจอของ Agent Studio |
 
 นอกจากนี้ยังเพิ่ม policy (การซื้อมูลค่าสูงต้องมีผู้อนุมัติสองคน), connector ของ Fake ERP พร้อม tool สองตัว (`create_po` สำหรับตัวอย่าง 01 และ `create_po_eventual`
 ซึ่ง ERP จะแสดงใบสั่งซื้อให้เห็นภายหลัง ใช้ในสถานการณ์สำหรับภาพหน้าจอ),
-model LLM ปลอมสองตัว (`sonnet` ที่ agent ใช้ได้ และ `opus` ที่ใช้ไม่ได้), ราคาของ model และงบประมาณของ agent
+model LLM ปลอมสองตัว (`sonnet` ที่ agent ใช้ได้ และ `opus` ที่ใช้ไม่ได้), ราคาของ model และงบประมาณของ agent สำหรับ Agent Studio จะลงทะเบียน MCP server ของ HR (`hr-mcp`)
+และรับรอง tool `get_leave_balance` แบบอ่านอย่างเดียว
 
 key ทุกตัวถูกเขียนลง `examples/.env` ซึ่ง git ไม่ติดตาม และ `setup.sh` ไม่พิมพ์ key ออกมาเลย จึงควรรักษาไว้แบบนั้น
-อย่านำไฟล์นี้ไปวางที่ไหน การรัน `setup.sh` ซ้ำนั้นปลอดภัย ถ้า `.env` ยังใช้ได้ มันจะบอกแล้วไม่ทำอะไรเพิ่ม
+อย่านำไฟล์นี้ไปวางที่ไหน การรัน `setup.sh` ซ้ำนั้นปลอดภัย ถ้า `.env` ยังใช้ได้ มันจะบอกแล้วไม่ทำอะไรเพิ่ม ถ้าเขียนโดย setup รุ่นเก่าและขาด key
+มันจะบอกวิธีเริ่มใหม่
 
 ## วิธีรัน
 

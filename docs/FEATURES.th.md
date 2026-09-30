@@ -381,6 +381,18 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | Fake MCP ตอบเฉพาะ tool ที่อยู่ในรายการ และ `get_leave_balance` คืน structured content | `TestAToolOutsideTheListIsRefused`, `TestLeaveBalanceAnswersStructuredContent`, `TestLeaveBalanceErrIsAToolError` |
 | จาก template ถึงคำตอบ โดยมีผู้อนุมัติคนที่สอง รันได้เฉพาะในแผนก key ล้มเหลวแบบปิด และไม่มี secret หรือคำตอบรั่วไหล | `TestStudioDemo` |
 
+## Phase 27a-3b: หน้า Agent Studio
+
+`/studio/` เป็นหน้าที่สองที่สร้างจากโมดูลและกฎเดียวกับ console ([ADR-028](adr/ADR-028-operator-console.md) Rev 1.2) พนักงานเริ่มจาก template ยอดวันลา บันทึก agent ลงในกลุ่มของตัวเอง เห็นเป็นภาษาธรรมดาว่าตอนนี้อยู่ขั้นไหนและใครต้องทำอะไรต่อ แล้วรันมันได้ ผู้อนุมัติทะเบียนตัดสินคำขอและ key ของ runtime ในหน้าเดียวกัน มีทั้งภาษาอังกฤษและไทย ([คู่มือการใช้งาน](USER_GUIDE.th.md#สำหรับพนักงาน-agent-studio))
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| หน้านี้ใช้ไฟล์และกฎเดียวกับ console แต่ละหน้าเสิร์ฟเฉพาะ HTML ของตัวเองและเข้าสู่ระบบแยกกัน | `TestServesTheStudioWithItsHeaders`, `TestEachPageServesOnlyItsOwnHTML`, `TestIndexLoadsOnlyTheConsole`, `TestConsoleUsesNoDangerousSinks`, `TestEveryConsoleCallIsARealRoute` |
+| template ตรงกับ fixture ของ demo และฟอร์มสร้างนิยามตรงตามที่เซิร์ฟเวอร์รับ | `the leave-balance template is the demo fixture, value for value`, `the form round-trips the template to the same definition`, `the template form saves the fixture definition into the author’s department` (`jstest`) |
+| ทุกสถานะและเหตุผลที่ล้มเหลวอ่านเป็นภาษาธรรมดา ทั้งอังกฤษและไทย ค่าที่ไม่รู้จักจะแสดงตามที่ส่งมา | `every status has a sentence that says who acts next; an unknown one is shown as sent`, `every failure reason the runtime names has its own sentence; an unknown one is shown as sent`, `TestEveryTranslatedTextHasAThaiEntry` |
+| ผู้อนุมัติไม่ได้ตัดสิน agent ของตัวเอง การอนุมัติคำขอหรือ key ต้องผ่านการยืนยันพร้อมเหตุผล | `an approver’s own agent is not offered for their decision`, `an approver approves someone else’s agent with a reason, and a runtime key` (`jstest`) |
+| `/v1/me` แสดงเฉพาะกลุ่มที่ผู้เรียกเป็นสมาชิกอยู่ | `TestMeListsTheCallersGroups` |
+
 ## Benchmark
 
 `scripts/bench.sh` วัดทั้ง stack ภายใต้โหลดแบบ open loop บน stack ของ compose ที่แยกออกมา (MASTER_PLAN §104) ครอบคลุมเส้นทางของ action ทั้งกับ PDP

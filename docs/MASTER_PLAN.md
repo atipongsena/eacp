@@ -3710,6 +3710,8 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 
 > **Phase 27a-3a delivered (2026-09-30, ADR-033):** `agent-runtime` ships in the image, the release binaries, compose (profile `studio`, the `agents` network only) and the Helm chart (`studio.enabled`, egress to the API only). Fake MCP gains `get_leave_balance` on a second instance, `fakemcp-hr`, and `DEMO=S` runs the Agent Studio demo from a template through approval to a run, a tool error, a revocation and a secret scan. The `/studio/` page is Phase 27a-3b.
 
+> **Phase 27a-3b delivered (2026-09-30, ADR-028 Rev 1.2):** `/studio/`, a second page built from the console's modules and rules: the leave-balance template, a form for new agents and new versions, each agent's stage in plain words with who acts next, the approver's queue for requests and runtime keys, and runs with their answer or reason, in English and Thai. `/v1/me` lists the caller's groups. Phase 27a (the thin slice) is complete; the department gate comes next.
+
 Operator UI:
 
 ```text
