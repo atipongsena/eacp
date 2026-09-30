@@ -25,7 +25,8 @@ export function createSession({fetch: f = (...a) => globalThis.fetch(...a), now 
       if (res.status === 200) {
         const body = await res.json();
         key = candidate;
-        me = {principalId: body.principal_id, tenantId: body.tenant_id, roles: [...(body.roles ?? [])]};
+        me = {principalId: body.principal_id, tenantId: body.tenant_id, roles: [...(body.roles ?? [])],
+          groups: (body.groups ?? []).map(g => ({id: g.id, name: g.name, displayName: g.display_name}))};
         last = now();
         return {ok: true};
       }
@@ -49,7 +50,7 @@ export function createSession({fetch: f = (...a) => globalThis.fetch(...a), now 
       if (key === null || expired()) throw new Error('signed out');
       return `Bearer ${key}`;
     },
-    me: () => (me ? {...me, roles: [...me.roles]} : null),
+    me: () => (me ? {...me, roles: [...me.roles], groups: me.groups.map(g => ({...g}))} : null),
     hasAny: roles => me !== null && (roles == null || roles.some(r => me.roles.includes(r))),
   };
   return session;

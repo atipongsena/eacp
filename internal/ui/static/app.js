@@ -6,6 +6,7 @@ import {createClient} from './api.js';
 import {parse, format} from './router.js';
 import {h, button, icon, loading, pageHeader, replace} from './dom.js';
 import {t, setLang, getLang, detectLang, LANGS} from './i18n.js';
+import {signInForm} from './signin.js';
 import * as overview from './views/overview.js';
 import * as incidents from './views/incidents.js';
 import * as inventory from './views/inventory.js';
@@ -91,25 +92,8 @@ function renderSignIn(message = '') {
   replace(langBox);
   renderBrand();
   shownArea = null;
-  const key = h('input', {id: 'key', name: 'key', type: 'password', autocomplete: 'off', spellcheck: 'false', required: true});
-  const status = h('div', {role: 'status'}, message);
-  const form = h('form', {class: 'signin', onsubmit: async e => {
-    e.preventDefault();
-    const res = await session.signIn(key.value);
-    key.value = '';
-    if (res.ok) {
-      render();
-      return;
-    }
-    status.replaceChildren(h('div', {class: 'notice error', role: 'alert'}, res.detail));
-  }},
-  h('div', {class: 'signin-top'}, h('div', {class: 'brand'}, brandContent()), h('div', {class: 'lang'}, languageSwitch())),
-  h('h1', {}, t('Sign in')),
-  h('label', {class: 'field', for: 'key'}, t('Principal API key')),
-  key,
-  h('button', {type: 'submit', class: 'primary'}, t('Sign in')),
-  h('p', {class: 'hint'}, t('The key stays in this tab’s memory only. Reloading the page, signing out or 30 minutes without activity forgets it.')),
-  status);
+  const {form, key} = signInForm({session, message, onSignedIn: () => render(),
+    top: [h('div', {class: 'brand'}, brandContent()), h('div', {class: 'lang'}, languageSwitch())]});
   main.replaceChildren(form);
   key.focus();
 }

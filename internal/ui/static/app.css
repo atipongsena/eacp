@@ -291,3 +291,24 @@ dialog.confirm ul { padding-left: 18px; overflow-wrap: anywhere; }
 .i-shield-ok::after{clip-path:path('M10.854 5.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 7.793l2.646-2.647a.5.5 0 0 1 .708 0')}
 .i-pulse::before{clip-path:path(evenodd,'M6 2a.5.5 0 0 1 .47.33L10 12.036l1.53-4.208A.5.5 0 0 1 12 7.5h3.5a.5.5 0 0 1 0 1h-3.15l-1.88 5.17a.5.5 0 0 1-.94 0L6 3.964 4.47 8.171A.5.5 0 0 1 4 8.5H.5a.5.5 0 0 1 0-1h3.15l1.88-5.17A.5.5 0 0 1 6 2')}
 .i-pulse::after{display:none}
+
+/* Agent Studio (ADR-028 Rev 1.2): the stepper, the form and the answer. */
+.stepper { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 4px 0 8px; counter-reset: stage; }
+.stage { counter-increment: stage; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font-size: 13px; }
+.stage::before { content: counter(stage); display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2); color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.stage-done { color: var(--success-text); border-color: var(--success-soft); background: var(--success-soft); }
+.stage-done::before { content: '✓'; background: var(--surface); color: var(--success-text); }
+.stage-current { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.stage-current::before { background: var(--accent); color: var(--on-accent); }
+.stage-off { opacity: .6; }
+.status-line { font-size: 15px; margin: 4px 0 12px; }
+.answer { font-size: 18px; font-weight: 500; margin: 4px 0; overflow-wrap: anywhere; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 14px; margin: 8px 0; }
+.form-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 6px 0; }
+.step-editor, .request { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; margin: 10px 0; background: var(--page); }
+.step-editor h3, .request h3 { margin-top: 2px; }
+.definition ul { padding-left: 18px; }
+.definition li { margin: 4px 0; overflow-wrap: anywhere; }
+.badge-ready, .badge-succeeded { background: var(--success-soft); color: var(--success-text); }
+.badge-rejected, .badge-failed { background: var(--danger-soft); color: var(--danger-text); }
+.badge-waiting_for_approval, .badge-waiting_for_credential, .badge-queued, .badge-running { background: var(--warning-soft); color: var(--warning-text); }

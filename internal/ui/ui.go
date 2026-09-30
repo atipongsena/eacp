@@ -1,6 +1,7 @@
 // Package ui serves the operator console (ADR-028): plain HTML, CSS and ES
-// modules embedded in controlplane-api at /ui/. The console calls the /v1
-// API with the operator's own key and holds no authority: every rule is
+// modules embedded in controlplane-api at /ui/, and the Agent Studio page
+// built from the same modules at /studio/ (ADR-028 Rev 1.2). Both call the
+// /v1 API with the user's own key and hold no authority: every rule is
 // enforced by the API and PostgreSQL. Only the files under static/ are
 // served, with a strict Content-Security-Policy.
 package ui
@@ -48,26 +49,39 @@ func secure(h http.Header) {
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 }
 
-// Register mounts the console at /ui/ and redirects /ui there.
+// pages are the two pages served from the same files (ADR-028 Rev 1.2): the
+// operator console and the Agent Studio page. Each serves its own HTML only.
+var pages = map[string]string{"/ui/": "index.html", "/studio/": "studio.html"}
+
+// Register mounts the console at /ui/ and the Studio page at /studio/, and
+// redirects /ui and /studio there.
 func Register(mux *http.ServeMux) {
-	mux.Handle("GET /ui/", Handler())
-	mux.Handle("GET /ui", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secure(w.Header())
-		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
-	}))
+	for prefix := range pages {
+		mux.Handle("GET "+prefix, pageHandler(prefix))
+		root := strings.TrimSuffix(prefix, "/")
+		mux.Handle("GET "+root, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			secure(w.Header())
+			http.Redirect(w, r, prefix, http.StatusMovedPermanently)
+		}))
+	}
 }
 
 // Handler serves the embedded files under /ui/. A directory, an unknown
 // file or any other extension is 404, never a listing.
-func Handler() http.Handler {
+func Handler() http.Handler { return pageHandler("/ui/") }
+
+// pageHandler serves the embedded files under prefix, with the page's own
+// HTML for the prefix itself; another page's HTML is 404.
+func pageHandler(prefix string) http.Handler {
+	index := pages[prefix]
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		secure(w.Header())
-		name, found := strings.CutPrefix(r.URL.Path, "/ui/")
+		name, found := strings.CutPrefix(r.URL.Path, prefix)
 		if name == "" {
-			name = "index.html"
+			name = index
 		}
 		ctype := contentTypes[path.Ext(name)]
-		if !found || ctype == "" || !fs.ValidPath(name) {
+		if !found || ctype == "" || !fs.ValidPath(name) || (path.Ext(name) == ".html" && name != index) {
 			notFound(w)
 			return
 		}

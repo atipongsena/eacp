@@ -59,22 +59,33 @@ func TestEveryCallNamesItsRouteLiterally(t *testing.T) {
 	}
 }
 
+// TestIndexLoadsOnlyTheConsole checks both pages: the console loads only
+// app.js, the Studio page only studio.js, and both only app.css.
 func TestIndexLoadsOnlyTheConsole(t *testing.T) {
-	src := consoleSource(t)["index.html"]
-	if regexp.MustCompile(`(?i)\son[a-z]+\s*=`).MatchString(src) {
-		t.Error("index.html has an inline event handler")
-	}
-	if regexp.MustCompile(`(?i)\sstyle\s*=`).MatchString(src) {
-		t.Error("index.html has an inline style")
-	}
-	for _, m := range regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script>`).FindAllStringSubmatch(src, -1) {
-		if strings.TrimSpace(m[2]) != "" || !strings.Contains(m[1], `src="app.js"`) {
-			t.Errorf("inline or foreign script: %s", m[0])
+	for page, script := range map[string]string{"index.html": "app.js", "studio.html": "studio.js"} {
+		src := consoleSource(t)[page]
+		if src == "" {
+			t.Fatalf("%s is missing", page)
 		}
-	}
-	for _, m := range regexp.MustCompile(`(?:src|href)="([^"]*)"`).FindAllStringSubmatch(src, -1) {
-		if ref := m[1]; !strings.HasPrefix(ref, "#/") && ref != "app.js" && ref != "app.css" {
-			t.Errorf("index.html references %q", ref)
+		if regexp.MustCompile(`(?i)\son[a-z]+\s*=`).MatchString(src) {
+			t.Errorf("%s has an inline event handler", page)
+		}
+		if regexp.MustCompile(`(?i)\sstyle\s*=`).MatchString(src) {
+			t.Errorf("%s has an inline style", page)
+		}
+		scripts := regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script>`).FindAllStringSubmatch(src, -1)
+		if len(scripts) != 1 {
+			t.Errorf("%s has %d scripts, want 1", page, len(scripts))
+		}
+		for _, m := range scripts {
+			if strings.TrimSpace(m[2]) != "" || !strings.Contains(m[1], `src="`+script+`"`) {
+				t.Errorf("%s: inline or foreign script: %s", page, m[0])
+			}
+		}
+		for _, m := range regexp.MustCompile(`(?:src|href)="([^"]*)"`).FindAllStringSubmatch(src, -1) {
+			if ref := m[1]; !strings.HasPrefix(ref, "#/") && ref != script && ref != "app.css" {
+				t.Errorf("%s references %q", page, ref)
+			}
 		}
 	}
 }

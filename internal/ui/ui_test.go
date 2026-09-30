@@ -15,7 +15,9 @@ import (
 // deliberate change: add it here too.
 var consoleFiles = []string{
 	"api.js", "app.css", "app.js", "confirm.js", "dom.js", "i18n.js", "index.html", "messages.th.js", "router.js",
-	"session.js",
+	"session.js", "signin.js", "studio.html", "studio.js",
+	"studio/agents.js", "studio/common.js", "studio/definition.js", "studio/form.js", "studio/requests.js", "studio/run.js",
+	"studio/status.js", "studio/templates.js",
 	"views/approvals.js", "views/common.js", "views/cost.js", "views/dependencies.js", "views/execution.js",
 	"views/fleet.js",
 	"views/incidents.js", "views/inventory.js", "views/overview.js", "views/security.js",
@@ -84,6 +86,44 @@ func TestRedirectsToTheConsoleRoot(t *testing.T) {
 	rec := serve(t, "/ui")
 	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/ui/" {
 		t.Fatalf("GET /ui: %d %q, want 301 /ui/", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// The Agent Studio page (ADR-028 Rev 1.2) is served at /studio/ from the same
+// files and with the same headers; each page serves only its own HTML.
+func TestServesTheStudioWithItsHeaders(t *testing.T) {
+	cases := map[string]string{
+		"/studio/":                 "text/html; charset=utf-8",
+		"/studio/studio.html":      "text/html; charset=utf-8",
+		"/studio/studio.js":        "text/javascript; charset=utf-8",
+		"/studio/app.css":          "text/css; charset=utf-8",
+		"/studio/studio/status.js": "text/javascript; charset=utf-8",
+		"/studio/api.js":           "text/javascript; charset=utf-8",
+	}
+	for path, ctype := range cases {
+		rec := serve(t, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); got != ctype {
+			t.Errorf("%s: Content-Type = %q, want %q", path, got, ctype)
+		}
+	}
+	if body := serve(t, "/studio/").Body.String(); !strings.Contains(body, `<script type="module" src="studio.js"></script>`) {
+		t.Errorf("studio.html does not load studio.js as a module:\n%s", body)
+	}
+	rec := serve(t, "/studio")
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/studio/" {
+		t.Fatalf("GET /studio: %d %q, want 301 /studio/", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestEachPageServesOnlyItsOwnHTML(t *testing.T) {
+	for _, path := range []string{"/studio/index.html", "/ui/studio.html", "/studio/views", "/studio/nope.js",
+		"/studio/%2e%2e/ui.go", "/studio/jstest/api.test.mjs"} {
+		if rec := serve(t, path); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", path, rec.Code)
+		}
 	}
 }
 

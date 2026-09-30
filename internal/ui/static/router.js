@@ -4,6 +4,9 @@
 export const AREAS = ['overview', 'incidents', 'inventory', 'fleet', 'security', 'approvals', 'execution',
   'dependencies', 'cost'];
 
+// STUDIO_AREAS are the Agent Studio page's areas (ADR-028 Rev 1.2).
+export const STUDIO_AREAS = ['agents', 'new', 'requests', 'runs'];
+
 const SEGMENT = /^[A-Za-z0-9._-]{1,128}$/;
 const KEY = /^[a-z_]{1,32}$/;
 const VALUE = /^[A-Za-z0-9._:,/@-]{0,1024}$/;
@@ -11,13 +14,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const isUUID = value => typeof value === 'string' && UUID.test(value);
 
-export function parse(hash) {
+// parse reads a hash for one page: the console by default, or {areas, home}.
+export function parse(hash, {areas = AREAS, home = 'overview'} = {}) {
   const raw = String(hash ?? '').replace(/^#\/?/, '');
   const [path, qs = ''] = raw.split('?', 2);
   const parts = path.split('/').filter(Boolean);
   const area = parts.shift();
   const segmentsOK = parts.every(p => SEGMENT.test(p) && p !== '.' && p !== '..');
-  if (!AREAS.includes(area) || !segmentsOK) return {area: 'overview', parts: [], query: {}};
+  if (!areas.includes(area) || !segmentsOK) return {area: home, parts: [], query: {}};
   const query = {};
   for (const pair of qs.split('&').filter(Boolean)) {
     const [k, v = ''] = pair.split('=', 2);

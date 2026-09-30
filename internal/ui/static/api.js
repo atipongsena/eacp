@@ -1,7 +1,7 @@
-// api.js is the one list of every call the console makes. A Go test checks
-// each entry against the real API mux, so the console cannot call a route
-// that does not exist. The console is a client: the API and PostgreSQL
-// decide every request.
+// api.js is the one list of every call the console and the Studio page
+// make. A Go test checks each entry against the real API mux, so neither can
+// call a route that does not exist. Both are clients: the API and
+// PostgreSQL decide every request.
 import {isUUID} from './router.js';
 
 // [name, method, path, allowed query parameters]
@@ -42,6 +42,17 @@ export const ROUTES = [
   ['dependency.blast', 'GET', '/v1/dependencies/blast-radius', ['kind', 'id', 'name']],
   ['finops.dashboard', 'GET', '/v1/finops/dashboard', []],
   ['finops.alerts', 'GET', '/v1/finops/alerts', ['open', 'limit']],
+  // The Agent Studio page (ADR-028 Rev 1.2, ADR-033).
+  ['studio.agents', 'GET', '/v1/studio/agents', []],
+  ['studio.save', 'POST', '/v1/studio/agents', []],
+  ['studio.newversion', 'POST', '/v1/studio/agents/{id}/versions', []],
+  ['studio.version', 'GET', '/v1/studio/versions/{id}', []],
+  ['studio.requests', 'GET', '/v1/studio/requests', []],
+  ['studio.approve', 'POST', '/v1/studio/versions/{id}/approve', []],
+  ['studio.reject', 'POST', '/v1/studio/versions/{id}/reject', []],
+  ['studio.runstart', 'POST', '/v1/studio/agents/{id}/runs', []],
+  ['studio.run', 'GET', '/v1/studio/runs/{id}', []],
+  ['credential.approve', 'POST', '/v1/credentials/{id}/approve', []],
 ];
 
 const BY_NAME = new Map(ROUTES.map(([name, method, path, query]) => [name, {method, path, query}]));

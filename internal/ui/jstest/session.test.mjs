@@ -21,7 +21,7 @@ test('keeps the key and roles only after /v1/me accepts the key', async () => {
   assert.equal(calls[0].init.credentials, 'omit');
   assert.equal(calls[0].init.redirect, 'error');
   assert.equal(s.authorization(), 'Bearer eacp_key');
-  assert.deepEqual(s.me(), {principalId: 'p-1', tenantId: 't-1', roles: ['operator']});
+  assert.deepEqual(s.me(), {principalId: 'p-1', tenantId: 't-1', roles: ['operator'], groups: []});
   assert.ok(s.hasAny(['admin', 'operator']));
   assert.ok(!s.hasAny(['approver']));
   assert.ok(s.hasAny(null));
@@ -79,4 +79,14 @@ test('me() returns a copy', async () => {
   await s.signIn('k');
   s.me().roles.push('admin');
   assert.ok(!s.hasAny(['admin']));
+});
+
+test('keeps the caller’s groups from /v1/me, as a copy', async () => {
+  const body = {...ME, groups: [{id: 'g-1', name: 'hr', display_name: 'HR'}]};
+  const s = createSession({fetch: fetchReturning(200, body)});
+  await s.signIn('k');
+  assert.deepEqual(s.me().groups, [{id: 'g-1', name: 'hr', displayName: 'HR'}]);
+  s.me().groups[0].name = 'x';
+  s.me().groups.push({id: 'g-2'});
+  assert.deepEqual(s.me().groups, [{id: 'g-1', name: 'hr', displayName: 'HR'}]);
 });
