@@ -97,7 +97,8 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname IN ('incident_events', 'incidents') ORDER BY relname`); !slices.Equal(got, incidents) {
 		t.Errorf("reviewed incident tables missing: %v", got)
 	}
-	studio := []string{"studio_agents", "studio_save_marks", "studio_versions"}
+	studio := []string{"studio_agents", "studio_credentials", "studio_run_steps", "studio_runs", "studio_save_marks",
+		"studio_versions"}
 	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
 		AND relkind = 'r' AND relname LIKE 'studio%' ORDER BY relname`); !slices.Equal(got, studio) {
 		t.Errorf("reviewed studio tables missing: %v", got)
@@ -120,6 +121,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"outbox_events owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"scheduler_team_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"scheduler_tenant_state owner_scan PERMISSIVE SELECT {eacp_owner} true",
+		"studio_runs owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"tenants tenant_isolation PERMISSIVE ALL {public} (id = eacp.current_tenant_id())",
 		"tool_contracts owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"tools owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -144,7 +146,10 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// names the tenant, and action_result_tenants returns only ids.
 	// Studio's save and decision (ADR-033) run as the owner so that eacp_app
 	// cannot write the Studio tables or open a save mark; each names the
-	// tenant and binds the transaction's principal.
+	// tenant and binds the transaction's principal. Studio runs' functions
+	// (Phase 27a-2) are their only writers, check the requester or the
+	// runtime's lease, and keep inputs and answers from eacp_app;
+	// studio_run_tenants returns only ids.
 	reviewedDefiners := []string{
 		"eacp.action_result(uuid)",
 		"eacp.action_result_record(uuid,text,text)",
@@ -165,7 +170,16 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.reconcilable_actions(text[],jsonb,integer)",
 		"eacp.release_tenants()",
 		"eacp.set_kill(text,uuid,boolean,text,text)",
+		"eacp.studio_credential_propose(uuid,uuid,bytea,text)",
 		"eacp.studio_decide(uuid,boolean,text)",
+		"eacp.studio_run_answer(uuid)",
+		"eacp.studio_run_claim(text,text,integer,integer)",
+		"eacp.studio_run_finish(uuid,text,bigint,text,text,text)",
+		"eacp.studio_run_heartbeat(uuid,text,bigint,integer)",
+		"eacp.studio_run_start(uuid,jsonb)",
+		"eacp.studio_run_step(uuid,text,bigint,integer,uuid)",
+		"eacp.studio_run_tenants()",
+		"eacp.studio_runs_expire(integer)",
 		"eacp.studio_save(uuid,text,text,text,uuid,text)",
 		"eacp.tenants_with_open_actions(uuid,integer)",
 	}
