@@ -101,6 +101,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// scans behind the SECURITY DEFINER claim and outbox hints (migrations
 	// 00005-00007, 00010, 00012, 00013, 00014, 00016, 00018, 00019 and 00022).
 	reviewedPolicies := []string{
+		"action_results owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"actions owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"agent_releases owner_scan PERMISSIVE SELECT {eacp_owner} true",
 		"budget_soft_limits owner_scan PERMISSIVE SELECT {eacp_owner} true",
@@ -133,7 +134,14 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// under RLS (the relay locks and publishes each row in its tenant). The
 	// LLM ledger's writers (ADR-031) run as the owner so that eacp_app cannot
 	// write the ledger itself; every statement in them names the tenant.
+	// The result channel's functions (ADR-034) run as the owner so that
+	// eacp_app can neither write results nor select their content; each
+	// names the tenant, and action_result_tenants returns only ids.
 	reviewedDefiners := []string{
+		"eacp.action_result(uuid)",
+		"eacp.action_result_record(uuid,text,text)",
+		"eacp.action_result_tenants()",
+		"eacp.action_results_prune(integer)",
 		"eacp.audit_chain_append()",
 		"eacp.claimable_actions(text[],jsonb,integer,jsonb)",
 		"eacp.finops_tenants()",
