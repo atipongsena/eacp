@@ -1,6 +1,6 @@
 # ADR-028: The operator console
 
-Status: Accepted (Rev 1.0, 2026-09-26; Rev 1.1, 2026-09-29; Rev 1.2, 2026-09-30). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94); Rev 1.1 is Phase 26-UI (design system and language); Rev 1.2 is Phase 27a-3b (the Agent Studio page, ADR-033).
+Status: Accepted (Rev 1.0, 2026-09-26; Rev 1.1, 2026-09-29; Rev 1.2, 2026-09-30; Rev 1.3, 2026-09-30). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94); Rev 1.1 is Phase 26-UI (design system and language); Rev 1.2 is Phase 27a-3b (the Agent Studio page, ADR-033); Rev 1.3 is Phase 27b (the Hub on that page).
 Related: ADR-027 (incidents and the SOC summary), ADR-016 (kill switch), ADR-022 (circuits), ADR-023 (MCP tools),
 ADR-024 (fleet operations), ADR-005 (approvals), ADR-014 (NATS carries signals).
 
@@ -183,6 +183,16 @@ sees where it is on the way to running and runs it, and a registry approver deci
   listed in `consoleFiles`. New routes in ROUTES are existing API routes only.
 - Not done here: a run list or a department directory (Hub work, ADR-033 Rev 1.3), `revoke-all` or the runtime's state
   in the page, a session shared between the two pages.
+
+## Revision 1.3: the Hub on the Studio page (Phase 27b)
+
+- The Studio page gains the area `hub` (search by text, tag and department through the route's query; one listing
+  with its definition, its run form when runnable, a copy form for authors and deprecate or withdraw for those the
+  server accepts), a Hub section on the owner's agent page (the listing, the open proposal and "Publish to the Hub…")
+  and the Hub proposals in Requests. Requests is shown to everyone, because a department lead holds no role; its agent
+  and key sections still load only for registry approvers, and the server lists only what each person may decide.
+- The page's buttons follow the server's rules and never replace them: a refused request shows the API's `detail`.
+  New served file: `studio/hub.js`; new ROUTES are the Hub's API routes only.
 
 ## Unresolved assumptions (conservative choices)
 

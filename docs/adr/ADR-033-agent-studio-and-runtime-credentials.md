@@ -1,6 +1,6 @@
 # ADR-033: Agent Studio and the runtime's agent credentials
 
-Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built; Rev 1.2 (2026-09-30) records what Phase 27a-2 built. Scope: Phase 27-0 and 27a.
+Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built; Rev 1.2 (2026-09-30) records what Phase 27a-2 built; Rev 1.3 (2026-09-30) records the Agent Hub, Phase 27b. Scope: Phase 27-0, 27a and 27b.
 Related: ADR-001 (the product boundary, agents never hold enterprise credentials), ADR-003 §5 (API keys), ADR-019 (credential custody and providers), ADR-029 (replicas), ADR-031 (the LLM gateway authenticates agent keys), ADR-034 (the result channel); the program spec `docs/superpowers/specs/2026-09-29-agent-studio-program-design.md` sections 2, 5 and 11.
 
 ## Context
@@ -165,6 +165,48 @@ Phase 27a-2 (spec `docs/superpowers/specs/2026-09-30-phase-27a-2-agent-runtime-d
 
 Packaging (the image, compose and the Helm chart), the Studio page and the template are Phase 27a-3.
 
+## Revision 1.3: the Agent Hub (Phase 27b)
+
+Phase 27b (spec `docs/superpowers/specs/2026-09-30-phase-27b-agent-hub-design.md`) adds the Hub of program spec section
+6. The department trial of section 8.4 did not take place; the owner chose the fallback, so the gate is recorded as
+not met and each open point keeps its conservative default. Migration 00029:
+
+- **Department leads.** `eacp.group_memberships.lead` is set only when an admin adds the membership, only for a human,
+  and never changes afterwards (the application role cannot update the column and the guard refuses a change). A
+  bundle never sets it. `/v1/me` shows it with each group.
+- **Listings.** An agent has at most one listing (`eacp.studio_listings`): scope `DEPARTMENT` (the agent's own
+  department) or `ORG`, state `PUBLISHED`, `DEPRECATED` or `WITHDRAWN`, the published version and sorted tags. It
+  changes only through a proposal (`eacp.studio_listing_proposals`), made by the agent's owner holding
+  `studio_author` for an `ACTIVE`, approved version, one open per agent, decided once or cancelled by its proposer.
+- **Tiered approval.** `eacp.studio_listing_decide` accepts a live lead of the agent's department for `DEPARTMENT` and
+  an `admin` or `registry_approver` for `ORG`; the tag `template` needs `ORG` and an admin. The proposer and the
+  agent's owner never decide (`55000`, HTTP 409). Approval re-checks that the version is still `ACTIVE` and approved,
+  then creates or replaces the listing. `eacp.studio_listing_retire` lets the owner, an admin or the scope's approver
+  deprecate or withdraw a listing with a reason; both only narrow, so no second person is needed.
+- **Visibility and runs.** A `PUBLISHED` or `DEPRECATED` listing reaches the enabled humans of its audience (live
+  members of the department, or the tenant); the owner always sees their own. The Hub reads through
+  `eacp.studio_hub_listings()` and `eacp.studio_hub_definition(listing)`, which filter by the caller.
+  `eacp.studio_run_start` now accepts the owner, while a live member of the department, or anyone a listing reaches
+  when its published version is the agent's `ACTIVE` one; otherwise the run is refused (`42501`, or `55000` for a
+  listing whose version was replaced).
+- **Clones.** `eacp.studio_clone` copies a `PUBLISHED` listing's definition, for a `studio_author` it reaches, into a
+  new agent of their department through the same save (`eacp.studio_save_as`, which `eacp.studio_save` now wraps and
+  `eacp_app` cannot execute). The copy is `REGISTERED` with an inactive allowlist, no key and no listing, and records
+  `eacp.studio_agents.cloned_from_version`.
+- **Narrower than the spec, for safety:** without a listing only the owner runs an agent (27a let every member of the
+  department); a department listing is bound to the agent's own department; only the owner proposes; a deprecated
+  listing is not cloned; drafts with revisions and bundle-seeded templates are not built.
+
+| Assumption | Conservative choice |
+|---|---|
+| Who runs an unlisted agent | Its owner only; the department needs a lead's approval |
+| Who decides a department listing | A lead of the agent's own department, never an admin or approver in their place |
+| Who may withdraw | The owner, an admin or the scope's approver, without a second person (it only narrows) |
+| Seeing a listing | Enabled humans only; the runtime and other service principals see none |
+| Cloning a deprecated listing | Refused |
+
 ## Verification
 
-Rev 1.0 is a decision document; it changes no code. Rev 1.1's rules are tested in raw SQL as `eacp_app` in `internal/studio/schema_test.go`, and the API in `internal/api/studio_test.go`. Rev 1.2's rules are tested in raw SQL in `internal/studio/runs_schema_test.go`, the routes in `internal/api/studio_runs_test.go`, and the runtime against a real API, worker and database in `internal/studioruntime` (invariants 4 to 7: `TestKeyFromSecretAuthenticatesUnchanged`, `TestNoKeyOrMasterLeaks`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestARunFailsClosedWithoutAKey`, `TestTheBulkRevocationRevokesOnlyStudioKeys`).
+Rev 1.0 is a decision document; it changes no code. Rev 1.1's rules are tested in raw SQL as `eacp_app` in `internal/studio/schema_test.go`, and the API in `internal/api/studio_test.go`. Rev 1.2's rules are tested in raw SQL in `internal/studio/runs_schema_test.go`, the routes in `internal/api/studio_runs_test.go`, and the runtime against a real API, worker and database in `internal/studioruntime` (invariants 4 to 7: `TestKeyFromSecretAuthenticatesUnchanged`, `TestNoKeyOrMasterLeaks`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestARunFailsClosedWithoutAKey`, `TestTheBulkRevocationRevokesOnlyStudioKeys`). Rev 1.3's rules are tested in raw SQL in
+`internal/studio/hub_schema_test.go`, the routes in `internal/api/studio_hub_test.go`, the page in
+`internal/ui/jstest/studioviews.test.mjs` and the whole path in `TestStudioDemo` (S6).

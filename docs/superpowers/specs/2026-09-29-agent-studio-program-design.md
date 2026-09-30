@@ -178,9 +178,9 @@ the wider parts.
 | 26b | **The result channel:** a governed way for the calling agent to read a tool's output (bounded, retained for a limited time, never in logs or the audit journal), for HTTP, MCP and A2A alike. Added after the review found that no connector returns output and section 5's per-step results and the leave-balance template need it ([design](2026-09-30-phase-26b-result-channel-design.md)) | 034 | done (branch `phase-26b-result-channel`) |
 | 26-UI | Console design system and a redesign of every existing view (section 8.2) | 028 Rev 1.1 | done (`e275c4a`) |
 | 27-0 | **Credential ADR first:** how `agent-runtime` obtains an agent's credential (section 5.1), its threat model, custody of the master secret, rotation and the privilege it holds. Written and reviewed before any 27a code ([ADR-033](../../adr/ADR-033-agent-studio-and-runtime-credentials.md)) | 033 | done (accepted 2026-09-30) |
-| 27a | **The thin slice** (section 8.3; its template reads a result, so it needs 26b): definition, immutable versions, derived capability, `agent-runtime`, agent credentials, and one form with one template, from creation through approval to a run. Split by the owner (2026-09-30) into 27a-1 (data, rules and the author and approver API, [design](2026-09-30-phase-27a-1-studio-rules-design.md)), 27a-2 (`agent-runtime`, API only, [design](2026-09-30-phase-27a-2-agent-runtime-design.md)) and 27a-3, split again into 27a-3a (the MCP template's tool, packaging, Helm and the API demo, [design](2026-09-30-phase-27a-3a-studio-packaging-demo-design.md)) and 27a-3b (the `/studio/` form, [design](2026-09-30-phase-27a-3b-studio-page-design.md)) | 033 Rev 1.1, 1.2; 028 Rev 1.2 | done (2026-09-30); the gate next |
-| **Gate** | Two or three departments try the thin slice (section 8.4). What they say decides what 27b and 27c contain | none | required |
-| 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads. Reordered or reshaped by the gate | 033 Rev 1.3 | after the gate |
+| 27a | **The thin slice** (section 8.3; its template reads a result, so it needs 26b): definition, immutable versions, derived capability, `agent-runtime`, agent credentials, and one form with one template, from creation through approval to a run. Split by the owner (2026-09-30) into 27a-1 (data, rules and the author and approver API, [design](2026-09-30-phase-27a-1-studio-rules-design.md)), 27a-2 (`agent-runtime`, API only, [design](2026-09-30-phase-27a-2-agent-runtime-design.md)) and 27a-3, split again into 27a-3a (the MCP template's tool, packaging, Helm and the API demo, [design](2026-09-30-phase-27a-3a-studio-packaging-demo-design.md)) and 27a-3b (the `/studio/` form, [design](2026-09-30-phase-27a-3b-studio-page-design.md)) | 033 Rev 1.1, 1.2; 028 Rev 1.2 | done (2026-09-30) |
+| **Gate** | Two or three departments try the thin slice (section 8.4). What they say decides what 27b and 27c contain | none | **not met** (2026-09-30, the owner chose the fallback; section 8.4) |
+| 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads ([design](2026-09-30-phase-27b-agent-hub-design.md)) | 033 Rev 1.3 | done (2026-09-30) |
 | 27c | The full builder, more templates and the end-to-end demo on compose and Kubernetes | 033 Rev 1.4 | after the gate |
 | 28 | The `run` kill scope, using the authenticated run binding a Studio run provides | 016 revision | after 27a |
 | 29 | Inbound A2A: accept delegations from remote agents | 030 revision | independent, can move |
@@ -222,6 +222,13 @@ The notes go into an amendment of this spec. If departments want a template gall
 a curated list; if they want an LLM step first, that moves ahead of the Hub. Nothing after the gate is fixed until
 this is done. If the owner cannot arrange a trial, the fallback is the demo scenario of section 9 run by the owner
 alone, and the gate is recorded as not met.
+
+**Amendment (2026-09-30): the gate was not met.** No department tried the slice. The owner chose the fallback: the
+Studio demo (`DEMO=S`) stood in for the trial, and 27b was built as section 6 describes, each open point at its
+conservative default ([27b design](2026-09-30-phase-27b-agent-hub-design.md) section 1). What the trial should have
+answered stays open for the first real trial: whether departments want a template gallery before sharing, whether an
+`llm` step matters more than the Hub, whether a department lead is the right approver for department listings, and
+which tools each department would use.
 
 ### 8.1 Phase 26a constraints already known (ADR-023, AGENTS.md, `research/STUDIO_REFERENCES.md` section 2)
 

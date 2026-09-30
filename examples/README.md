@@ -37,7 +37,7 @@ the API as a client would, except for the first step: creating a tenant and its 
 |---|---|---|
 | alice, bob | `admin` (a tenant always has two) | setup |
 | erin | `registry_editor` | 03: submits the change set |
-| rita, ravi | `registry_approver` | 03: rita approves the change set |
+| rita, ravi | `registry_approver` | 03: rita approves the change set; rita also leads the group `hr` and publishes leave-bot in the Agent Hub (the screenshots) |
 | otto, olga | `operator` | 01: reads the evidence; 02: reads the LLM ledger |
 | amy, ben | `approver` | 01: the two approvals |
 | sam | none | owns the agents; the subject of every action |
@@ -53,7 +53,7 @@ budget for the agent. For Agent Studio it registers the HR MCP server (`hr-mcp`)
 
 Every key goes to `examples/.env`. That file is git-ignored and `setup.sh` never prints a key, so keep it that way:
 don't paste it anywhere. Running `setup.sh` again is safe. If `.env` still works, it says so and does nothing; if it was written by an older
-setup and lacks a key, it says how to start over.
+setup (it lacks a key, or rita does not lead `hr`), it says how to start over.
 
 ## Run them
 

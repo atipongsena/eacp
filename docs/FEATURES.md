@@ -366,7 +366,7 @@ A member of an agent's department runs an approved Studio agent with its inputs 
 
 | Capability | Evidence |
 |---|---|
-| Only department members start a run; its inputs are exactly the declared ones | `TestARunIsStartedByADepartmentMemberWithItsInputs`, `TestStudioRunsThroughTheAPI` |
+| Without a Hub listing only the owner starts a run (Phase 27b); its inputs are exactly the declared ones | `TestARunIsStartedByItsOwnerWithItsInputs`, `TestStudioRunsThroughTheAPI` |
 | One runtime holds a run at a time; only the lease holder moves it | `TestOnlyTheLeaseHolderMovesARun`, `TestTwoRuntimesNeverShareARun`, `TestRuntimeRoutesAreForTheRuntimeOnly` |
 | Each step is the run's own action, under `studio:<run>:<index>`; after a crash the same action is resumed, never sent twice | `TestAStepIsTheRunsOwnAction`, `TestACrashBeforeTheStepRecordResubmitsTheSameAction`, `TestARunEndToEnd` |
 | A run fails closed with a named reason: a missing, expired or revoked key, a denied step, a replaced version, the deadline | `TestARunFailsClosedWithoutAKey`, `TestARevokedKeyFailsTheRun`, `TestADeniedStepFailsTheRun`, `TestAReplacedVersionStopsTheRun`, `TestAStepAwaitingApprovalFailsAtTheDeadline`, `TestTheSweeperExpiresStudioRuns` |
@@ -397,6 +397,22 @@ A member of an agent's department runs an approved Studio agent with its inputs 
 | Every status and failure reason reads in plain words, in English and Thai; an unknown one is shown as sent | `every status has a sentence that says who acts next; an unknown one is shown as sent`, `every failure reason the runtime names has its own sentence; an unknown one is shown as sent`, `TestEveryTranslatedTextHasAThaiEntry` |
 | An approver never decides their own agent; approving a request or a key goes through a confirmation with a reason | `an approver’s own agent is not offered for their decision`, `an approver approves someone else’s agent with a reason, and a runtime key` (`jstest`) |
 | `/v1/me` lists only the caller's active groups | `TestMeListsTheCallersGroups` |
+
+## Phase 27b: the Agent Hub
+
+An agent's owner proposes it to the Hub for their department or the whole organisation; a lead of the department, or an admin or registry approver for the organisation, publishes it ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.3). Everyone it reaches finds it, runs it as themselves and can copy it; the copy carries no permission. PostgreSQL decides every step ([user guide](USER_GUIDE.md#share-it-in-the-hub)). The trial with departments (the gate) did not take place and is recorded as not met.
+
+| Capability | Evidence |
+|---|---|
+| A department lead is set only when an admin adds the membership, and only for a human; it never changes afterwards | `TestALeadIsSetOnlyWhenAnAdminAddsTheMembership`, `TestALeadIsAddedThroughTheAPIAndShownInMe` |
+| Only the owner proposes, only an `ACTIVE`, approved version, one proposal at a time | `TestOnlyTheOwnerProposesAnActiveApprovedVersion` |
+| Tiered approval: a lead of the agent's department for the department, an admin or registry approver for the organisation, an admin for a template; nobody decides their own | `TestEachScopeHasItsApprover`, `TestTheTemplateTagNeedsAnAdmin` |
+| A listing publishes only a version that is still `ACTIVE`; deprecating and withdrawing only narrow | `TestApprovalNeedsTheVersionStillActive`, `TestDeprecateAndWithdrawOnlyNarrow` |
+| PostgreSQL shows each listing to its audience only, and runs only through a visible listing | `TestTheHubShowsEachListingToItsAudience`, `TestOthersRunOnlyThroughAVisibleListing` |
+| A copy is a new, unapproved agent with no allowlist, key or listing | `TestACloneCarriesNoPermission` |
+| Listings and proposals are written only through their functions, and journaled | `TestTheHubIsWrittenOnlyThroughItsFunctions` |
+| The API and the page: search, run, copy, propose and decide | `TestTheHubThroughTheAPI`, `the owner proposes a ready agent to the Hub and sees who decides it`, `a lead decides a Hub proposal, and never loads the approvers’ queue` (`jstest`) |
+| An HR lead publishes to HR, a colleague runs it, a finance author's copy starts unapproved | `TestStudioDemo` |
 
 ## Benchmarks
 

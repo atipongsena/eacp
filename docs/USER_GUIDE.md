@@ -441,6 +441,23 @@ asks for in plain words, and each key the agent runtime proposed. You cannot dec
 
 ![Agent Studio: the registry approver's queue](images/studio-requests.png)
 
+### Share it in the Hub
+
+Until it is published, only you run your agent. To share it, open the agent and use **Publish to the Hub…**: choose
+your department or the whole organisation, and add a few tags. A lead of your department publishes it to the
+department; an admin or a registry approver publishes it to the organisation. Nobody publishes their own agent.
+
+Everyone it reaches finds it under **Hub**, searches by name, tag or department, and runs it as themselves, with the
+same policy, approvals, budgets and kill switches as any action. An author can also copy it into their own department:
+the copy starts with no permission and waits for a registry approver like a new agent. The owner, an admin or the
+listing's approver can deprecate it (it still runs) or withdraw it (it starts no new run).
+
+![Agent Studio: the Hub](images/studio-hub.png)
+
+An administrator makes someone a department lead when adding them to the group (`"lead": true` on
+`POST /v1/groups/{id}/members`); to change it, remove the membership and add it again. A lead decides the department's
+listings under **Requests**.
+
 ## For approvers
 
 ### Vote on a request

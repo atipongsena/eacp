@@ -301,12 +301,12 @@ binding ใดเลย
 
 ## Agent Studio demo
 
-`TestStudioDemo` แสดง Phase 27a (ADR-033) และรันด้วย `DEMO=S` บน compose เท่านั้น Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
+`TestStudioDemo` แสดง Phase 27a และ 27b (ADR-033) และรันด้วย `DEMO=S` บน compose เท่านั้น Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
 `erp` ที่มีเพียง worker เข้าได้ และมี token ของตัวเอง) มี tool เดียวคือ `get_leave_balance` ซึ่งตอบ `{"days": N}` ตาม id ของพนักงาน (E-1 มี 12 วัน)
 และตอบ tool error สำหรับ `ERR` `agent-runtime` รันใต้ compose profile `studio` บนเครือข่าย `agents` เท่านั้น ไม่มี URL ของฐานข้อมูล และไม่มี secret
 ของ connector หรือ provider demo เขียน master และ key ของมันลงใน volume `studio_runtime` ผ่าน stdin แล้วจึงเริ่มมัน
 
-- **S0** bootstrap tenant Wonka stella (`studio_author`) อยู่ในกลุ่ม HR ส่วน carol ไม่อยู่ service principal `studio-runtime` ถือ `studio_runtime`
+- **S0** bootstrap tenant Wonka stella (`studio_author`) และ hana อยู่ในกลุ่ม HR ที่มี lena เป็นหัวหน้า finn (`studio_author`) อยู่ในฝ่ายการเงิน ส่วน carol ไม่อยู่ทั้งสองกลุ่ม service principal `studio-runtime` ถือ `studio_runtime`
   เพียงบทบาทเดียว policy อนุญาตการค้นข้อมูล HR แบบอ่านอย่างเดียว
 - **S1** erin ลงทะเบียน connector `hr-mcp` scanner ค้นพบ `get_leave_balance` erin รับรองให้เป็น `READ_ONLY` ลองครั้งเดียว และเก็บผลลัพธ์ 10 นาที
   rita เปิดใช้ contract
@@ -318,8 +318,12 @@ binding ใดเลย
   บันทึกการเรียกหนึ่งครั้ง
 - **S5** run สำหรับ `ERR` ได้ tool error ซึ่งไม่ได้รับรองว่าไม่มีผล แต่การเรียกแบบ `READ_ONLY` ไม่มีผลที่ต้องสงสัย เมื่อใช้ความพยายามครั้งเดียวไปแล้ว
   action จึงจบด้วย `FAILED` และ run จบด้วย `FAILED` (`action_failed`) โดยไม่มีคำตอบ
-- **S6** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
-- **S7** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
+- **S6** Hub: hana ซึ่งอยู่ใน HR รัน agent ไม่ได้ก่อนที่มันจะถูกเผยแพร่ (HTTP 403) stella เสนอมันให้ HR แต่เผยแพร่เองไม่ได้ (HTTP 409)
+  rita ก็ไม่ได้ (HTTP 403) lena หัวหน้า HR เผยแพร่มัน hana พบมันใน Hub และรันในนามของตัวเอง: เวอร์ชันเดียวกัน subject และคำตอบของเธอเอง
+  finn ไม่เห็นอะไรจนกว่า rita จะเผยแพร่ให้ทั้งองค์กร (lena ทำไม่ได้ HTTP 403) สำเนาของ finn ในฝ่ายการเงินอยู่ในสถานะ `waiting_for_approval`
+  และรันไม่ได้ (HTTP 409)
+- **S7** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
+- **S8** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
   คำตอบไม่อยู่ใน log บรรทัดใดและไม่อยู่ใน journal และ audit chain ตรวจสอบผ่าน
 
 runtime เข้าถึงได้เพียง API และมีเพียงมันที่ถือ master ของ Studio (`test/security` `TestTheRuntimeReachesOnlyTheAPI`,

@@ -3712,6 +3712,8 @@ Principals, groups, memberships and role grants; governance policy versions; bud
 
 > **Phase 27a-3b delivered (2026-09-30, ADR-028 Rev 1.2):** `/studio/`, a second page built from the console's modules and rules: the leave-balance template, a form for new agents and new versions, each agent's stage in plain words with who acts next, the approver's queue for requests and runtime keys, and runs with their answer or reason, in English and Thai. `/v1/me` lists the caller's groups. Phase 27a (the thin slice) is complete; the department gate comes next.
 
+> **The gate and Phase 27b (2026-09-30, ADR-033 Rev 1.3):** no department tried the thin slice; the owner chose the fallback, so the gate is recorded as not met and 27b was built as the program spec describes. The Agent Hub: department leads, listings proposed by the owner and published by a lead (department) or an admin or registry approver (organisation), visibility, runs and copies decided by PostgreSQL; without a listing only the owner runs an agent.
+
 Operator UI:
 
 ```text

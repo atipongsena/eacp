@@ -37,7 +37,7 @@ bash examples/setup.sh
 |---|---|---|
 | alice, bob | `admin` (tenant ต้องมีสองคนเสมอ) | setup |
 | erin | `registry_editor` | 03: ส่ง change set |
-| rita, ravi | `registry_approver` | 03: rita อนุมัติ change set |
+| rita, ravi | `registry_approver` | 03: rita อนุมัติ change set และ rita ยังเป็นหัวหน้ากลุ่ม `hr` ซึ่งเผยแพร่ leave-bot ใน Agent Hub (ภาพหน้าจอ) |
 | otto, olga | `operator` | 01: อ่านหลักฐาน, 02: อ่าน ledger ของ LLM |
 | amy, ben | `approver` | 01: ผู้อนุมัติสองคน |
 | sam | ไม่มี | เจ้าของ agent และเป็น subject ของทุก action |
@@ -51,8 +51,8 @@ model LLM ปลอมสองตัว (`sonnet` ที่ agent ใช้ไ�
 และรับรอง tool `get_leave_balance` แบบอ่านอย่างเดียว
 
 key ทุกตัวถูกเขียนลง `examples/.env` ซึ่ง git ไม่ติดตาม และ `setup.sh` ไม่พิมพ์ key ออกมาเลย จึงควรรักษาไว้แบบนั้น
-อย่านำไฟล์นี้ไปวางที่ไหน การรัน `setup.sh` ซ้ำนั้นปลอดภัย ถ้า `.env` ยังใช้ได้ มันจะบอกแล้วไม่ทำอะไรเพิ่ม ถ้าเขียนโดย setup รุ่นเก่าและขาด key
-มันจะบอกวิธีเริ่มใหม่
+อย่านำไฟล์นี้ไปวางที่ไหน การรัน `setup.sh` ซ้ำนั้นปลอดภัย ถ้า `.env` ยังใช้ได้ มันจะบอกแล้วไม่ทำอะไรเพิ่ม ถ้าเขียนโดย setup รุ่นเก่า (ขาด key หรือ rita
+ไม่ได้เป็นหัวหน้า `hr`) มันจะบอกวิธีเริ่มใหม่
 
 ## วิธีรัน
 

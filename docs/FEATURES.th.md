@@ -361,7 +361,7 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 
 | ความสามารถ | หลักฐาน |
 |---|---|
-| เฉพาะสมาชิกในแผนกเริ่มการรันได้ และ input ต้องตรงกับที่ประกาศไว้พอดี | `TestARunIsStartedByADepartmentMemberWithItsInputs`, `TestStudioRunsThroughTheAPI` |
+| หากไม่มีรายการใน Hub มีเพียงเจ้าของที่เริ่มการรันได้ (Phase 27b) และ input ต้องตรงกับที่ประกาศไว้พอดี | `TestARunIsStartedByItsOwnerWithItsInputs`, `TestStudioRunsThroughTheAPI` |
 | runtime ถือการรันได้ทีละหนึ่งตัว และมีเพียงผู้ถือ lease ที่เปลี่ยนสถานะการรันได้ | `TestOnlyTheLeaseHolderMovesARun`, `TestTwoRuntimesNeverShareARun`, `TestRuntimeRoutesAreForTheRuntimeOnly` |
 | แต่ละขั้นเป็น action ของการรันนั้นเอง ภายใต้ `studio:<run>:<index>` หลัง crash จะทำ action เดิมต่อ ไม่ส่งซ้ำ | `TestAStepIsTheRunsOwnAction`, `TestACrashBeforeTheStepRecordResubmitsTheSameAction`, `TestARunEndToEnd` |
 | การรันล้มเหลวแบบปิดพร้อมเหตุผลที่ระบุชื่อ: key ขาด หมดอายุ หรือถูกเพิกถอน ขั้นถูกปฏิเสธ เวอร์ชันถูกแทนที่ หรือเลยกำหนดเวลา | `TestARunFailsClosedWithoutAKey`, `TestARevokedKeyFailsTheRun`, `TestADeniedStepFailsTheRun`, `TestAReplacedVersionStopsTheRun`, `TestAStepAwaitingApprovalFailsAtTheDeadline`, `TestTheSweeperExpiresStudioRuns` |
@@ -392,6 +392,22 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | ทุกสถานะและเหตุผลที่ล้มเหลวอ่านเป็นภาษาธรรมดา ทั้งอังกฤษและไทย ค่าที่ไม่รู้จักจะแสดงตามที่ส่งมา | `every status has a sentence that says who acts next; an unknown one is shown as sent`, `every failure reason the runtime names has its own sentence; an unknown one is shown as sent`, `TestEveryTranslatedTextHasAThaiEntry` |
 | ผู้อนุมัติไม่ได้ตัดสิน agent ของตัวเอง การอนุมัติคำขอหรือ key ต้องผ่านการยืนยันพร้อมเหตุผล | `an approver’s own agent is not offered for their decision`, `an approver approves someone else’s agent with a reason, and a runtime key` (`jstest`) |
 | `/v1/me` แสดงเฉพาะกลุ่มที่ผู้เรียกเป็นสมาชิกอยู่ | `TestMeListsTheCallersGroups` |
+
+## Phase 27b: Agent Hub
+
+เจ้าของ agent เสนอมันเข้า Hub สำหรับแผนกของตนหรือทั้งองค์กร หัวหน้าแผนก หรือผู้ดูแลระบบหรือผู้อนุมัติทะเบียนสำหรับทั้งองค์กร เป็นผู้เผยแพร่ ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.3) ทุกคนที่มันเข้าถึงจะค้นเจอ รันมันในนามของตัวเอง และคัดลอกได้ โดยสำเนาไม่มีสิทธิ์ใดติดไปด้วย PostgreSQL ตัดสินทุกขั้น ([คู่มือการใช้งาน](USER_GUIDE.th.md#แบ่งปันใน-hub)) การทดลองกับแผนกต่างๆ (gate) ไม่ได้เกิดขึ้น และบันทึกไว้ว่ายังไม่ผ่าน
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| หัวหน้าแผนกถูกกำหนดได้เฉพาะตอนที่ผู้ดูแลระบบเพิ่มสมาชิก และเฉพาะมนุษย์ และไม่เปลี่ยนภายหลัง | `TestALeadIsSetOnlyWhenAnAdminAddsTheMembership`, `TestALeadIsAddedThroughTheAPIAndShownInMe` |
+| มีเพียงเจ้าของที่เสนอได้ เฉพาะเวอร์ชันที่ `ACTIVE` และได้รับอนุมัติ และเสนอได้ครั้งละหนึ่งคำเสนอ | `TestOnlyTheOwnerProposesAnActiveApprovedVersion` |
+| การอนุมัติเป็นชั้น: หัวหน้าแผนกของ agent สำหรับแผนก ผู้ดูแลระบบหรือผู้อนุมัติทะเบียนสำหรับทั้งองค์กร ผู้ดูแลระบบสำหรับ template และไม่มีใครตัดสินของตัวเอง | `TestEachScopeHasItsApprover`, `TestTheTemplateTagNeedsAnAdmin` |
+| รายการเผยแพร่ได้เฉพาะเวอร์ชันที่ยัง `ACTIVE` การเลิกแนะนำและการถอนทำได้เพียงลดการเข้าถึง | `TestApprovalNeedsTheVersionStillActive`, `TestDeprecateAndWithdrawOnlyNarrow` |
+| PostgreSQL แสดงแต่ละรายการเฉพาะกลุ่มเป้าหมายของมัน และให้รันได้เฉพาะผ่านรายการที่มองเห็น | `TestTheHubShowsEachListingToItsAudience`, `TestOthersRunOnlyThroughAVisibleListing` |
+| สำเนาเป็น agent ใหม่ที่ยังไม่ได้รับอนุมัติ ไม่มี allowlist, key หรือรายการ | `TestACloneCarriesNoPermission` |
+| รายการและคำเสนอเขียนได้เฉพาะผ่านฟังก์ชันของมัน และถูกบันทึกใน journal | `TestTheHubIsWrittenOnlyThroughItsFunctions` |
+| API และหน้าเว็บ: ค้นหา รัน คัดลอก เสนอ และตัดสิน | `TestTheHubThroughTheAPI`, `the owner proposes a ready agent to the Hub and sees who decides it`, `a lead decides a Hub proposal, and never loads the approvers’ queue` (`jstest`) |
+| หัวหน้า HR เผยแพร่ให้ HR เพื่อนร่วมงานรันมัน และสำเนาของผู้เขียนฝ่ายการเงินเริ่มต้นแบบยังไม่ได้รับอนุมัติ | `TestStudioDemo` |
 
 ## Benchmark
 
