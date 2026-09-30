@@ -24,3 +24,9 @@ services:
     environment:
       EACP_WORKER_LEASE: 10s
       EACP_RECONCILE_MAX_ATTEMPTS: "3"
+
+  # agent-runtime (profile studio, started by the Studio demo): propose a
+  # new version's key within seconds, not a minute.
+  agent-runtime:
+    environment:
+      EACP_RUNTIME_ROTATE_INTERVAL: 5s

@@ -1,0 +1,9 @@
+{"schema_version": 1, "kind": "agent",
+ "inputs": {"employee_id": {"type": "string", "max_length": 64}},
+ "steps": [
+   {"id": "lookup", "kind": "tool_call", "tool": "hr-mcp.get_leave_balance", "tool_schema_version": "1",
+    "operation": "lookup", "target": "hr", "resource": "leave_balance",
+    "payload": {"employee_id": "{{inputs.employee_id}}"}},
+   {"id": "answer", "kind": "respond",
+    "text": "You have {{steps.lookup.output.structuredContent.days}} days of leave left."}],
+ "limits": {"timeout_seconds": 120}}

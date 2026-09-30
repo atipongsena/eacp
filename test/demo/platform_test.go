@@ -43,6 +43,11 @@ type platform interface {
 	erpAudit(token string) ([]byte, error)   // GET fakeerp /v1/audit with the ERP credential
 	copyToFakeMCP(local, remote string) error
 	mcpCalls(token string) ([]byte, error) // GET fakemcp /v1/calls with the MCP credential
+	hrCalls(token string) ([]byte, error)  // GET fakemcp-hr /v1/calls with its credential
+	// startRuntime writes files (name to content) into agent-runtime's
+	// read-only volume and starts it (the Studio demo, compose only).
+	startRuntime(files map[string][]byte) error
+	runtimeLogs() string
 }
 
 func newPlatform(t *testing.T, root string) platform {
@@ -103,7 +108,7 @@ func (c *composePlatform) vault(args ...string) (string, error) {
 func (c *composePlatform) logs() string {
 	c.t.Helper()
 	return c.must("logs", "--no-color", "controlplane-api", "execution-worker", "fakeerp", "fakemcp", "fakea2a", "migrate",
-		"postgres", "agt-pdp", "nats", "llm-gateway", "fakellm")
+		"postgres", "agt-pdp", "nats", "llm-gateway", "fakellm", "fakemcp-hr")
 }
 func (c *composePlatform) erpAudit(token string) ([]byte, error) {
 	cmd := exec.Command("docker", "run", "--rm", "--network", c.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
@@ -114,6 +119,34 @@ func (c *composePlatform) mcpCalls(token string) ([]byte, error) {
 	cmd := exec.Command("docker", "run", "--rm", "--network", c.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
 		"--header", "Authorization: Bearer "+token, "http://fakemcp:8091/v1/calls")
 	return cmd.Output()
+}
+func (c *composePlatform) hrCalls(token string) ([]byte, error) {
+	cmd := exec.Command("docker", "run", "--rm", "--network", c.project+"_erp", "busybox:1.37", "wget", "-q", "-O-",
+		"--header", "Authorization: Bearer "+token, "http://fakemcp-hr:8091/v1/calls")
+	return cmd.Output()
+}
+func (c *composePlatform) startRuntime(files map[string][]byte) error {
+	if out, err := c.run("--profile", "studio", "create", "agent-runtime"); err != nil {
+		return fmt.Errorf("%w: %s", err, out)
+	}
+	for name, content := range files {
+		// Through stdin, so no secret is ever on a command line; readable by
+		// the runtime's nonroot user only.
+		cmd := exec.Command("docker", "run", "--rm", "-i", "-v", c.project+"_studio_runtime:/v", "busybox:1.37", "sh", "-c",
+			"cat > /v/"+name+" && chown 65532:65532 /v/"+name+" && chmod 0400 /v/"+name)
+		cmd.Stdin = strings.NewReader(string(content))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("write %s: %w: %s", name, err, out)
+		}
+	}
+	if out, err := c.run("--profile", "studio", "start", "agent-runtime"); err != nil {
+		return fmt.Errorf("%w: %s", err, out)
+	}
+	return nil
+}
+func (c *composePlatform) runtimeLogs() string {
+	c.t.Helper()
+	return c.must("--profile", "studio", "logs", "--no-color", "agent-runtime")
 }
 func (c *composePlatform) copyToFakeMCP(local, remote string) error {
 	if out, err := c.run("cp", local, "fakemcp:"+remote); err != nil {
@@ -510,6 +543,16 @@ func (k *k8sPlatform) erpAudit(token string) ([]byte, error) {
 func (k *k8sPlatform) mcpCalls(string) ([]byte, error) {
 	return nil, errors.New("reading the Fake MCP call log is not supported on k8s")
 }
+
+func (k *k8sPlatform) hrCalls(string) ([]byte, error) {
+	return nil, errors.New("the Studio demo runs on compose only")
+}
+
+func (k *k8sPlatform) startRuntime(map[string][]byte) error {
+	return errors.New("the Studio demo runs on compose only")
+}
+
+func (k *k8sPlatform) runtimeLogs() string { return "" }
 
 func (k *k8sPlatform) copyToFakeMCP(string, string) error {
 	return errors.New("copying into the distroless Fake MCP pod is not supported on k8s")
