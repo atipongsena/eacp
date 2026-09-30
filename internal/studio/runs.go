@@ -125,12 +125,15 @@ type Lease struct {
 	Generation int64  `json:"generation"`
 }
 
-// Heartbeat extends the runtime's lease on run.
-func (s *Service) Heartbeat(ctx context.Context, a registry.Actor, run uuid.UUID, l Lease, seconds int) error {
-	return s.change(ctx, a, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `SELECT eacp.studio_run_heartbeat($1, $2, $3, $4)`, run, l.RuntimeID, l.Generation, seconds)
-		return err
+// Heartbeat extends the runtime's lease on run and reports whether the
+// run's version is still ACTIVE.
+func (s *Service) Heartbeat(ctx context.Context, a registry.Actor, run uuid.UUID, l Lease, seconds int) (bool, error) {
+	var active bool
+	err := s.change(ctx, a, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT eacp.studio_run_heartbeat($1, $2, $3, $4)`,
+			run, l.RuntimeID, l.Generation, seconds).Scan(&active)
 	})
+	return active, err
 }
 
 // Step records the action of run's step index.

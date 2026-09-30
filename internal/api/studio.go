@@ -185,7 +185,11 @@ func (s *Server) studioHeartbeat(w http.ResponseWriter, r *http.Request, c ident
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	return noContent(w, s.studio.Heartbeat(r.Context(), actor(c), id, in.Lease, in.LeaseSeconds))
+	active, err := s.studio.Heartbeat(r.Context(), actor(c), id, in.Lease, in.LeaseSeconds)
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"version_active": active})
+	}
+	return err
 }
 
 func (s *Server) studioStep(w http.ResponseWriter, r *http.Request, c identity.Caller) error {

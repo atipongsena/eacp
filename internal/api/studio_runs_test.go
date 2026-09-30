@@ -88,7 +88,10 @@ func TestStudioRunsThroughTheAPI(t *testing.T) {
 		"studio:"+id+":0", "stella@tenant-a.test", "hr-mcp.get_leave_balance")
 	runtime := "/v1/studio/runtime/runs/" + id
 	code, body = h.as("rt", "POST", runtime+"/heartbeat", map[string]any{"runtime_id": "r1", "generation": 1, "lease_seconds": 30})
-	h.want(204, code, body)
+	h.want(200, code, body)
+	if body["version_active"] != true {
+		t.Fatalf("heartbeat = %v", body)
+	}
 	code, body = h.as("rt", "POST", runtime+"/steps", map[string]any{"runtime_id": "r2", "generation": 1, "index": 0, "action_id": a})
 	h.want(403, code, body)
 	code, body = h.as("rt", "POST", runtime+"/steps", map[string]any{"runtime_id": "r1", "generation": 1, "index": 0, "action_id": a})

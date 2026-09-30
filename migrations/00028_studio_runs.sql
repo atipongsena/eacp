@@ -20,7 +20,8 @@ CREATE TABLE eacp.studio_runs (
     state             text        NOT NULL DEFAULT 'QUEUED' CHECK (state IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED')),
     failure_reason    text        CHECK (failure_reason IN ('credential_pending', 'credential_expired', 'action_denied',
                                         'action_failed', 'action_unknown', 'action_cancelled', 'result_unavailable',
-                                        'answer_too_large', 'deadline_exceeded', 'version_replaced')),
+                                        'answer_too_large', 'deadline_exceeded', 'version_replaced',
+                                        'credential_revoked')),
     deadline          timestamptz NOT NULL,
     runtime_id        text        CHECK (runtime_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
     lease_generation  bigint      NOT NULL DEFAULT 0,
@@ -327,17 +328,24 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
+-- The lease holder extends its lease. It returns whether the run's version
+-- is still ACTIVE: when it is not, the runtime sends nothing more and fails
+-- the run version_replaced.
 CREATE FUNCTION eacp.studio_run_heartbeat(p_run uuid, p_runtime text, p_generation bigint, p_lease integer)
-    RETURNS void
+    RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
     AS $$
+DECLARE
+    r eacp.studio_runs%ROWTYPE;
 BEGIN
     IF p_lease NOT BETWEEN 5 AND 300 THEN
         RAISE EXCEPTION 'a lease is 5 to 300 s' USING ERRCODE = '23514';
     END IF;
-    PERFORM eacp.studio_run_held(p_run, p_runtime, p_generation);
+    r := eacp.studio_run_held(p_run, p_runtime, p_generation);
     UPDATE eacp.studio_runs SET leased_until = now() + make_interval(secs => p_lease)
     WHERE tenant_id = eacp.current_tenant_id() AND id = p_run;
+    RETURN EXISTS (SELECT 1 FROM eacp.agent_versions
+                   WHERE tenant_id = r.tenant_id AND id = r.version_id AND state = 'ACTIVE');
 END
 $$;
 -- +goose StatementEnd

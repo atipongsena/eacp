@@ -576,3 +576,33 @@ func TestAnExpiringStudioKeyOpensAnIncident(t *testing.T) {
 		t.Fatalf("incident = %q", got)
 	}
 }
+
+// TestAHeartbeatSaysWhetherTheVersionIsStillActive: the runtime learns at
+// each heartbeat that its run's version was replaced, so it sends nothing
+// more (ADR-033, version_replaced); a revoked key has its own reason.
+func TestAHeartbeatSaysWhetherTheVersionIsStillActive(t *testing.T) {
+	f := newFix(t)
+	version, agent := f.approvedAgent("leave-bot")
+	run := f.ID(t, "stella", startSQL, agent, inputs)
+	f.mustClaim("r1")
+	active := func() bool {
+		var b bool
+		ctx := context.Background()
+		ok(t, storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
+			if err := storage.SetActor(ctx, tx, f.P["rt"]); err != nil {
+				return err
+			}
+			return tx.QueryRow(ctx, heartbeatSQL, run, "r1", int64(1)).Scan(&b)
+		}))
+		return b
+	}
+	if !active() {
+		t.Fatal("an active version reads as replaced")
+	}
+	v2 := f.mustSave("stella", agent, "", example)
+	ok(t, f.decide("rita", v2, true, "second version"))
+	if active() {
+		t.Fatalf("version %s was replaced but reads as active", version)
+	}
+	ok(t, f.Exec("rt", finishSQL, run, "r1", int64(1), "FAILED", nil, "credential_revoked"))
+}
