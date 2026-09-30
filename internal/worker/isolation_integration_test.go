@@ -318,6 +318,12 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 			t.Fatalf("%s: %v", step.sql, err)
 		}
 	}
+	// The Agent Hub (Phase 27b): stella proposes it to the organisation and
+	// rita publishes it.
+	proposal := v.f.ID(t, "stella", `SELECT eacp.studio_listing_propose($1, $2, 'ORG', '{}', NULL)`, studioAgent, studioVersion)
+	if err := v.f.Exec("rita", `SELECT eacp.studio_listing_decide($1, true, 'isolation fixture')`, proposal); err != nil {
+		t.Fatal(err)
+	}
 
 	admin, err := pgx.Connect(ctx, v.f.DB.AdminDSN)
 	if err != nil {

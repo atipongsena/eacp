@@ -85,11 +85,11 @@ func (s *Service) CreateGroupWeighted(ctx context.Context, a Actor, name, displa
 }
 
 // AddMember adds a principal to a group and returns the membership id.
-func (s *Service) AddMember(ctx context.Context, a Actor, groupID, principalID uuid.UUID) (uuid.UUID, error) {
+func (s *Service) AddMember(ctx context.Context, a Actor, groupID, principalID uuid.UUID, lead bool) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
 		var err error
-		id, err = Tx{tx}.AddMember(ctx, groupID, principalID)
+		id, err = Tx{tx}.AddMembership(ctx, groupID, principalID, lead)
 		return err
 	})
 	return id, err
@@ -105,6 +105,8 @@ type GroupRef struct {
 	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
 	DisplayName string    `json:"display_name"`
+	// Lead is set when the caller leads the group (ADR-033 Rev 1.3).
+	Lead bool `json:"lead"`
 }
 
 // MemberGroups lists the groups a's principal is an active member of, by
@@ -112,7 +114,7 @@ type GroupRef struct {
 func (s *Service) MemberGroups(ctx context.Context, a Actor) ([]GroupRef, error) {
 	out := []GroupRef{}
 	err := s.read(ctx, a, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT g.id, g.name, g.display_name
+		rows, err := tx.Query(ctx, `SELECT g.id, g.name, g.display_name, m.lead
 			FROM eacp.group_memberships m
 			JOIN eacp.groups g ON g.tenant_id = m.tenant_id AND g.id = m.group_id
 			WHERE m.principal_id = $1 AND m.removed_at IS NULL
@@ -122,7 +124,7 @@ func (s *Service) MemberGroups(ctx context.Context, a Actor) ([]GroupRef, error)
 		}
 		out, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (GroupRef, error) {
 			var g GroupRef
-			err := r.Scan(&g.ID, &g.Name, &g.DisplayName)
+			err := r.Scan(&g.ID, &g.Name, &g.DisplayName, &g.Lead)
 			return g, err
 		})
 		return err

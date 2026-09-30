@@ -196,9 +196,15 @@ func (t Tx) CreateGroup(ctx context.Context, name, displayName string, weight in
 
 // AddMember adds a principal to a group and returns the membership id.
 func (t Tx) AddMember(ctx context.Context, groupID, principalID uuid.UUID) (uuid.UUID, error) {
+	return t.AddMembership(ctx, groupID, principalID, false)
+}
+
+// AddMembership adds a membership, a lead of the group when lead is set
+// (only a human; the flag never changes afterwards, ADR-033 Rev 1.3).
+func (t Tx) AddMembership(ctx context.Context, groupID, principalID uuid.UUID, lead bool) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := t.QueryRow(ctx, `INSERT INTO eacp.group_memberships (tenant_id, group_id, principal_id)
-		VALUES (eacp.current_tenant_id(), $1, $2) RETURNING id`, groupID, principalID).Scan(&id)
+	err := t.QueryRow(ctx, `INSERT INTO eacp.group_memberships (tenant_id, group_id, principal_id, lead)
+		VALUES (eacp.current_tenant_id(), $1, $2, $3) RETURNING id`, groupID, principalID, lead).Scan(&id)
 	return id, err
 }
 

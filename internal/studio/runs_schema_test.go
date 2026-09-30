@@ -100,17 +100,19 @@ func stepKey(run uuid.UUID, index int) string { return fmt.Sprintf("studio:%s:%d
 
 const stella = "stella@tenant-a.test"
 
-func TestARunIsStartedByADepartmentMemberWithItsInputs(t *testing.T) {
+// Without a Hub listing only the owner runs an agent (Phase 27b); the Hub's
+// runs are tested in hub_schema_test.go.
+func TestARunIsStartedByItsOwnerWithItsInputs(t *testing.T) {
 	f := newFix(t)
 	_, agent := f.approvedAgent("leave-bot")
-	run := f.ID(t, "abe", startSQL, agent, inputs)
+	run := f.ID(t, "stella", startSQL, agent, inputs)
 	if got := f.scalar(`SELECT concat_ws(' ', state, requested_by = $2, inputs->>'employee_id',
 			deadline BETWEEN now() + interval '299 seconds' AND now() + interval '301 seconds')
-		FROM eacp.studio_runs WHERE id = $1`, run, f.P["abe"]); got != "QUEUED t E-1 t" {
+		FROM eacp.studio_runs WHERE id = $1`, run, f.P["stella"]); got != "QUEUED t E-1 t" {
 		t.Fatalf("run = %q", got)
 	}
-	// sid (finance) and carol (no department) are not members of hr.
-	for _, who := range []string{"sid", "carol", "rt"} {
+	// abe is in hr but not the owner; sid (finance) and carol (no department) are not in hr.
+	for _, who := range []string{"abe", "sid", "carol", "rt"} {
 		_, err := f.TryID(who, startSQL, agent, inputs)
 		wantState(t, err, sqlForbidden)
 	}

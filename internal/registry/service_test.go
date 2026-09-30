@@ -340,7 +340,7 @@ func TestPrincipalGrantAndCredentialLifecycle(t *testing.T) {
 func TestGroupsAndMemberships(t *testing.T) {
 	e := newEnv(t)
 	g := must[uuid.UUID](t)(e.svc.CreateGroup(e.ctx, e.as("alice"), "finance", "Finance"))
-	m := must[uuid.UUID](t)(e.svc.AddMember(e.ctx, e.as("alice"), g, e.f.P["carol"]))
+	m := must[uuid.UUID](t)(e.svc.AddMember(e.ctx, e.as("alice"), g, e.f.P["carol"], false))
 	noErr(t, e.svc.RemoveMember(e.ctx, e.as("bob"), m, "moved"))
 	a := must[registry.Agent](t)(e.svc.RegisterAgent(e.ctx, e.as("erin"), registry.NewAgent{Name: "team-bot",
 		DisplayName: "Team bot", Environment: "staging", RiskClass: "medium", OwnerGroupID: g}))

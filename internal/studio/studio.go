@@ -239,23 +239,8 @@ func (s *Service) Requests(ctx context.Context, a registry.Actor) ([]Request, er
 				v.AgentID).Scan(&r.DepartmentID); err != nil {
 				return err
 			}
-			rows, err := tx.Query(ctx, `SELECT c.name || '.' || t.name, c.protocol, COALESCE(k.side_effects, '{}')
-				FROM unnest($1::text[]) AS ref(r)
-				JOIN eacp.connectors c ON c.name = split_part(ref.r, '.', 1)
-				JOIN eacp.tools t ON t.tenant_id = c.tenant_id AND t.connector_id = c.id
-				                 AND t.name = substr(ref.r, length(c.name) + 2)
-				LEFT JOIN eacp.tool_contracts k ON k.tenant_id = t.tenant_id AND k.id = t.active_contract_id
-				ORDER BY 1`, v.Capability)
-			if err != nil {
-				return err
-			}
-			r.Tools, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (Tool, error) {
-				var t Tool
-				err := row.Scan(&t.Ref, &t.Protocol, &t.SideEffects)
-				t.PlainWords = PlainWords(t.SideEffects)
-				return t, err
-			})
-			if err != nil {
+			var err error
+			if r.Tools, err = toolsOf(ctx, tx, v.Capability); err != nil {
 				return err
 			}
 			out = append(out, r)

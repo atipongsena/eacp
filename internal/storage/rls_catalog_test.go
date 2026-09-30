@@ -97,8 +97,8 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname IN ('incident_events', 'incidents') ORDER BY relname`); !slices.Equal(got, incidents) {
 		t.Errorf("reviewed incident tables missing: %v", got)
 	}
-	studio := []string{"studio_agents", "studio_credentials", "studio_run_steps", "studio_runs", "studio_save_marks",
-		"studio_versions"}
+	studio := []string{"studio_agents", "studio_credentials", "studio_listing_proposals", "studio_listings",
+		"studio_run_steps", "studio_runs", "studio_save_marks", "studio_versions"}
 	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
 		AND relkind = 'r' AND relname LIKE 'studio%' ORDER BY relname`); !slices.Equal(got, studio) {
 		t.Errorf("reviewed studio tables missing: %v", got)
@@ -149,7 +149,10 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// tenant and binds the transaction's principal. Studio runs' functions
 	// (Phase 27a-2) are their only writers, check the requester or the
 	// runtime's lease, and keep inputs and answers from eacp_app;
-	// studio_run_tenants returns only ids.
+	// studio_run_tenants returns only ids. The Hub's writers (Phase 27b) are
+	// the only writers of listings and proposals, bind the transaction's
+	// principal and decide each rule of ADR-033 Rev 1.3; studio_clone saves
+	// through studio_save_as, which eacp_app cannot execute.
 	reviewedDefiners := []string{
 		"eacp.action_result(uuid)",
 		"eacp.action_result_record(uuid,text,text)",
@@ -170,8 +173,13 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.reconcilable_actions(text[],jsonb,integer)",
 		"eacp.release_tenants()",
 		"eacp.set_kill(text,uuid,boolean,text,text)",
+		"eacp.studio_clone(uuid,text,text,uuid)",
 		"eacp.studio_credential_propose(uuid,uuid,bytea,text)",
 		"eacp.studio_decide(uuid,boolean,text)",
+		"eacp.studio_listing_cancel(uuid,text)",
+		"eacp.studio_listing_decide(uuid,boolean,text)",
+		"eacp.studio_listing_propose(uuid,uuid,text,text[],text)",
+		"eacp.studio_listing_retire(uuid,text,text)",
 		"eacp.studio_run_answer(uuid)",
 		"eacp.studio_run_claim(text,text,integer,integer)",
 		"eacp.studio_run_finish(uuid,text,bigint,text,text,text)",
