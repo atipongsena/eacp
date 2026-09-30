@@ -28,6 +28,10 @@ type Options struct {
 	// refuses connector secrets; any other service refuses to start when
 	// EACP_LLM_SECRETS_FILE is set.
 	AllowProviderSecrets bool
+	// StudioRuntime marks agent-runtime (ADR-033 §4): only it may hold the
+	// Studio master (EACP_STUDIO_MASTER_FILE). It reaches EACP only through
+	// the API and refuses a database URL and every other secret file.
+	StudioRuntime bool
 }
 
 // Config is the process configuration shared by EACP services.
@@ -125,6 +129,19 @@ type Config struct {
 	LLMSweepInterval   time.Duration
 	LLMMaxRequestBytes int64
 	LLMID              string
+
+	// Agent runtime (StudioRuntime only, ADR-033 §4): the API it calls, its
+	// principal keys (one per tenant), the Studio master and its version,
+	// this replica's id (default the host name at startup), the run lease,
+	// how many runs it drives at once and how often it claims.
+	APIURL              string
+	RuntimeKeyFile      string
+	StudioMasterFile    string
+	StudioMasterVersion string
+	RuntimeID           string
+	RuntimeLease        time.Duration
+	RuntimeConcurrency  int
+	RuntimePollInterval time.Duration
 }
 
 var (
@@ -132,6 +149,7 @@ var (
 	logFormats   = map[string]bool{"json": true, "text": true}
 	exporters    = map[string]bool{"none": true, "stdout": true, "otlp": true}
 	workerID     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	masterVer    = regexp.MustCompile(`^v[0-9]{1,4}$`)
 )
 
 // Load reads configuration using getenv (normally os.Getenv).
@@ -342,6 +360,49 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 		errs = append(errs, errors.New("EACP_LLM_SECRETS_FILE: only the LLM gateway may hold provider credentials (ADR-031)"))
 	}
 
+	if opts.StudioRuntime {
+		if opts.RequireDatabase || opts.AllowConnectorSecrets || opts.AllowProviderSecrets {
+			errs = append(errs, errors.New("agent-runtime holds no database, connector or provider access (ADR-033 §4)"))
+		}
+		if cfg.DatabaseURL != "" {
+			errs = append(errs, errors.New("EACP_DATABASE_URL: agent-runtime reaches EACP only through the API (ADR-033 §4)"))
+		}
+		cfg.APIURL = get("EACP_API_URL", "")
+		if u, err := url.Parse(cfg.APIURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") ||
+			u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			errs = append(errs, errors.New("EACP_API_URL: required, an http:// or https:// origin"))
+		}
+		cfg.APIURL = strings.TrimSuffix(cfg.APIURL, "/")
+		cfg.RuntimeKeyFile = get("EACP_RUNTIME_KEY_FILE", "")
+		if cfg.RuntimeKeyFile == "" {
+			errs = append(errs, errors.New("EACP_RUNTIME_KEY_FILE: required by agent-runtime"))
+		}
+		cfg.StudioMasterFile = get("EACP_STUDIO_MASTER_FILE", "")
+		if cfg.StudioMasterFile == "" {
+			errs = append(errs, errors.New("EACP_STUDIO_MASTER_FILE: required by agent-runtime"))
+		}
+		cfg.StudioMasterVersion = get("EACP_STUDIO_MASTER_VERSION", "v1")
+		if !masterVer.MatchString(cfg.StudioMasterVersion) {
+			errs = append(errs, errors.New("EACP_STUDIO_MASTER_VERSION: v followed by 1-4 digits"))
+		}
+		cfg.RuntimeID = get("EACP_RUNTIME_ID", "")
+		if cfg.RuntimeID != "" && !workerID.MatchString(cfg.RuntimeID) {
+			errs = append(errs, errors.New("EACP_RUNTIME_ID: 1-128 characters of [A-Za-z0-9._:-]"))
+		}
+		cfg.RuntimeLease = duration("EACP_RUNTIME_LEASE", "30s", 5*time.Minute)
+		if cfg.RuntimeLease > 0 && cfg.RuntimeLease < 5*time.Second {
+			errs = append(errs, errors.New("EACP_RUNTIME_LEASE: must be at least 5s"))
+		}
+		n, err := strconv.Atoi(get("EACP_RUNTIME_CONCURRENCY", "4"))
+		if err != nil || n <= 0 || n > 64 {
+			errs = append(errs, errors.New("EACP_RUNTIME_CONCURRENCY: must be an integer in [1, 64]"))
+		}
+		cfg.RuntimeConcurrency = n
+		cfg.RuntimePollInterval = duration("EACP_RUNTIME_POLL_INTERVAL", "1s", time.Minute)
+	} else if get("EACP_STUDIO_MASTER_FILE", "") != "" {
+		errs = append(errs, errors.New("EACP_STUDIO_MASTER_FILE: only agent-runtime may hold the Studio master (ADR-033 §4)"))
+	}
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
@@ -393,6 +454,14 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("llm_sweep_interval", c.LLMSweepInterval),
 		slog.Int64("llm_max_request_bytes", c.LLMMaxRequestBytes),
 		slog.String("llm_id", c.LLMID),
+		slog.String("api_url", RedactURL(c.APIURL)),
+		slog.String("runtime_key_file", c.RuntimeKeyFile),
+		slog.String("studio_master_file", c.StudioMasterFile),
+		slog.String("studio_master_version", c.StudioMasterVersion),
+		slog.String("runtime_id", c.RuntimeID),
+		slog.Duration("runtime_lease", c.RuntimeLease),
+		slog.Int("runtime_concurrency", c.RuntimeConcurrency),
+		slog.Duration("runtime_poll_interval", c.RuntimePollInterval),
 	)
 }
 

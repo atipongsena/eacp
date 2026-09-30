@@ -45,15 +45,26 @@ type ParsedKey struct {
 // caller once) and the hash to store. Only SHA-256(secret) is stored: the
 // secret is 256 random bits, so a slow KDF adds nothing.
 func NewKey(kind Kind, tenantID, credentialID uuid.UUID) (key string, hash []byte, err error) {
+	secret := make([]byte, secretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return "", nil, fmt.Errorf("identity: generate secret: %w", err)
+	}
+	return KeyFromSecret(kind, tenantID, credentialID, secret)
+}
+
+// KeyFromSecret builds the key and the hash to store from a secret the
+// caller already holds: the Studio runtime derives its agents' secrets from
+// its master (ADR-033 §2). The secret must be exactly 32 bytes; the key
+// authenticates through the unchanged Authenticate.
+func KeyFromSecret(kind Kind, tenantID, credentialID uuid.UUID, secret []byte) (key string, hash []byte, err error) {
 	if kind != KindAgent && kind != KindPrincipal {
 		return "", nil, fmt.Errorf("identity: unknown key kind %q", kind)
 	}
 	if tenantID == uuid.Nil || credentialID == uuid.Nil {
 		return "", nil, errors.New("identity: nil tenant or credential id")
 	}
-	secret := make([]byte, secretBytes)
-	if _, err := rand.Read(secret); err != nil {
-		return "", nil, fmt.Errorf("identity: generate secret: %w", err)
+	if len(secret) != secretBytes {
+		return "", nil, fmt.Errorf("identity: a secret must be %d bytes", secretBytes)
 	}
 	key = strings.Join([]string{
 		"eacp", string(kind), hexID(tenantID), hexID(credentialID), secretEncoding.EncodeToString(secret),

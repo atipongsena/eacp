@@ -351,3 +351,51 @@ func TestShutdownDelaySetting(t *testing.T) {
 		}
 	}
 }
+
+// TestOnlyTheRuntimeHoldsTheStudioMaster (ADR-033 §4, invariant 5).
+func TestOnlyTheRuntimeHoldsTheStudioMaster(t *testing.T) {
+	runtime := Options{StudioRuntime: true, DefaultHTTPAddr: ":8084"}
+	base := map[string]string{"EACP_API_URL": "http://controlplane-api:8080", "EACP_RUNTIME_KEY_FILE": "/run/keys",
+		"EACP_STUDIO_MASTER_FILE": "/run/master"}
+	cfg, err := Load(env(base), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIURL != "http://controlplane-api:8080" || cfg.StudioMasterVersion != "v1" || cfg.RuntimeLease != 30*time.Second ||
+		cfg.RuntimeConcurrency != 4 || cfg.RuntimePollInterval != time.Second || cfg.RuntimeKeyFile != "/run/keys" ||
+		cfg.StudioMasterFile != "/run/master" {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+	for name, change := range map[string]map[string]string{
+		"no master":         {"EACP_STUDIO_MASTER_FILE": ""},
+		"no key file":       {"EACP_RUNTIME_KEY_FILE": ""},
+		"no api":            {"EACP_API_URL": ""},
+		"bad api":           {"EACP_API_URL": "ftp://x"},
+		"master version":    {"EACP_STUDIO_MASTER_VERSION": "V1"},
+		"database":          {"EACP_DATABASE_URL": "postgres://u:p@db/x"},
+		"connector secrets": {"EACP_CONNECTOR_SECRETS_FILE": "/run/secrets"},
+		"provider secrets":  {"EACP_LLM_SECRETS_FILE": "/run/llm"},
+		"lease":             {"EACP_RUNTIME_LEASE": "2s"},
+		"runtime id":        {"EACP_RUNTIME_ID": "bad id"},
+		"api with a path":   {"EACP_API_URL": "http://controlplane-api:8080/v1"},
+		"api with userinfo": {"EACP_API_URL": "http://u:p@controlplane-api:8080"},
+		"concurrency":       {"EACP_RUNTIME_CONCURRENCY": "0"},
+	} {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range change {
+			m[k] = v
+		}
+		if _, err := Load(env(m), runtime); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	for _, opts := range []Options{{RequireDatabase: true}, {AllowConnectorSecrets: true}} {
+		if _, err := Load(env(map[string]string{"EACP_DATABASE_URL": "postgres://u:p@db/x",
+			"EACP_STUDIO_MASTER_FILE": "/run/master"}), opts); err == nil {
+			t.Errorf("%+v: holds the Studio master", opts)
+		}
+	}
+}

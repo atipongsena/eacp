@@ -181,3 +181,42 @@ func TestAuthErrorMessageIsGeneric(t *testing.T) {
 		t.Fatalf("Error() = %q leaks detail", err.Error())
 	}
 }
+
+// TestKeyFromSecretAuthenticatesUnchanged (ADR-033 §2): a key built from a
+// given secret authenticates through the unchanged Authenticate, and only a
+// 32-byte secret is accepted.
+func TestKeyFromSecretAuthenticatesUnchanged(t *testing.T) {
+	f := registrytest.New(t)
+	tool := f.ActiveTool(t, "erp", "read")
+	a := f.ActiveAgent(t, "a1", tool.Tool)
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(i)
+	}
+	credID := uuid.New()
+	key, hash, err := identity.KeyFromSecret(identity.KindAgent, f.Tenant, credID, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _, _ := identity.KeyFromSecret(identity.KindAgent, f.Tenant, credID, secret)
+	if again != key {
+		t.Fatal("the same secret gives another key")
+	}
+	f.ID(t, "erin", `INSERT INTO eacp.credentials (tenant_id, id, kind, agent_version_id, secret_hash, expires_at)
+		VALUES (eacp.current_tenant_id(), $1, 'ak', $2, $3, now() + interval '30 days') RETURNING id`, credID, a.Version, hash)
+	if err := f.Exec("rita", `UPDATE eacp.credentials SET approved_at = now() WHERE id = $1`, credID); err != nil {
+		t.Fatal(err)
+	}
+	c, err := identity.Authenticate(context.Background(), f.App, key)
+	if err != nil || c.AgentVersionID != a.Version || c.CredentialID != credID {
+		t.Fatalf("caller = %+v, %v", c, err)
+	}
+	for _, n := range []int{0, 31, 33} {
+		if _, _, err := identity.KeyFromSecret(identity.KindAgent, f.Tenant, credID, make([]byte, n)); err == nil {
+			t.Fatalf("a %d-byte secret was accepted", n)
+		}
+	}
+	if _, _, err := identity.KeyFromSecret(identity.KindAgent, uuid.Nil, credID, secret); err == nil {
+		t.Fatal("a nil tenant was accepted")
+	}
+}
