@@ -86,6 +86,11 @@ function build(ctx, state, catalogue, modelList, chosen) {
   };
 
   const add = step => { state.form.steps.splice(Math.max(0, state.form.steps.length - 1), 0, step); selected = step; draw(); };
+  const newId = prefix => {
+    let n = state.form.steps.length;
+    while (state.form.steps.some(s => s.id === `${prefix}${n}`)) n++;
+    return `${prefix}${n}`;
+  };
 
   const draw = () => {
     const isNew = !state.agent;
@@ -127,12 +132,12 @@ function build(ctx, state, catalogue, modelList, chosen) {
       }) : null,
       h('div', {class: 'actions'}, button(t('Add a tool call'), () => {
         const last = state.form.steps.at(-1)?.id ?? '';
-        add(newToolStep(`step${state.form.steps.length}`, last));
+        add(newToolStep(newId('step'), last));
       }, {disabled: state.form.schemaVersion === 2 && state.form.steps.length >= 20}))),
     state.form.schemaVersion === 2 ? h('div', {class: 'actions'},
-      button(t('Add a model step'), () => add(newModelStep(`model${state.form.steps.length}`, state.form.steps.at(-1)?.id ?? '')), {disabled: state.form.steps.length >= 20}),
-      button(t('Add a branch'), () => add(newBranchStep(`choose${state.form.steps.length}`, state.form.steps.at(-1)?.id ?? '')), {disabled: state.form.steps.length >= 20}),
-      button(t('Add an answer'), () => { selected = {id: `answer${state.form.steps.length}`, kind: 'respond', text: ''}; state.form.steps.push(selected); draw(); }, {disabled: state.form.steps.length >= 20})) : null,
+      button(t('Add a model step'), () => add(newModelStep(newId('model'), state.form.steps.at(-1)?.id ?? '')), {disabled: state.form.steps.length >= 20}),
+      button(t('Add a branch'), () => add(newBranchStep(newId('choose'), state.form.steps.at(-1)?.id ?? '')), {disabled: state.form.steps.length >= 20}),
+      button(t('Add an answer'), () => { selected = {id: newId('answer'), kind: 'respond', text: ''}; state.form.steps.push(selected); draw(); }, {disabled: state.form.steps.length >= 20})) : null,
     section(t('Limits'), field(t('Time limit in seconds (10 to 3600)'),
       text(state.form.timeoutSeconds, v => { state.form.timeoutSeconds = v; }, {size: 6})), state.form.schemaVersion === 2 ? field(t('Total declared output token cap'), text(state.form.maxOutputTokens, v => { state.form.maxOutputTokens = v; }, {size: 6})) : null),
     draftTest,

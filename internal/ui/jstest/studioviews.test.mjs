@@ -74,6 +74,19 @@ test('the full builder selects node details, retains edits and adds a selected n
   assert.equal(client.calls.some(c => c.name.startsWith('studio.') && c.name !== 'studio.agents'), false);
 });
 
+test('adding after removing a node generates a unique default id', async () => {
+  const node = await form.render(ctxFor('new', [], {template: 'procurement-triage'}, fakeClient(catalogue)));
+  await byText(node, 'button', 'Add a branch').dispatch('click');
+  await byText(node, 'button', 'Add a branch').dispatch('click');
+  const select = id => all(node).find(e => e.getAttribute('data-select-node') !== null && e.textContent.includes(id));
+  await select('choose4').dispatch('click');
+  const inspector = all(node).find(e => e.getAttribute('class') === 'graph-inspector');
+  await byText(inspector, 'button', 'Remove').dispatch('click');
+  await byText(node, 'button', 'Add a branch').dispatch('click');
+  const ids = all(node).filter(e => e.getAttribute('data-select-node') !== null).map(e => all(e).find(c => c.tagName === 'STRONG').textContent);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
 test('a stale new-version save keeps the edited form and offers a separately confirmed copy', async () => {
   const client = fakeClient({...catalogue, 'studio.agents': agentList('ready'), 'studio.version': version('ready'),
     'studio.newversion': {ok: false, status: 409, error: 'conflict', detail: 'studio_version_stale'},
