@@ -60,12 +60,13 @@ func (s *Server) studioAddVersion(w http.ResponseWriter, r *http.Request, c iden
 		return err
 	}
 	var in struct {
-		Definition json.RawMessage `json:"definition"`
+		Definition        json.RawMessage `json:"definition"`
+		ExpectedVersionID uuid.UUID       `json:"expected_version_id"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	v, err := s.studio.AddVersion(r.Context(), actor(c), agent, in.Definition)
+	v, err := s.studio.AddVersionChecked(r.Context(), actor(c), agent, in.Definition, in.ExpectedVersionID)
 	return created(w, v, err)
 }
 

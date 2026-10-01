@@ -217,6 +217,7 @@ type KeyRequest struct {
 	Version           int       `json:"version"`
 	Digest            string    `json:"digest"`
 	Capability        []string  `json:"capability"`
+	Models            []string  `json:"models"`
 	MasterVersion     string    `json:"master_version,omitempty"`
 	ProposedBy        uuid.UUID `json:"proposed_by"`
 	ProposedByRuntime bool      `json:"proposed_by_runtime"`
@@ -229,6 +230,7 @@ func (s *Service) KeyRequests(ctx context.Context, a registry.Actor) ([]KeyReque
 	out := []KeyRequest{}
 	err := s.read(ctx, a, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT c.id, c.agent_version_id, v.agent_id, g.name, v.version, s.digest, s.capability,
+				ARRAY(SELECT m.name FROM eacp.llm_models m WHERE m.tenant_id=s.tenant_id AND m.id=ANY(s.model_capability) ORDER BY m.name),
 				COALESCE(sc.master_version, ''), c.proposed_by, sc.id IS NOT NULL, c.proposed_at, c.expires_at
 			FROM eacp.credentials c
 			JOIN eacp.studio_versions s ON s.tenant_id = c.tenant_id AND s.id = c.agent_version_id
@@ -242,7 +244,7 @@ func (s *Service) KeyRequests(ctx context.Context, a registry.Actor) ([]KeyReque
 		}
 		out, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (KeyRequest, error) {
 			var k KeyRequest
-			return k, r.Scan(&k.ID, &k.VersionID, &k.AgentID, &k.AgentName, &k.Version, &k.Digest, &k.Capability,
+			return k, r.Scan(&k.ID, &k.VersionID, &k.AgentID, &k.AgentName, &k.Version, &k.Digest, &k.Capability, &k.Models,
 				&k.MasterVersion, &k.ProposedBy, &k.ProposedByRuntime, &k.ProposedAt, &k.ExpiresAt)
 		})
 		return err

@@ -341,7 +341,7 @@ func TestTheDefinitionRules(t *testing.T) {
 		"an array":            {`[]`, "JSON object"},
 		"duplicate keys":      {`{"kind":"agent","kind":"agent"}`, "JSON object"},
 		"too large":           {mutate(t, func(d map[string]any) { step(d, 1)["text"] = long(70000) }), "65536"},
-		"schema version 2":    {mutate(t, func(d map[string]any) { d["schema_version"] = 2 }), "schema_version"},
+		"schema version 3":    {mutate(t, func(d map[string]any) { d["schema_version"] = 3 }), "schema_version"},
 		"schema version text": {mutate(t, func(d map[string]any) { d["schema_version"] = "1" }), "schema_version"},
 		"kind":                {mutate(t, func(d map[string]any) { d["kind"] = "workflow" }), "kind"},
 		"unknown key":         {mutate(t, func(d map[string]any) { d["schedule"] = "daily" }), "unknown"},

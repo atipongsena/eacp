@@ -189,6 +189,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.studio_run_tenants()",
 		"eacp.studio_runs_expire(integer)",
 		"eacp.studio_save(uuid,text,text,text,uuid,text)",
+		"eacp.studio_save_checked(uuid,text,text,text,uuid,text,uuid)",
 		"eacp.tenants_with_open_actions(uuid,integer)",
 	}
 	if got := strs(`SELECT p.oid::regprocedure::text FROM pg_proc p

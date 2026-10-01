@@ -1,5 +1,11 @@
 # ADR-033: Agent Studio and the runtime's agent credentials
 
+Phase 27c Rev 1.4 design accepted by the owner on 2026-10-01; implementation is in progress. The
+[full-builder contract](../superpowers/specs/spec-phase-27c-full-builder/SPEC.md) and its design fix schema-v2
+forward graphs, exact derived model/tool capabilities, fenced one-use Studio LLM admission, private bounded
+typed output, approval-required real LLM preview and compose/Kubernetes proof. Rev 1.4 is not yet delivered.
+The existing v1 definitions and distinct-person approval rules remain binding.
+
 Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built; Rev 1.2 (2026-09-30) records what Phase 27a-2 built; Rev 1.3 (2026-09-30) records the Agent Hub, Phase 27b. Scope: Phase 27-0, 27a and 27b.
 Related: ADR-001 (the product boundary, agents never hold enterprise credentials), ADR-003 §5 (API keys), ADR-019 (credential custody and providers), ADR-029 (replicas), ADR-031 (the LLM gateway authenticates agent keys), ADR-034 (the result channel); the program spec `docs/superpowers/specs/2026-09-29-agent-studio-program-design.md` sections 2, 5 and 11.
 

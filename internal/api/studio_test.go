@@ -64,7 +64,7 @@ func TestStudioAuthorsSaveAndApproversDecide(t *testing.T) {
 
 	// Invalid definitions name the rule.
 	for fragment, def := range map[string]string{
-		"schema_version":             strings.Replace(studioDefinition, `"schema_version": 1`, `"schema_version": 2`, 1),
+		"schema_version":             strings.Replace(studioDefinition, `"schema_version": 1`, `"schema_version": 3`, 1),
 		"definition_contains_secret": strings.Replace(studioDefinition, `"target": "hr"`, `"target": "Bearer abc"`, 1),
 		"definition":                 `{"kind": `,
 	} {

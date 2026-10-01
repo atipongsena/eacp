@@ -49,6 +49,7 @@ type Version struct {
 	WaitingOn      string          `json:"waiting_on,omitempty"`
 	Digest         string          `json:"digest"`
 	Capability     []string        `json:"capability"`
+	Models         []string        `json:"models"`
 	Definition     json.RawMessage `json:"definition,omitempty"`
 	CreatedBy      uuid.UUID       `json:"created_by"`
 	CreatedAt      time.Time       `json:"created_at"`
@@ -104,12 +105,30 @@ func (s *Service) Save(ctx context.Context, a registry.Actor, in NewAgent) (Vers
 
 // AddVersion saves the next version of the caller's Studio agent.
 func (s *Service) AddVersion(ctx context.Context, a registry.Actor, agent uuid.UUID, definition json.RawMessage) (Version, error) {
+	return s.addVersion(ctx, a, agent, definition, uuid.Nil)
+}
+
+// AddVersionChecked refuses an edit whose base version was replaced.
+func (s *Service) AddVersionChecked(ctx context.Context, a registry.Actor, agent uuid.UUID, definition json.RawMessage, expected uuid.UUID) (Version, error) {
+	return s.addVersion(ctx, a, agent, definition, expected)
+}
+
+func (s *Service) addVersion(ctx context.Context, a registry.Actor, agent uuid.UUID, definition json.RawMessage, expected uuid.UUID) (Version, error) {
 	def, err := canonical(definition)
 	if err != nil {
 		return Version{}, err
 	}
 	var id uuid.UUID
 	err = s.change(ctx, a, func(tx pgx.Tx) error {
+		var schema struct {
+			Version int `json:"schema_version"`
+		}
+		if err := json.Unmarshal(definition, &schema); err != nil {
+			return err
+		}
+		if expected != uuid.Nil || schema.Version == 2 {
+			return tx.QueryRow(ctx, `SELECT eacp.studio_save_checked($1,NULL,NULL,NULL,NULL,$2,$3)`, agent, def, nullID(expected)).Scan(&id)
+		}
 		return tx.QueryRow(ctx, `SELECT eacp.studio_save($1, NULL, NULL, NULL, NULL, $2)`, agent, def).Scan(&id)
 	})
 	if err != nil {
@@ -149,7 +168,7 @@ const versionSQL = `SELECT s.id, s.agent_id, g.name, v.version, v.state,
 			CASE WHEN c.pending THEN 'registry_approver' ELSE 'studio_runtime' END
 		ELSE ''
 	END,
-	s.digest, s.capability, s.definition, s.created_by, s.created_at,
+	s.digest, s.capability, ARRAY(SELECT m.name FROM eacp.llm_models m WHERE m.tenant_id=s.tenant_id AND m.id=ANY(s.model_capability) ORDER BY m.name), s.definition, s.created_by, s.created_at,
 	s.decision, s.decided_by, s.decided_at, s.decision_reason
 	FROM eacp.studio_versions s
 	JOIN eacp.agent_versions v ON v.tenant_id = s.tenant_id AND v.id = s.id
@@ -164,7 +183,7 @@ func scanVersion(row pgx.Row) (Version, error) {
 	var v Version
 	var def string
 	err := row.Scan(&v.ID, &v.AgentID, &v.AgentName, &v.Version, &v.State, &v.Status, &v.WaitingOn,
-		&v.Digest, &v.Capability, &def, &v.CreatedBy, &v.CreatedAt,
+		&v.Digest, &v.Capability, &v.Models, &def, &v.CreatedBy, &v.CreatedAt,
 		&v.Decision, &v.DecidedBy, &v.DecidedAt, &v.DecisionReason)
 	v.Definition = json.RawMessage(def)
 	return v, err
