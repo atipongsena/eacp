@@ -42,6 +42,7 @@ shutdown:
   timeout: 15s       # EACP_SHUTDOWN_TIMEOUT / AGT_PDP_SHUTDOWN_TIMEOUT: graceful HTTP shutdown
 
 api:
+  a2aPublicURL: ""    # optional explicit HTTPS endpoint ending in /a2a; blank disables inbound A2A
   replicas: 2
   terminationGracePeriodSeconds: 30
   service:

@@ -246,3 +246,13 @@ skip when Helm is missing).
 
 Queue-depth autoscaling, cert-manager, a service mesh, PostgreSQL or NATS operators or HA, Ingress or Gateway
 objects, publishing images, multi-cluster, and Slice C on Kubernetes.
+
+## Inbound A2A
+
+Phase 29 uses the existing API Service and NetworkPolicy. It adds no A2A pod, port, secret or egress. Opt in with the externally reachable API URL; do not use a credential-bearing URL or extra-env override:
+```yaml
+api:
+  a2aPublicURL: https://eacp.example.test/a2a
+```
+
+Blank disables the card and `/a2a`. The chart refuses unsafe URL shapes, principal-secret values and HTTP outside development/test; the API validates the URL again at startup. The development e2e values explicitly advertise `http://eacp-api:8080/a2a`; host-side tests use the forwarded origin while checking the configured card. `scripts/k8s-e2e.sh` includes `TestInboundA2ADemo` in its complete gate alongside the existing disruption and Studio scenarios.

@@ -59,6 +59,7 @@ type Server struct {
 	incidents *incident.Service
 	llm       *llm.Store
 	studio    *studio.Service
+	a2aURL    string
 }
 
 // New returns a Server using pool (connected as the application role).
@@ -89,6 +90,10 @@ var (
 
 // Register mounts every route on mux.
 func (s *Server) Register(mux *http.ServeMux) {
+	if s.a2aURL != "" {
+		mux.HandleFunc("GET /.well-known/agent-card.json", s.a2aCard)
+		mux.Handle("POST /a2a", s.agent(s.a2aRPC))
+	}
 	p := s.principal
 	mux.Handle("GET /v1/me", p(anyPrincipal, s.me))
 

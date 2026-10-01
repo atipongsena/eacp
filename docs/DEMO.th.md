@@ -339,3 +339,12 @@ credential ของ demo, id ของ tenant และ token ของ Fake ER
 `deployments/docker/secrets`) ข้อยืนยันทั้งหมดใช้ได้กับ conforming deployment เท่านั้น (ADR-001 §3a) ระบบปลายทางออก credential ที่มีอภิสิทธิ์ให้
 EACP worker เท่านั้น และ agent ไม่มีเส้นทางเครือข่ายไปถึง EACP ไม่ได้อ้างว่าทำงานแบบ exactly-once ผลลัพธ์เป็น idempotent เมื่อระบบปลายทางรองรับ,
 effectively-once เมื่อ reconcile ได้ และ at-most-once เมื่อการ retry ไม่ปลอดภัย (MASTER_PLAN §21)
+
+## Inbound A2A
+
+`TestInboundA2ADemo` แสดง Phase 29 (ADR-030 Rev 1.1) ผ่าน API ที่เปิดใช้งานจริงด้วย A2A reference client ที่ pin ไว้ รันบน compose stack แยกที่สร้างใหม่:
+```bash
+DEMO=I GOFLAGS=-race bash scripts/demo.sh
+```
+
+Tenant Inbound A2A มี registry ของตัวเองและใช้ development ERP/HR verifier bindings เดิม demo อ่าน static card อนุมัติ key/capability ปกติของ caller ส่ง routine action แล้ว restart API และ replay ได้ task เดิมกับ purchase order ที่บันทึกเพียงหนึ่งรายการ พิสูจน์ two-person approval, การปฏิเสธ capability และ task ของคนอื่น, retained MCP output เฉพาะ caller, cancellation ที่ถูกต้อง และ kill containment โดยไม่สร้าง final decision เอง ตรวจว่า credentials ไม่ปรากฏใน service logs/ฐานข้อมูลและตรวจ audit chain Kubernetes/Calico gate แบบเต็มรวม test เดียวกันนี้ ไม่ต้องมี A2A service หรือ egress rule แยก outbound delegation เดิมยังใช้ `DEMO=D`

@@ -9,7 +9,16 @@
 {{- if or (not $v.nats.relaySecret) (not $v.nats.workerSecret) -}}{{- fail "nats.relaySecret and nats.workerSecret must name existing Secrets (or set nats.enabled=false)" -}}{{- end -}}
 {{- end -}}
 {{- if not (has $v.environment (list "development" "test" "staging" "production")) -}}{{- fail "environment must be one of development, test, staging, production" -}}{{- end -}}
-{{- $reserved := list "EACP_HTTP_ADDR" "EACP_LOG_FORMAT" "EACP_ENV" "EACP_WORKER_ID" "EACP_GOVERNANCE_PROVIDER" "EACP_NATS_URL" "EACP_NATS_CA_FILE" "EACP_SHUTDOWN_DELAY" "EACP_SHUTDOWN_TIMEOUT" -}}
+{{- $a2a := toString $v.api.a2aPublicURL -}}
+{{- if $a2a -}}
+{{- if or (not (regexMatch "^https?://([A-Za-z0-9][A-Za-z0-9.-]*|\\[[0-9A-Fa-f:]+\\])(:[0-9]{1,5})?/a2a$" $a2a)) (and (hasPrefix "http://" $a2a) (not (has $v.environment (list "development" "test")))) -}}{{- fail "api.a2aPublicURL must be an explicit HTTPS endpoint ending in /a2a without user info, query or fragment (HTTP only in development/test)" -}}{{- end -}}
+{{- $portSuffix := regexFind ":[0-9]+/a2a$" $a2a -}}
+{{- if $portSuffix -}}
+{{- $port := int (trimSuffix "/a2a" (trimPrefix ":" $portSuffix)) -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}{{- fail "api.a2aPublicURL port must be 1-65535" -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $reserved := list "EACP_A2A_PUBLIC_URL" "EACP_HTTP_ADDR" "EACP_LOG_FORMAT" "EACP_ENV" "EACP_WORKER_ID" "EACP_GOVERNANCE_PROVIDER" "EACP_NATS_URL" "EACP_NATS_CA_FILE" "EACP_SHUTDOWN_DELAY" "EACP_SHUTDOWN_TIMEOUT" -}}
 {{- range $c := list "api" "worker" "pdp" "llmGateway" -}}
 {{- $comp := index $v $c -}}
 {{- if lt (int $comp.replicas) 1 -}}{{- fail (printf "%s.replicas must be at least 1" $c) -}}{{- end -}}

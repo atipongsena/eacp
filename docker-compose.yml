@@ -89,6 +89,7 @@ services:
       EACP_DATABASE_URL: postgres://eacp_app:eacp_app_dev@postgres:5432/eacp?sslmode=disable
       EACP_GOVERNANCE_PROVIDER: microsoft-agt
       EACP_AGT_PDP_URL: https://agt-pdp:8443
+      EACP_A2A_PUBLIC_URL: ${EACP_A2A_PUBLIC_URL:-}
       EACP_AGT_PDP_CA_FILE: /pki/ca.pem
       EACP_AGT_PDP_CERT_FILE: /pki/client.pem
       EACP_AGT_PDP_KEY_FILE: /pki/client-key.pem
@@ -392,7 +393,7 @@ volumes:
 
 secrets:
   connector_secrets:
-    file: ./deployments/docker/secrets/connector-secrets.dev.json # local-development only
+    file: ./deployments/docker/secrets/connector-secrets.generated.json # generated locally; never committed
   fakeerp_token:
     file: ./deployments/docker/secrets/fakeerp-token.dev # generated locally; never committed
   fakemcp_token:

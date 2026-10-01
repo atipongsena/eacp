@@ -52,7 +52,7 @@ func main() {
 			})
 			releases := release.New(d.DB, release.Options{Provider: provider, Log: d.Log,
 				EvaluationTimeout: d.Config.PDPTimeout})
-			api.New(d.DB, d.Log).WithActions(engine).WithReleases(releases).Register(mux)
+			api.New(d.DB, d.Log).WithActions(engine).WithReleases(releases).WithA2A(d.Config.A2APublicURL).Register(mux)
 			mountUI(d.Config, mux)
 			sweeper := action.NewSweeper(engine)
 			sweeper.ReconcileMaxAge = d.Config.ReconcileMaxAge

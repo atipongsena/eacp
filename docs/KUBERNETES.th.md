@@ -177,3 +177,13 @@ output ผิด preview ส่ง tool ไม่ได้ กู้ call เด
 
 Queue-depth autoscaling, cert-manager, service mesh, PostgreSQL/NATS operator หรือ HA, Ingress/Gateway objects,
 publishing images, multi-cluster และ Slice C บน Kubernetes
+
+## Inbound A2A
+
+Phase 29 ใช้ API Service และ NetworkPolicy เดิม ไม่เพิ่ม A2A pod, port, secret หรือ egress เปิดด้วย API URL ที่ภายนอกเข้าถึงได้ ห้ามใช้ URL ที่มี credential หรือ extra-env override:
+```yaml
+api:
+  a2aPublicURL: https://eacp.example.test/a2a
+```
+
+ค่าว่างปิด card และ `/a2a` chart ปฏิเสธ URL ที่ไม่ปลอดภัย ค่า principal secret และ HTTP นอก development/test; API ตรวจ URL อีกครั้งตอน startup e2e values สำหรับ development ประกาศ `http://eacp-api:8080/a2a` อย่างชัดเจน host-side tests ใช้ forwarded origin พร้อมตรวจ card ที่ config ไว้ `scripts/k8s-e2e.sh` รวม `TestInboundA2ADemo` ใน gate แบบเต็มร่วมกับ disruption และ Studio scenarios เดิม

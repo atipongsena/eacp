@@ -628,3 +628,35 @@ soft limit กับการแจ้งเตือนมีไว้เตื
 
 ถ้าอยากรู้ว่า EACP ทำงานข้างในอย่างไร อ่าน [ARCHITECTURE.th.md](ARCHITECTURE.th.md) ถ้าอยากรู้ว่ามันป้องกันอะไร อ่าน
 [THREAT_MODEL.th.md](security/THREAT_MODEL.th.md) เหตุผลเบื้องหลังกฎแต่ละข้ออยู่ใน [docs/adr](adr/)
+
+## Inbound A2A
+
+ผู้ดูแลเปิด `EACP_A2A_PUBLIC_URL` ด้วย HTTPS endpoint ที่กำหนดชัดเจนและลงท้าย `/a2a` (HTTP เฉพาะ development/test) ค่าว่างหมายถึงปิด ลงทะเบียนและอนุมัติ remote caller เป็น EACP agent ปกติที่มี key อนุมัติแล้ว version active และ allowlist ไม่สร้างระบบ trust สำหรับ authentication ใหม่ key เป็นตัวกำหนด tenant และ agent; principal key ใช้ interface นี้ไม่ได้
+
+บันทึก structured request นี้เป็น `request.json` แล้วแทน subject/tool ด้วยค่าที่ได้รับอนุมัติใน registry JSON data part หนึ่งรายการคือ action request ไม่ใช่ chat prompt อายุ action คงที่หนึ่งชั่วโมง เก็บ agent key ที่ผู้ถือสร้างเองใน memory หรือไฟล์ key ของตัวอย่างที่ git ignore; ห้ามพิมพ์ key
+```json
+{
+  "jsonrpc": "2.0", "id": "rpc-1", "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "delegation-1", "role": "ROLE_USER",
+      "parts": [{"mediaType": "application/json", "data": {
+        "subject": "requester@example.test", "operation": "purchase",
+        "target": "erp", "tool": "erp.create_po", "tool_schema_version": "1",
+        "resource": "po", "payload": {"amount": 100, "currency": "THB"}
+      }}]
+    },
+    "configuration": {"returnImmediately": true}
+  }
+}
+```
+
+```bash
+curl -sS "$API/.well-known/agent-card.json"
+curl -sS "$API/a2a" -H "Authorization: Bearer $AGENT_KEY" \
+  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' --data-binary @request.json
+```
+
+คำตอบเป็น `result.task` โดย `id` และ `contextId` ตรงกับ action UUID poll ด้วย `GetTask` และ `params: {"id": "<task UUID>"}`; `CancelTask` ใช้ params เดียวกัน ส่ง `A2A-Version: 1.0` ทุกครั้ง `messageId` และ action content เดิมใช้ action เดิม แต่ content/version เปลี่ยนจะ conflict deadline เดิมไม่เปลี่ยน Get/Cancel คืน task ใต้ `result` โดยตรง ไม่มี history หรือ content ที่ส่งมา output ที่เก็บของงานสำเร็จอยู่ใน `artifacts` เฉพาะขณะที่ calling agent ยังอ่านได้ตาม ADR-034 งานสำเร็จที่ไม่เก็บ output จะไม่มี artifact
+
+Approval และผลที่ไม่แน่ชัดยังเป็น working Kill อาจคง queued task เป็น working แต่กัน dispatch cancellation หลัง dispatch อาจตอบ task-not-cancelable แม้บันทึก cancel request แล้ว จึงไม่พิสูจน์ว่าไม่มี effect ใช้ approval/operator API เดิมตัดสินใจและ resolve ไม่รับ text/file parts, tenant selectors, references, history ที่ไม่ใช่ศูนย์, streaming, push หรือ multi-turn conversations

@@ -452,3 +452,9 @@ the action path with the local PDP and through the AGT sidecar, from 100 to 10,0
 gateway against a fake provider. It records throughput, latency percentiles per stage, errors, duplicates and
 resource use. The latest run is in [BENCHMARKS.md](BENCHMARKS.md), where every table is generated from committed raw
 results; its figures come from one development machine and are not a production capacity claim.
+
+## Inbound A2A
+
+Phase 29 ([ADR-030 Rev 1.1](adr/ADR-030-a2a-delegation.md)) accepts one structured governed action from a remote A2A 1.0 caller. Enable `EACP_A2A_PUBLIC_URL` on controlplane-api; blank disables discovery and RPC. The static Agent Card advertises JSON-RPC at `/a2a`, using an existing approved EACP agent key. `SendMessage`, `GetTask` and `CancelTask` project the ordinary action engine; there is no separate task runner or database schema.
+
+An identical message ID/request reuses the action, including across API restarts. Changed authority or payload conflicts. Approval, allowlist, lifecycle, hard budget and kill checks remain authoritative. Unknown outcomes stay working; cancellation is final only when the database records `CANCELLED`. A successful retained artifact is caller-only through ADR-034; input history is never returned. Free-text planning, conversations, streaming, push and foreign identity federation are deferred. `DEMO=I` verifies the flow on compose and the Kubernetes gate includes it.

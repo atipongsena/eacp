@@ -67,6 +67,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 
 ## 3 [B] Hard budgets cannot oversubscribe
 
+- `internal/api` TestA2AUsesTheHardBudgetAndNonActiveLifecycle — inbound A2A uses the core's budget reservation, with no dispatch when the amount does not fit
+
 - `internal/action` TestConcurrentReleasesNeverOversubscribeAHardBudget — 100 concurrent releases on one leaf that fits 37: exactly 37 reserved, 63 denied `budget_exceeded`; p50/p99 release latency upper bounds logged
 - `internal/budget` TestReserveReportsWhyItCannotReserve — the account CHECK refuses even a correctly priced reservation made by hand
 - `internal/budget` TestReservationsAreMadeOnlyByTheReleaseForTheActionsCost — T10 requires the reservation; only the release actor reserves, and only the exact cost
@@ -88,6 +90,9 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/llmgateway` TestTheGatewayMetersAndLimitsSpend — through the real gateway and fakellm: exact cost committed, and a call that could overspend is denied before any provider request
 
 ## 4 [A] Duplicate messages, submissions or reclaims do not duplicate external effects
+
+- `internal/api` TestA2AReusesGovernedActionsAndIdempotency — inbound SendMessage replay returns the same action; changed content conflicts
+- `test/demo` TestInboundA2ADemo — reference-client replay across API restart returns the same task and exactly one recorded PO on compose/Kubernetes
 
 - `internal/action` TestConcurrentSubmissionsWithOneKeyCreateOneAction — one idempotency key, one action
 - `internal/worker` TestDuplicateSubmissionsProduceOneEffect — concurrent and repeated submissions, one ERP record
@@ -132,6 +137,10 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestScannerDiscoversToolsAndQuarantinesDrift — a scan that sees a poisoned description quarantines the certified tool
 
 ## 8 [A] Tenant isolation cannot be bypassed
+
+- `internal/api` TestA2ACrossTenantAndCoreContainment — foreign tenant task reads/cancels are indistinguishable from absent tasks; core kill refuses claim
+- `internal/api` TestA2AAuthenticationAndTaskOwnership — principal keys and other agents cannot access inbound tasks; revocation is effective
+- `internal/api` TestA2AReferenceClientAndPrivateResults — reference-client output uses the caller-only retention channel and expired content is unavailable
 
 - `internal/storage` TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed — every table forces RLS; cross-tenant paths are pinned and reviewed
 - `internal/storage` TestTenantSeesOnlyItsOwnRows — the RLS convention
@@ -210,6 +219,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 
+- `internal/api` TestA2AInFlightCancellationAndUncertainty — an in-flight cancellation records a request without claiming no effect; unknown outcome stays working
+
 - `internal/worker` TestWorkerKilledWhileExecutingIsReconciledNotRedispatched — authoritative absence → one retry with the same key
 - `internal/worker` TestStaleWorkerAfterIntentIsUnknownOutcomeAndLate — nothing else re-dispatches
 - `internal/worker` TestHumanResolutionIsSeparatedJournaledAndTwoPersonForRetry — a human retry needs two operators and keeps the key
@@ -284,6 +295,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 
 ## 18 [A] Governance failure fails closed, but never blocks cancellation, reconciliation reads or containment
 
+- `internal/api` TestA2ADecisionsOutageAndAdmission — PDP outage keeps a committed submitted task; recovery reuses it, while admission without commitment creates no task
+
 - `internal/action` TestGovernanceOutageKeepsActionReceivedUntilResubmission — an outage leaves the action RECEIVED
 - `internal/governance` TestEvaluateCheckedFailsClosedOnProviderErrorAndIncompleteEvidence — incomplete decisions fail closed
 - `internal/api` TestGovernanceOutageIs503WithTheAction — the API answers 503 with the action
@@ -298,6 +311,9 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `test/demo` TestSliceADemo — stopping the AGT sidecar: 503 and RECEIVED, cancel works, the sweeper resumes (compose)
 
 ## 19 [A] Every executed action is attributable to an authenticated agent and an ACTIVE version whose allowlist includes the tool
+
+- `internal/api` TestA2AUsesTheHardBudgetAndNonActiveLifecycle — a suspended agent cannot gain executable authority through inbound A2A
+- `internal/api` TestA2ARejectsUnsupportedAndAmbiguousRequests — structured closed input prevents alternate identities, multi-turn requests and ambiguous content from acquiring authority
 
 - `internal/identity` TestAuthenticateAgent — agent keys bind one agent version
 - `internal/action` TestActionInsertRequiresMatchingAgentAndDerivesIdentity — the database derives the identity

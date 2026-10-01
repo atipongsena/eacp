@@ -34,6 +34,9 @@ spec:
           env:
             - {name: EACP_HTTP_ADDR, value: ":8080"}
             - {name: EACP_LOG_FORMAT, value: json}
+            {{- if .Values.api.a2aPublicURL }}
+            - {name: EACP_A2A_PUBLIC_URL, value: {{ .Values.api.a2aPublicURL | quote }}}
+            {{- end }}
             - name: EACP_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ .Values.database.appSecret }}, key: url}}
             - {name: EACP_GOVERNANCE_PROVIDER, value: {{ .Values.governance.provider | quote }}}

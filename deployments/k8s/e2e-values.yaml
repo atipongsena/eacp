@@ -22,6 +22,7 @@ nats:
     - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
       podSelector: {matchLabels: {app: nats}}
 api:
+  a2aPublicURL: http://eacp-api:8080/a2a
   service: {type: NodePort}
 worker:
   connectorSecrets: eacp-connector-secrets

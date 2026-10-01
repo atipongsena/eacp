@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE, token exchange, AWS, full Studio)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE, token exchange, AWS, full Studio, inbound A2A)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -89,7 +89,7 @@ EACP_ENV=development go run ./cmd/eacpctl dev-client-key --dir "$(winpath "$work
 # the spiffe block and its bindings reach the development SPIRE (Rev 1.4) and
 # the token-exchange bindings trade those identities at Fake ERP's STS (Rev 1.5),
 # and the AWS bindings assume a role with them at its AWS STS (Rev 1.6).
-"$python" - deployments/docker/secrets/connector-secrets.dev.json deployments/k8s/connector-secrets.federated.json \
+"$python" - deployments/docker/secrets/connector-secrets.generated.json deployments/k8s/connector-secrets.federated.json \
 	"$(winpath "$work/connector-secrets.json")" "$(winpath "$work/client-key")" deployments/k8s/connector-secrets.vault.json \
 	deployments/k8s/connector-secrets.spiffe.json deployments/k8s/connector-secrets.exchange.json \
 	deployments/k8s/connector-secrets.aws.json <<'PY'
@@ -164,7 +164,7 @@ else
 	echo "    API at $api"
 	status=0
 	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo|TestTokenExchangeDemo|TestAWSDemo|TestStudioDemo}" ./test/demo || status=$?
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo|TestTokenExchangeDemo|TestAWSDemo|TestStudioDemo|TestInboundA2ADemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then

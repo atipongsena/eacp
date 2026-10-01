@@ -12,6 +12,7 @@ Compiled into the EACP binaries and images. Versions are those `go.mod` pins.
 | Module | Version | License | Source |
 |---|---|---|---|
 | `github.com/a2aproject/a2a-go/v2` | v2.6.0 | Apache-2.0 | https://pkg.go.dev/github.com/a2aproject/a2a-go/v2@v2.6.0 |
+| `golang.org/x/mod` | v0.41.0 | BSD-3-Clause | https://pkg.go.dev/golang.org/x/mod@v0.41.0 (test-only reference client) |
 | `github.com/anthropics/anthropic-sdk-go` | v1.75.0 | MIT | https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go@v1.75.0 |
 | `github.com/aws/aws-sdk-go-v2` | v1.47.1 | Apache-2.0 | https://pkg.go.dev/github.com/aws/aws-sdk-go-v2@v1.47.1 |
 | `github.com/google/uuid` | v1.6.0 | BSD-3-Clause | https://pkg.go.dev/github.com/google/uuid@v1.6.0 |

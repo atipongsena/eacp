@@ -1,6 +1,6 @@
 # ADR-030: Governed A2A delegation
 
-Status: Accepted (Rev 1.0, 2026-09-27). Scope: Phase 25a (MASTER_PLAN §97).
+Status: Accepted (Rev 1.1, 2026-10-02). Scope: Phase 25a outbound and Phase 29 inbound (MASTER_PLAN §97).
 Related: ADR-001 (only workers reach connectors and hold their secrets), ADR-003 §4 (connectors, tools, contracts), ADR-004 (unknown outcomes, the dispatch intent), ADR-019 (credential providers, SigV4), ADR-023 (discovered tools, fingerprints, quarantine), ADR-027 (incidents).
 
 ## Context
@@ -103,7 +103,45 @@ Only ids, states, counts and digests. The delegation log line names the host, ac
 | Remote output | Untrusted and not persisted |
 | The incident title for a quarantined delegate | ADR-027's scanner-quarantine signal unchanged (`mcp_drift`, "MCP tool …") |
 
-Out of scope: inbound A2A, streaming (`SendStreamingMessage`, `SubscribeToTask`), push notifications, the REST and gRPC bindings, the v0.3 wire format, `GetExtendedAgentCard`, multi-turn conversations, returning remote output to the agent, reconciling by task id, per-skill governance and Kubernetes demo coverage.
+Out of scope: streaming (`SendStreamingMessage`, `SubscribeToTask`), push notifications, the REST and gRPC bindings, the v0.3 wire format, `GetExtendedAgentCard`, multi-turn conversations, reconciling outbound by task id and per-skill outbound governance. ADR-034 separately delivered outbound result return. Phase 29 adds the inbound transport below and its Kubernetes coverage.
+
+## Inbound A2A (Rev 1.1, Phase 29)
+
+Inbound A2A is an optional transport over `action.Engine` in controlplane-api, independent of Studio. It has no new task store, database object, service, network listener, role or credential. Existing PostgreSQL action guards, registry lifecycle/capability, subject resolution, PDP, approvals, hard budgets, dispatch intents and kill checks remain authoritative. No PDP call runs with a transaction open.
+
+### Discovery and identity
+
+`EACP_A2A_PUBLIC_URL` is blank by default. A configured URL is absolute, has exact path `/a2a`, contains no user info, query or fragment and uses HTTPS outside development/test. It is configured explicitly, never derived from Host or forwarding headers. The existing API listener serves `GET /.well-known/agent-card.json` and `POST /a2a` only when enabled. The static card advertises JSON data input/output and one `governed_action` skill, without tenant registry contents. Helm uses `api.a2aPublicURL`, validates it at render time and refuses extra-env overrides; there is no new port or egress rule.
+
+RPC reuses existing approved, unexpired, unrevoked EACP agent-key authentication. Principal keys are refused. The key determines tenant, agent and version; supplied tenant selectors are refused. Non-active versions cannot acquire executable authority or read private output. Existing metadata reads use the ordinary same-agent ownership check. There is no foreign identity federation or remote self-asserted trust.
+
+### Structured delegation and replay
+
+A2A version 1.0, JSON-RPC 2.0, methods `SendMessage`, `GetTask`, `CancelTask`; other methods, batches and notifications are unsupported. Envelopes and parameters are closed structs after bounded (1 MiB) I-JSON validation. Duplicate keys, invalid Unicode, trailing documents and ambiguous part unions are refused. Reply IDs are bounded safe identifiers or interoperable numbers. Errors use fixed messages, never raw SQL, PDP errors, content or headers.
+
+`SendMessage` requires a new `ROLE_USER` message with a 1–256-character identifier `messageId`, exactly one JSON data part and `configuration.returnImmediately: true`. Its data contains ordinary action fields: `subject`, `operation`, `target`, `tool`, `tool_schema_version`, `resource`, `payload`. Lifetime is fixed at one hour. Free text, files, task/context references, extensions, nonzero history, push configuration and non-JSON output modes are refused. Opaque metadata is ignored, never persisted or returned. No prompt-based tool selection or Studio workflow execution.
+
+The core idempotency key is `a2a:` plus SHA-256 of `messageId`, scoped by the existing tenant/agent unique constraint. The canonical core authority/payload digest must match; a changed replay or version conflicts, never creates another action. A replay cannot extend its deadline. This is EACP's inbound contract, not a promise about arbitrary remote A2A servers or exactly-once external effects. Admission refusal before commitment creates no task. A temporary governance failure after commitment returns the persisted task, which the core sweeper or identical replay can advance safely.
+
+### Task projection, cancellation and private output
+
+Task and context IDs are the existing action UUID. `SendMessage` returns `result.task`; Get/Cancel return the task directly. Reads and cancellation use the existing action engine as the authenticated agent. Foreign agent/tenant tasks and absent IDs are indistinguishable task-not-found errors. Metadata contains only action ID and a known state; no inputs, arbitrary reason text, external references, request metadata or history.
+
+| Action state | A2A state |
+| --- | --- |
+| RECEIVED | TASK_STATE_SUBMITTED |
+| PENDING_APPROVAL, AUTHORIZED, QUEUED, LEASED, EXECUTING, RETRY_WAIT | TASK_STATE_WORKING |
+| UNKNOWN_OUTCOME, NEEDS_HUMAN_RESOLUTION, any unknown state | TASK_STATE_WORKING |
+| SUCCEEDED | TASK_STATE_COMPLETED |
+| DENIED | TASK_STATE_REJECTED |
+| FAILED, EXPIRED | TASK_STATE_FAILED |
+| CANCELLED | TASK_STATE_CANCELED |
+
+Kill containment withholds claim/dispatch, without inventing a final decision: a killed queued action remains working and cannot be claimed. `CancelTask` reports canceled only when the core records `CANCELLED`. A repeated cancellation of an already canceled owned task returns that task. After dispatch, recording a cancel request proves no absence of effect: return task-not-cancelable, and leave uncertainty and human resolution to the ordinary core.
+
+Only completed tasks can carry an artifact, fetched through `Engine.Result` as the caller. ADR-034 enforces active version, caller ownership, opt-in retention, output bound, credential withholding and expiry. An absent/withheld/expired result gives no artifact without changing the successful action. The adapter stores no output/history again and never logs it.
+
+The wire/card/error/part contract was checked against local module source `a2a-go/v2 v2.6.0`, with the actual pinned upstream client tested against the EACP API. The reference-client tests add an explicit indirect requirement for `golang.org/x/mod v0.41.0`, already selected and checksum-pinned by the existing Go graph. Production transport remains hand-written and imports neither SDK nor its task-store implementation.
 
 ## Verification
 
@@ -112,3 +150,4 @@ Out of scope: inbound A2A, streaming (`SendStreamingMessage`, `SubscribeToTask`)
 - `internal/worker`: the scanner by protocol; `TestTheWorkerDelegatesToAnA2AAgent`, `TestAnUncertifiedRejectionIsUnknown` and `TestNothingSecretIsPersistedByADelegation` through the real worker, connector and fake agent.
 - `internal/bundle`: `a2a` connectors, tools never declared, contracts pinned.
 - `test/security` (the agent cannot reach `fakea2a`; only it mounts its verifier) and `test/demo` `TestA2ADemo` (`DEMO=D scripts/demo.sh`).
+- `internal/api/a2a_test.go`: real engine/database, static opt-in card, reference-client Send/Get/Cancel, replay/conflict, cross-agent/tenant isolation, revocation, lifecycle, approval, budget, kill, dispatch uncertainty, private retained/expired output and strict protocol refusal. `internal/config/a2a_test.go`, `test/helm/a2a_test.go`: opt-in settings and unsafe configuration refusal. `TestInboundA2ADemo` (`DEMO=I`, compose and Kubernetes): replay across restart with one recorded PO, ordinary approval, capability/ownership, private MCP artifact, cancellation and kill containment.

@@ -9,17 +9,17 @@
 #
 #   scripts/demo.sh           run every demo
 #   DEMO=A scripts/demo.sh    run some demos: letters from A (Slice A), C (Slice C), D (A2A delegation),
-#                             J (JIT credentials), L (the LLM gateway), S (Agent Studio)
+#                             I (inbound A2A), J (JIT credentials), L (the LLM gateway), S (Agent Studio)
 #   KEEP=1 scripts/demo.sh    leave the demo stack running afterwards (LLM gateway on 127.0.0.1:18083)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: do not rewrite container paths
 
-demos=${DEMO:-ACDJLS}
+demos=${DEMO:-ACDIJLS}
 case "$demos" in
-"" | *[!ACDJLS]*)
-	echo "DEMO must be letters from A, C, D, J, L and S, or unset" >&2
+"" | *[!ACDIJLS]*)
+	echo "DEMO must be letters from A, C, D, I, J, L and S, or unset" >&2
 	exit 2
 	;;
 esac
@@ -27,6 +27,7 @@ tests=()
 case "$demos" in *A*) tests+=(TestSliceADemo) ;; esac
 case "$demos" in *C*) tests+=(TestSliceCDemo) ;; esac
 case "$demos" in *D*) tests+=(TestA2ADemo) ;; esac
+case "$demos" in *I*) tests+=(TestInboundA2ADemo) ;; esac
 case "$demos" in *J*) tests+=(TestJITDemo TestPrivateKeyJWTDemo TestVaultDemo) ;; esac
 case "$demos" in *L*) tests+=(TestLLMGatewayDemo) ;; esac
 case "$demos" in *S*) tests+=(TestStudioDemo) ;; esac

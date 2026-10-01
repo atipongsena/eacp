@@ -240,3 +240,12 @@ The runtime reaches API/gateway only, and only it holds the Studio master (`test
 ## Scope
 
 The demo credentials, the tenant ids and the Fake ERP, Fake MCP and Fake A2A tokens are local-development values (see `deployments/docker/secrets`). The claims hold for conforming deployments only (ADR-001 §3a). The target issues its privileged credential only to the EACP worker, and agents have no network route to it. EACP makes no exactly-once claim: an effect is idempotent where the target supports it, effectively-once where it can be reconciled, and at-most-once where a retry is unsafe (MASTER_PLAN §21).
+
+## Inbound A2A
+
+`TestInboundA2ADemo` shows Phase 29 (ADR-030 Rev 1.1) through the published API using the pinned A2A reference client. Run it on a fresh isolated compose stack:
+```bash
+DEMO=I GOFLAGS=-race bash scripts/demo.sh
+```
+
+Tenant Inbound A2A uses its own registry and existing development ERP/HR verifier bindings. The demo discovers the static card, approves a caller's normal key/capability, sends a routine action, restarts the API and replays it with the same task and one recorded purchase order. It proves two-person approval, capability and task-ownership refusal, caller-only retained MCP output, safe cancellation and kill containment without a fabricated final decision. It scans credentials from service logs/database and verifies the audit chain. The complete Kubernetes/Calico gate includes this same test; no separate A2A service or egress rule is needed. Existing outbound delegation remains `DEMO=D`.

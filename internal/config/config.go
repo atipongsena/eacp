@@ -71,6 +71,9 @@ type Config struct {
 	// UI serves the operator console at /ui/ (controlplane-api, ADR-028):
 	// EACP_UI is "on" (default) or "off".
 	UI bool
+	// A2APublicURL opts controlplane-api into inbound A2A on its existing
+	// listener (ADR-030 Rev 1.1). Blank disables discovery and RPC routes.
+	A2APublicURL string
 
 	// Governance provider (controlplane-api, ADR-002 §8): "local" or
 	// "microsoft-agt", the AGT sidecar PDP at AGTPDPURL. Plain http must
@@ -177,6 +180,24 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 	var errs []error
 	if !environments[cfg.Environment] {
 		errs = append(errs, fmt.Errorf("EACP_ENV: unknown environment %q", cfg.Environment))
+	}
+	cfg.A2APublicURL = get("EACP_A2A_PUBLIC_URL", "")
+	if cfg.A2APublicURL != "" {
+		u, err := url.Parse(cfg.A2APublicURL)
+		badPort := false
+		if err == nil && u != nil {
+			if port := u.Port(); port != "" {
+				n, perr := strconv.Atoi(port)
+				badPort = perr != nil || n < 1 || n > 65535
+			} else {
+				badPort = strings.HasSuffix(u.Host, ":")
+			}
+		}
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil ||
+			u.Path != "/a2a" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(cfg.A2APublicURL, "#") || badPort ||
+			(u.Scheme == "http" && cfg.Environment != "development" && cfg.Environment != "test") {
+			errs = append(errs, errors.New("EACP_A2A_PUBLIC_URL: must be an absolute HTTPS URL ending in /a2a without user info, query or fragment (HTTP allowed only in development/test)"))
+		}
 	}
 	if opts.RequireDatabase && cfg.DatabaseURL == "" {
 		errs = append(errs, errors.New("EACP_DATABASE_URL: required"))

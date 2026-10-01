@@ -10,6 +10,14 @@ import tempfile
 
 directory = Path(__file__).resolve().parent
 manifest = json.loads((directory / "connector-secrets.dev.json").read_text())
+# Phase 29's isolated demo tenant reuses the development ERP and HR server
+# verifiers. Values stay in this ignored manifest, never in test output.
+inbound_tenant = "00000000-0000-4000-8000-0000000000f6"
+for secret_ref in ("fakeerp", "hr-mcp"):
+    if not any(item.get("tenant_id") == inbound_tenant and item.get("secret_ref") == secret_ref
+               for item in manifest["secrets"]):
+        original = next(item for item in manifest["secrets"] if item.get("secret_ref") == secret_ref)
+        manifest["secrets"].append({**original, "tenant_id": inbound_tenant})
 llm_manifest = json.loads((directory / "llm-secrets.dev.json").read_text())
 studio_provider = next(entry for entry in llm_manifest["secrets"]
                        if entry["secret_ref"] == "fakellm" and entry["host"] == "fakellm:8093")
@@ -64,6 +72,7 @@ def write_oauth_client(secret_ref, client_id, filename):
 
 
 write_verifier("fakeerp", "fakeerp:8090", "fakeerp-token.dev")
+write_file("connector-manifest", "connector-secrets.generated.json", json.dumps(manifest))
 write_verifier("fakemcp", "fakemcp:8091", "fakemcp-token.dev")
 write_verifier("hr-mcp", "fakemcp-hr:8091", "fakemcp-hr-token.dev")
 write_verifier("fakea2a", "fakea2a:8092", "fakea2a-token.dev")

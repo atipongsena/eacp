@@ -45,7 +45,8 @@ func TestTheEnvironmentIsProductionUnlessSet(t *testing.T) {
 	for set, want := range map[string]string{"": "development" /* e2e values */, "environment=staging": "staging"} {
 		var extra []string
 		if set != "" {
-			extra = []string{"--set", set}
+			// A staging fixture cannot retain the development-only HTTP ingress.
+			extra = []string{"--set", set, "--set", "api.a2aPublicURL=https://eacp.example.test/a2a"}
 		}
 		objs := render(t, extra...)
 		for _, name := range []string{"eacp-api", "eacp-worker"} {

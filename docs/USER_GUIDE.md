@@ -643,3 +643,35 @@ zero. Soft limits and spend alerts only warn. The hard stop is the budget, set b
 
 For how EACP works inside, read [ARCHITECTURE.md](ARCHITECTURE.md). For what it defends against, read
 [THREAT_MODEL.md](security/THREAT_MODEL.md). The decisions behind each rule are in [docs/adr](adr/).
+
+## Inbound A2A
+
+An administrator enables `EACP_A2A_PUBLIC_URL` with an explicit HTTPS endpoint ending in `/a2a` (HTTP only in development/test). Blank is disabled. Register and approve the remote caller as an ordinary EACP agent with an approved key, active version and allowlist; no new authentication trust is created. The key determines tenant and agent. Principal keys cannot use this interface.
+
+Save this structured request as `request.json`, replacing its subject/tool with existing approved registry values. The single JSON data part is an action request, not a chat prompt. Action lifetime is fixed at one hour. Keep your holder-generated agent key in memory or the ignored example key file; never print it.
+```json
+{
+  "jsonrpc": "2.0", "id": "rpc-1", "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "delegation-1", "role": "ROLE_USER",
+      "parts": [{"mediaType": "application/json", "data": {
+        "subject": "requester@example.test", "operation": "purchase",
+        "target": "erp", "tool": "erp.create_po", "tool_schema_version": "1",
+        "resource": "po", "payload": {"amount": 100, "currency": "THB"}
+      }}]
+    },
+    "configuration": {"returnImmediately": true}
+  }
+}
+```
+
+```bash
+curl -sS "$API/.well-known/agent-card.json"
+curl -sS "$API/a2a" -H "Authorization: Bearer $AGENT_KEY" \
+  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' --data-binary @request.json
+```
+
+The response is `result.task`, whose `id` and `contextId` equal the action UUID. Poll `GetTask` with `params: {"id": "<task UUID>"}`; `CancelTask` has the same params. Keep `A2A-Version: 1.0`. Identical `messageId` and action content reuse the action; changed content/version conflicts. The original deadline stays fixed. Get/Cancel return the task directly under `result`, without history or submitted content. Retained completed output appears in `artifacts` only while the calling agent may read it under ADR-034; successful tasks without retained output have no artifact.
+
+Approval and unknown outcomes remain working. A kill can keep a queued task working while preventing dispatch. Cancellation after dispatch may return task-not-cancelable even though a cancel request was recorded; it does not prove absence of an effect. Use the ordinary approval/operator APIs for decisions and resolution. Text/file parts, tenant selectors, references, nonzero history, streaming, push and multi-turn conversations are refused.
