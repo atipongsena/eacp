@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/atipongsena/eacp/internal/registry"
@@ -36,6 +37,13 @@ const (
 const (
 	gatewayActor = "llm_gateway"
 	sweeperActor = "llm_sweeper"
+)
+
+// Studio admission refusals are final for the presented fence or intent.
+// They must not be advertised as retryable ledger outages.
+var (
+	ErrStudioForbidden = errors.New("studio admission forbidden")
+	ErrStudioConflict  = errors.New("studio intent unavailable")
 )
 
 // Decision is the PDP's decision on a call, evaluated with no transaction
@@ -203,6 +211,17 @@ func (s *Store) Admit(ctx context.Context, tenant uuid.UUID, r AdmitRequest) (Ad
 		return json.Unmarshal(raw, &out)
 	})
 	if err != nil {
+		if r.StudioIntentID != uuid.Nil {
+			var pe *pgconn.PgError
+			if errors.As(err, &pe) {
+				switch pe.Code {
+				case "42501":
+					return Admission{}, fmt.Errorf("llm: admit: %w: %w", ErrStudioForbidden, err)
+				case "55000":
+					return Admission{}, fmt.Errorf("llm: admit: %w: %w", ErrStudioConflict, err)
+				}
+			}
+		}
 		return Admission{}, fmt.Errorf("llm: admit: %w", err)
 	}
 	a := Admission{CallID: out.CallID, Denial: out.Denial, Studio: out.Studio}

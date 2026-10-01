@@ -55,12 +55,12 @@ func TestStudioGatewayOverPostgresForwardsOneCallAndKeepsOutputPrivate(t *testin
 	}
 	must(t, json.Unmarshal(node, &intent))
 	body := `{"model":"sonnet","max_tokens":100,"messages":[{"role":"user","content":"private-runtime-input-canary-27c"}]}`
-	post := func() int {
+	post := func(generation string) int {
 		r, _ := http.NewRequest("POST", e.gw.URL+"/v1/messages", strings.NewReader(body))
 		r.Header.Set("x-api-key", key)
 		r.Header.Set("EACP-Studio-Intent", intent.ID.String())
 		r.Header.Set("EACP-Studio-Runtime", "r1")
-		r.Header.Set("EACP-Studio-Generation", "1")
+		r.Header.Set("EACP-Studio-Generation", generation)
 		r.Header.Set("EACP-Subject", "stella@tenant-a.test")
 		response, err := http.DefaultClient.Do(r)
 		must(t, err)
@@ -71,11 +71,17 @@ func TestStudioGatewayOverPostgresForwardsOneCallAndKeepsOutputPrivate(t *testin
 		}
 		return response.StatusCode
 	}
-	if post() != 200 {
+	if status := post("2"); status != http.StatusForbidden {
+		t.Fatalf("stale runtime fence status=%d, want 403", status)
+	}
+	if count.Load() != 0 {
+		t.Fatal("stale runtime fence reached the provider")
+	}
+	if post("1") != 200 {
 		t.Fatal("Studio call was refused")
 	}
-	if post() != 503 {
-		t.Fatal("consumed intent was admitted")
+	if status := post("1"); status != http.StatusConflict {
+		t.Fatalf("consumed intent status=%d, want 409", status)
 	}
 	if count.Load() != 1 {
 		t.Fatalf("provider calls=%d", count.Load())

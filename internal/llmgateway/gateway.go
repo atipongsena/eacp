@@ -224,6 +224,14 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, a api) {
 		GatewayID: g.o.ID, Stream: req.stream, RequestBytes: int64(len(body)), MaxOutputTokens: req.maxOut,
 		Decision: decision, StudioIntentID: intent, StudioRuntimeID: runtimeID, StudioGeneration: generation})
 	if err != nil {
+		if errors.Is(err, llm.ErrStudioForbidden) {
+			g.fail(w, a, http.StatusForbidden, "studio_forbidden", "")
+			return
+		}
+		if errors.Is(err, llm.ErrStudioConflict) {
+			g.fail(w, a, http.StatusConflict, "studio_intent_unavailable", "")
+			return
+		}
 		c.log.ErrorContext(ctx, "llm admission failed", "err", err)
 		g.unavailable(w, a, "ledger_unavailable")
 		return
