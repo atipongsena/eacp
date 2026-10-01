@@ -374,8 +374,8 @@ EACP is under active development. Everything described above exists and is teste
 yet. Not built yet:
 
 - **Inbound A2A.** EACP delegates to remote agents but does not yet accept delegations from them.
-- **Global and run kill scopes.** They wait for platform authority and authenticated run bindings. Tenant, team,
-  agent, version, action, connector, tool and model kills work.
+- **A global kill scope.** It waits for platform authority. Tenant, team, agent, version, action, connector, tool,
+  model and Studio run kills work.
 - **Multi-region.** One PostgreSQL is the authority; replicas share it.
 - **Bypass detection.** Reading target audit logs for calls made around EACP.
 - **Personal-data classification** of action payloads.

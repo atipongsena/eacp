@@ -132,7 +132,7 @@ hash   = SHA-256(secret)                                                        
 
 ## Out of scope
 
-The Studio data model, the builder, the runtime's run loop and the Hub (Phase 27a and after), SSO for employees, the `run` kill scope (Phase 28), and delegation-based authentication.
+The Studio data model, the builder, the runtime's run loop and the Hub (Phase 27a and after), SSO for employees, the `run` kill scope (Phase 28, ADR-016 Rev 1.1: every Studio action is bound to its run, and a run fails `killed`), and delegation-based authentication.
 
 ## Revision 1.1: what Phase 27a-1 built
 

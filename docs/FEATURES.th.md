@@ -143,7 +143,7 @@
 
 operator ใช้ `POST /v1/killswitch` กับ `{"scope":"agent_version","target_id":"<uuid>","killed":true,"reason_code":"security_incident","reason":"<incident note>"}` ค่าเริ่มต้นของ `reason_code` คือ `operator_request` และรับ [reason code ของ AGT](adr/ADR-016-distributed-kill-switch.md) สี่แบบ operator อีกคนเป็นผู้ resume scope ด้วย `killed:false` operator และ auditor ดูรายการสถานะด้วย `GET /v1/killswitch` CLI มี `eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <reason-code>]` และ `eacpctl kill list`
 
-scope ที่บังคับใช้ได้คือ `tenant`, `team`, `agent`, `agent_version`, `action`, `connector`, `tool` และตั้งแต่ Phase 25b คือ `model` ซึ่งระบุ LLM model ของ tenant และหยุดเฉพาะการเรียก LLM PostgreSQL ปฏิเสธ scope ที่ถูก kill ตอน claim และตอน dispatch intent worker ตรวจอีกครั้งก่อนเรียกภายนอกและระหว่างการเรียก NATS แค่ปลุกการตรวจนั้น kill ระหว่างการทำงานจะบันทึก `UNKNOWN_OUTCOME` เพื่อ reconcile เพราะการยกเลิกไม่ได้ย้อนผลภายนอก `global` และ `run` ถูกปฏิเสธจนกว่า EACP จะมี platform operator authority และการผูก run กับ action ที่ยืนยันตัวตนแล้ว ดู ADR-016
+scope ที่บังคับใช้ได้คือ `tenant`, `team`, `agent`, `agent_version`, `action`, `connector`, `tool` และตั้งแต่ Phase 25b คือ `model` ซึ่งระบุ LLM model ของ tenant และหยุดเฉพาะการเรียก LLM PostgreSQL ปฏิเสธ scope ที่ถูก kill ตอน claim และตอน dispatch intent worker ตรวจอีกครั้งก่อนเรียกภายนอกและระหว่างการเรียก NATS แค่ปลุกการตรวจนั้น kill ระหว่างการทำงานจะบันทึก `UNKNOWN_OUTCOME` เพื่อ reconcile เพราะการยกเลิกไม่ได้ย้อนผลภายนอก ตั้งแต่ Phase 28 `run` ใช้ kill การรันหนึ่งครั้งของ Agent Studio ส่วน `global` ถูกปฏิเสธจนกว่า EACP จะมี platform operator authority ดู ADR-016
 
 ## Slice C (Phase 17): fleet operation
 
@@ -408,6 +408,18 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | รายการและคำเสนอเขียนได้เฉพาะผ่านฟังก์ชันของมัน และถูกบันทึกใน journal | `TestTheHubIsWrittenOnlyThroughItsFunctions` |
 | API และหน้าเว็บ: ค้นหา รัน คัดลอก เสนอ และตัดสิน | `TestTheHubThroughTheAPI`, `the owner proposes a ready agent to the Hub and sees who decides it`, `a lead decides a Hub proposal, and never loads the approvers’ queue` (`jstest`) |
 | หัวหน้า HR เผยแพร่ให้ HR เพื่อนร่วมงานรันมัน และสำเนาของผู้เขียนฝ่ายการเงินเริ่มต้นแบบยังไม่ได้รับอนุมัติ | `TestStudioDemo` |
+
+## Phase 28: kill scope แบบ `run`
+
+operator หยุดการรันหนึ่งครั้งของ Agent Studio ได้ทันที (`POST /v1/killswitch` ด้วย scope `run`, `eacpctl kill activate run` หรือฟอร์ม kill ใน console) โดยไม่หยุด agent นั้นสำหรับคนอื่น ([ADR-016](adr/ADR-016-distributed-kill-switch.md) Rev 1.1) PostgreSQL ผูกทุก action ของ agent ใน Studio เข้ากับการรันของมันตั้งแต่ตอนสร้าง action ดังนั้น kill จึงไปถึงเฉพาะขั้นของการรันนั้น
+
+| ความสามารถ | หลักฐาน |
+|---|---|
+| ทุก action ของ Studio เป็นขั้นหนึ่งของการรันที่กำลังทำงานของมันเอง (เวอร์ชัน ผู้ขอ ขั้น และ tool ตรงกัน) นอกนั้นถูกปฏิเสธ และการผูกไม่เปลี่ยนภายหลัง | `TestEveryStudioActionIsBoundToItsRun` |
+| kill การรันหยุดเฉพาะ action ของการรันนั้น operator คนที่สองเป็นผู้ยกเลิก และ `global` ยังถูกปฏิเสธ | `TestARunKillStopsThatRunsActionsOnly`, `TestKillRefusesTheGlobalScope` |
+| PostgreSQL ทำให้การรันที่ถูก kill ล้มเหลวตอน heartbeat หรือตอน claim ปฏิเสธการรันใหม่ของ agent ที่ถูก kill และการยกเลิก kill ไม่ปล่อยอะไรออกไป | `TestAKilledRunStopsAtItsHeartbeat`, `TestKillsOfTheAgentStopNewAndQueuedRuns`, `TestAToolKillDoesNotEndARun` |
+| runtime หยุดการรันที่ถูก kill โดยไม่ปิดมันเอง API และหน้าเว็บแจ้งเรื่องนี้ | `TestAKilledRunStops`, `TestARunKillThroughTheAPI` |
+| otto kill การรันที่ขั้นของมันกำลังรอ ขั้นนั้นไม่เคยไปถึง server ของ HR แม้ opal จะยกเลิก kill แล้ว | `TestStudioDemo` (S7) |
 
 ## Benchmark
 

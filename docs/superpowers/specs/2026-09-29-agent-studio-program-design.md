@@ -182,7 +182,7 @@ the wider parts.
 | **Gate** | Two or three departments try the thin slice (section 8.4). What they say decides what 27b and 27c contain | none | **not met** (2026-09-30, the owner chose the fallback; section 8.4) |
 | 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads ([design](2026-09-30-phase-27b-agent-hub-design.md)) | 033 Rev 1.3 | done (2026-09-30) |
 | 27c | The full builder, more templates and the end-to-end demo on compose and Kubernetes | 033 Rev 1.4 | after the gate |
-| 28 | The `run` kill scope, using the authenticated run binding a Studio run provides | 016 revision | after 27a |
+| 28 | The `run` kill scope, using the authenticated run binding a Studio run provides ([design](2026-10-01-phase-28-run-kill-scope-design.md)) | 016 Rev 1.1 | done (2026-10-01) |
 | 29 | Inbound A2A: accept delegations from remote agents | 030 revision | independent, can move |
 
 Phase 26a comes first because most enterprise integrations an employee will pick are MCP tools, and today an action

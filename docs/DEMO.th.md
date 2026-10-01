@@ -301,12 +301,12 @@ binding ใดเลย
 
 ## Agent Studio demo
 
-`TestStudioDemo` แสดง Phase 27a และ 27b (ADR-033) และรันด้วย `DEMO=S` บน compose เท่านั้น Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
+`TestStudioDemo` แสดง Phase 27a, 27b (ADR-033) และ 28 (ADR-016 Rev 1.1) และรันด้วย `DEMO=S` บน compose เท่านั้น Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
 `erp` ที่มีเพียง worker เข้าได้ และมี token ของตัวเอง) มี tool เดียวคือ `get_leave_balance` ซึ่งตอบ `{"days": N}` ตาม id ของพนักงาน (E-1 มี 12 วัน)
 และตอบ tool error สำหรับ `ERR` `agent-runtime` รันใต้ compose profile `studio` บนเครือข่าย `agents` เท่านั้น ไม่มี URL ของฐานข้อมูล และไม่มี secret
 ของ connector หรือ provider demo เขียน master และ key ของมันลงใน volume `studio_runtime` ผ่าน stdin แล้วจึงเริ่มมัน
 
-- **S0** bootstrap tenant Wonka stella (`studio_author`) และ hana อยู่ในกลุ่ม HR ที่มี lena เป็นหัวหน้า finn (`studio_author`) อยู่ในฝ่ายการเงิน ส่วน carol ไม่อยู่ทั้งสองกลุ่ม service principal `studio-runtime` ถือ `studio_runtime`
+- **S0** bootstrap tenant Wonka stella (`studio_author`) และ hana อยู่ในกลุ่ม HR ที่มี lena เป็นหัวหน้า finn (`studio_author`) อยู่ในฝ่ายการเงิน ส่วน carol ไม่อยู่ทั้งสองกลุ่ม otto และ opal เป็น operator service principal `studio-runtime` ถือ `studio_runtime`
   เพียงบทบาทเดียว policy อนุญาตการค้นข้อมูล HR แบบอ่านอย่างเดียว
 - **S1** erin ลงทะเบียน connector `hr-mcp` scanner ค้นพบ `get_leave_balance` erin รับรองให้เป็น `READ_ONLY` ลองครั้งเดียว และเก็บผลลัพธ์ 10 นาที
   rita เปิดใช้ contract
@@ -322,8 +322,11 @@ binding ใดเลย
   rita ก็ไม่ได้ (HTTP 403) lena หัวหน้า HR เผยแพร่มัน hana พบมันใน Hub และรันในนามของตัวเอง: เวอร์ชันเดียวกัน subject และคำตอบของเธอเอง
   finn ไม่เห็นอะไรจนกว่า rita จะเผยแพร่ให้ทั้งองค์กร (lena ทำไม่ได้ HTTP 403) สำเนาของ finn ในฝ่ายการเงินอยู่ในสถานะ `waiting_for_approval`
   และรันไม่ได้ (HTTP 409)
-- **S7** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
-- **S8** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
+- **S7** otto kill tool `get_leave_balance` run ถัดไปของ stella จึงรออยู่ที่ step ของมัน (action ค้างอยู่ที่ `QUEUED`) จากนั้นเขา kill run นั้น
+  ใน heartbeat ถัดไป PostgreSQL ทำให้มันล้มเหลวเป็น `killed` และ runtime หยุดโดยไม่ปิด run เอง opal ซึ่งเป็น operator คนที่สองยกเลิก kill ทั้งสอง
+  run ที่ถูก kill ยังล้มเหลวอยู่ และ step ของมันไม่เคยถูกส่ง (จำนวนการเรียกของ fakemcp-hr ไม่เปลี่ยน)
+- **S8** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
+- **S9** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
   คำตอบไม่อยู่ใน log บรรทัดใดและไม่อยู่ใน journal และ audit chain ตรวจสอบผ่าน
 
 runtime เข้าถึงได้เพียง API และมีเพียงมันที่ถือ master ของ Studio (`test/security` `TestTheRuntimeReachesOnlyTheAPI`,

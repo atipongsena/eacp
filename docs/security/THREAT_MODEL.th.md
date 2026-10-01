@@ -153,8 +153,9 @@ disclosure (ข้อมูลรั่วไหล), **D**enial of service (ท
   ได้รับการปกป้องด้วย Row-Level Security สิทธิ์ระดับคอลัมน์ และการป้องกันข้อมูลที่เก็บของ PostgreSQL เอง ไม่ได้เข้ารหัสในระดับแอปพลิเคชัน
   ([ADR-034](../adr/ADR-034-result-channel.md))
 - **สองคนที่สมรู้ร่วมคิดกัน** กฎสองคนหยุดคนหนึ่งคนได้ แต่หยุดสองคนที่ตกลงกันไม่ได้
-- **ยังไม่มี kill scope แบบ global และ run** ต้องรอ platform authority และการผูก action ที่ยืนยันตัวตนแล้ว
-  ([ADR-016](../adr/ADR-016-distributed-kill-switch.md)) ส่วน kill ทั้ง tenant ใช้งานได้แล้ว
+- **ยังไม่มี kill scope แบบ global** ต้องรอ platform authority
+  ([ADR-016](../adr/ADR-016-distributed-kill-switch.md)) ส่วน kill ทั้ง tenant ใช้งานได้แล้ว และตั้งแต่ Rev 1.1 kill run เดียวของ
+  Studio ได้ด้วย โดย PostgreSQL ผูก action ของ run นั้นไว้กับมัน
 
 ## ความครอบคลุมของ MASTER_PLAN §68
 

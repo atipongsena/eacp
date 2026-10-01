@@ -159,8 +159,9 @@ service and **E**levation of privilege. Tests are named as package and function.
   output for up to a day, protected by Row-Level Security, column privileges and PostgreSQL's own at-rest
   protection, not by application-level encryption ([ADR-034](../adr/ADR-034-result-channel.md)).
 - **Two colluding people.** Two-person rules stop one person, not two who agree.
-- **Global and run kill scopes do not exist yet.** They wait for platform authority and authenticated action
-  bindings ([ADR-016](../adr/ADR-016-distributed-kill-switch.md)). A tenant-wide kill is available.
+- **A global kill scope does not exist yet.** It waits for platform authority
+  ([ADR-016](../adr/ADR-016-distributed-kill-switch.md)). A tenant-wide kill is available, and since Rev 1.1 a kill
+  of one Studio run, whose actions PostgreSQL binds to it.
 
 ## Coverage of MASTER_PLAN §68
 

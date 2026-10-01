@@ -144,7 +144,7 @@ The report counts recent **actions**, not workflow runs; workflow identity is no
 
 Operators use `POST /v1/killswitch` with `{"scope":"agent_version","target_id":"<uuid>","killed":true,"reason_code":"security_incident","reason":"<incident note>"}`. `reason_code` defaults to `operator_request` and accepts the four [AGT reason codes](adr/ADR-016-distributed-kill-switch.md). A different operator resumes the scope with `killed:false`. Operators and auditors list states with `GET /v1/killswitch`. The CLI provides `eacpctl kill activate|resume <scope> <uuid> --reason <text> [--code <reason-code>]` and `eacpctl kill list`.
 
-The enforceable scopes are `tenant`, `team`, `agent`, `agent_version`, `action`, `connector`, `tool` and, since Phase 25b, `model`, which names a tenant LLM model and stops LLM calls only. PostgreSQL rejects a killed scope at claim and dispatch intent; workers check again before the external call and during it. NATS only wakes that check. A kill during execution records `UNKNOWN_OUTCOME` for reconciliation because cancellation does not undo an external effect. `global` and `run` are rejected until EACP has platform operator authority and authenticated run action bindings; see ADR-016.
+The enforceable scopes are `tenant`, `team`, `agent`, `agent_version`, `action`, `connector`, `tool` and, since Phase 25b, `model`, which names a tenant LLM model and stops LLM calls only. PostgreSQL rejects a killed scope at claim and dispatch intent; workers check again before the external call and during it. NATS only wakes that check. A kill during execution records `UNKNOWN_OUTCOME` for reconciliation because cancellation does not undo an external effect. Since Phase 28, `run` kills one Agent Studio run. `global` is rejected until EACP has platform operator authority; see ADR-016.
 
 ## Slice C (Phase 17): fleet operations
 
@@ -413,6 +413,18 @@ An agent's owner proposes it to the Hub for their department or the whole organi
 | Listings and proposals are written only through their functions, and journaled | `TestTheHubIsWrittenOnlyThroughItsFunctions` |
 | The API and the page: search, run, copy, propose and decide | `TestTheHubThroughTheAPI`, `the owner proposes a ready agent to the Hub and sees who decides it`, `a lead decides a Hub proposal, and never loads the approvers’ queue` (`jstest`) |
 | An HR lead publishes to HR, a colleague runs it, a finance author's copy starts unapproved | `TestStudioDemo` |
+
+## Phase 28: the `run` kill scope
+
+An operator stops one Agent Studio run at once (`POST /v1/killswitch` with scope `run`, `eacpctl kill activate run`, the console's kill form), without stopping the agent for everyone else ([ADR-016](adr/ADR-016-distributed-kill-switch.md) Rev 1.1). PostgreSQL binds every action of a Studio agent to its run when the action is created, so the kill reaches exactly that run's steps.
+
+| Capability | Evidence |
+|---|---|
+| Every Studio action is a step of its own running run (its version, requester, step and tool); anything else is refused, and the binding never changes | `TestEveryStudioActionIsBoundToItsRun` |
+| A run kill stops that run's actions only; a second operator clears it; `global` is still refused | `TestARunKillStopsThatRunsActionsOnly`, `TestKillRefusesTheGlobalScope` |
+| PostgreSQL fails a killed run at its heartbeat or claim, refuses new runs of a killed agent, and a resume releases nothing | `TestAKilledRunStopsAtItsHeartbeat`, `TestKillsOfTheAgentStopNewAndQueuedRuns`, `TestAToolKillDoesNotEndARun` |
+| The runtime stops a killed run without finishing it; the API and the page say so | `TestAKilledRunStops`, `TestARunKillThroughTheAPI` |
+| otto kills a run whose step waits; its step never reaches the HR server, even after opal clears the kills | `TestStudioDemo` (S7) |
 
 ## Benchmarks
 

@@ -307,3 +307,4 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/studio` TestTheOwnerAndNonApproversCannotDecide — a Studio version becomes ACTIVE only by a registry approver who is not its author
 - `internal/studio` TestAStepIsTheRunsOwnAction — a Studio run records only its own version's action, for its requester, under the step's key and tool
 - `internal/studioruntime` TestAReplacedVersionStopsTheRun — a run whose version is no longer ACTIVE sends nothing more
+- `internal/studio` TestEveryStudioActionIsBoundToItsRun — a Studio key acts only as a step of its own running run, bound at insert (ADR-016 Rev 1.1)

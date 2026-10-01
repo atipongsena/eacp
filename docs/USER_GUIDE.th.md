@@ -514,7 +514,8 @@ bin/eacpctl action resolve <action id> --outcome retry --reason "the ERP has no 
 ### หยุดทันที: kill switch
 
 kill switch หยุดงานใหม่ได้ทันที เลือกเป้าหมายได้เป็น `tenant`, `team`, `agent`, `agent_version`, `action`,
-`connector` หรือ `tool` (และ `model` สำหรับ gateway)
+`connector` หรือ `tool`, `model` สำหรับ gateway หรือ `run` หนึ่งครั้งของ Agent Studio (การรันนั้นจะล้มเหลวเป็น `killed`
+และไม่ส่งขั้นใดอีก)
 
 ```bash
 bin/eacpctl kill activate agent <agent id> --reason "sending odd purchase orders" --code security_incident

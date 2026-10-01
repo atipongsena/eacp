@@ -528,7 +528,8 @@ bin/eacpctl action resolve <action id> --outcome retry --reason "the ERP has no 
 ### Stop something now: the kill switch
 
 The kill switch stops new work at once. It can target a `tenant`, `team`, `agent`, `agent_version`, `action`,
-`connector` or `tool` (and a `model`, for the gateway):
+`connector` or `tool`, a `model` for the gateway, or one Agent Studio `run` (the run fails `killed` and sends no more
+steps):
 
 ```bash
 bin/eacpctl kill activate agent <agent id> --reason "sending odd purchase orders" --code security_incident
