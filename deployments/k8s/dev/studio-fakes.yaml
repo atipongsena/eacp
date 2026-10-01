@@ -1,0 +1,81 @@
+# DEVELOPMENT ONLY: HR MCP and a content-free fixed LLM provider for the full Studio demo.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fakemcp-hr, namespace: eacp-deps}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: fakemcp-hr}}
+  template:
+    metadata: {labels: {app: fakemcp-hr}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: fakemcp-hr
+          image: eacp:dev
+          imagePullPolicy: Never
+          command: [/fakemcp]
+          env:
+            - {name: EACP_ENV, value: development}
+            - {name: EACP_HTTP_ADDR, value: ":8091"}
+            - {name: EACP_FAKEMCP_TOKEN_FILE, value: /run/token/token}
+            - {name: EACP_FAKEMCP_TOOLS_FILE, value: /config/tools.json}
+            - {name: EACP_FAKEMCP_CALLS_FILE, value: /tmp/calls.jsonl}
+          ports: [{name: http, containerPort: 8091}]
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: token, mountPath: /run/token, readOnly: true}
+            - {name: tools, mountPath: /config, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: token, secret: {secretName: fakemcp-hr-token}}
+        - {name: tools, configMap: {name: fakemcp-hr-tools}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakemcp-hr, namespace: eacp-deps}
+spec:
+  selector: {app: fakemcp-hr}
+  ports: [{name: http, port: 8091, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fakellm, namespace: eacp-deps}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: fakellm}}
+  template:
+    metadata: {labels: {app: fakellm}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: fakellm
+          image: eacp:dev
+          imagePullPolicy: Never
+          command: [/fakellm]
+          env:
+            - {name: EACP_ENV, value: development}
+            - {name: EACP_HTTP_ADDR, value: ":8093"}
+            - {name: EACP_FAKELLM_KEY_FILE, value: /run/key/key}
+            - {name: EACP_FAKELLM_DATA_FILE, value: /tmp/calls.jsonl}
+          ports: [{name: http, containerPort: 8093}]
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: key, mountPath: /run/key, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: key, secret: {secretName: fakellm-key}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakellm, namespace: eacp-deps}
+spec:
+  selector: {app: fakellm}
+  ports: [{name: http, port: 8093, targetPort: http}]

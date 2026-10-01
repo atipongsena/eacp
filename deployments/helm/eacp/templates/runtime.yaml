@@ -45,6 +45,9 @@ spec:
             - {name: EACP_HTTP_ADDR, value: ":8084"}
             - {name: EACP_LOG_FORMAT, value: json}
             - {name: EACP_ENV, value: {{ .Values.environment | quote }}}
+            {{- if .Values.llmGateway.enabled }}
+            - {name: EACP_RUNTIME_LLM_URL, value: "http://{{ .Release.Name }}-llm-gateway:8083"}
+            {{- end }}
             - {name: EACP_API_URL, value: "http://{{ .Release.Name }}-api:8080"}
             - {name: EACP_STUDIO_MASTER_FILE, value: /run/studio/master}
             - {name: EACP_STUDIO_MASTER_VERSION, value: {{ .Values.studio.masterVersion | quote }}}

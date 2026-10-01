@@ -5,7 +5,7 @@
 #
 #   scripts/k8s-e2e.sh                 full run, then delete the profile
 #   KEEP=1 scripts/k8s-e2e.sh          leave the cluster running
-#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE, token exchange, AWS)
+#   TESTS='TestSliceADemo' scripts/... choose the Go tests (default: Slice A, disruption, JIT, federated JIT, private_key_jwt, Vault, SPIFFE, token exchange, AWS, full Studio)
 #   TESTS=NONE KEEP=1 scripts/...      install only
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -62,8 +62,10 @@ entry spiffe://eacp.test/ns/eacp/sa/eacp-worker -parentID spiffe://eacp.test/k8s
 work=$(mktemp -d)
 pki=$(winpath "$work/pki") # kubectl and go on Windows need a native path
 tunnel=
+gateway_tunnel=
 cleanup() {
 	[ -n "$tunnel" ] && kill "$tunnel" 2>/dev/null || true
+	[ -n "$gateway_tunnel" ] && kill "$gateway_tunnel" 2>/dev/null || true
 	rm -rf "$work"
 }
 trap cleanup EXIT
@@ -120,6 +122,11 @@ secret eacp-deps postgres-bootstrap --from-literal=POSTGRES_PASSWORD=postgres \
 secret eacp-deps fakeerp-token --from-file=token=deployments/docker/secrets/fakeerp-token.dev
 secret eacp-deps fakeerp-oauth-client --from-file=secret=deployments/docker/secrets/fakeerp-oauth-client.dev
 secret eacp-deps fakemcp-token --from-file=token=deployments/docker/secrets/fakemcp-token.dev
+secret eacp-deps fakemcp-hr-token --from-file=token=deployments/docker/secrets/fakemcp-hr-token.dev
+secret eacp-deps fakellm-key --from-file=key=deployments/docker/secrets/fakellm-key.dev
+secret eacp eacp-provider-keys --from-file=provider-secrets.json=deployments/docker/secrets/llm-secrets.generated.json
+k -n eacp-deps create configmap fakemcp-hr-tools --from-file=tools.json=deployments/docker/fakemcp/hr-tools.json \
+	--dry-run=client -o yaml | k apply -f -
 k -n eacp-deps create configmap postgres-initdb --from-file=deployments/docker/postgres/initdb/01-roles.sh \
 	--dry-run=client -o yaml | k apply -f -
 # Fake ERP trusts the cluster's service-account issuer: its issuer and JWKS.
@@ -134,13 +141,14 @@ k -n eacp-deps create configmap nats-config --from-file=nats.conf=deployments/do
 	--dry-run=client -o yaml | k apply -f -
 k apply -f deployments/k8s/dev/
 k -n eacp-deps rollout status statefulset/postgres --timeout=300s
-for d in nats fakeerp fakemcp vault; do k -n eacp-deps rollout status "deploy/$d" --timeout=300s; done
+for d in nats fakeerp fakemcp fakemcp-hr fakellm vault; do k -n eacp-deps rollout status "deploy/$d" --timeout=300s; done
 k -n eacp-deps wait --for=condition=complete job/vault-init --timeout=300s
 k -n agents rollout status deploy/agent --timeout=300s
 for d in spire-agent spiffe-csi-driver; do k -n spire rollout status "daemonset/$d" --timeout=300s; done
 
 echo "==> helm upgrade --install eacp"
 "$HELM" upgrade --install eacp deployments/helm/eacp -n eacp -f deployments/k8s/e2e-values.yaml \
+	-f deployments/k8s/studio-e2e-values.yaml \
 	--kube-context "$PROFILE" --wait --timeout 10m
 k -n eacp get pods -o wide
 
@@ -156,9 +164,14 @@ else
 		exit 1
 	}
 	echo "    API at $api"
+	k -n eacp port-forward svc/eacp-llm-gateway --address 127.0.0.1 0:8083 >"$work/gateway-url" 2>"$work/gateway-tunnel.log" &
+	gateway_tunnel=$!
+	for _ in $(seq 90); do grep -q 'Forwarding from 127.0.0.1:' "$work/gateway-url" 2>/dev/null && break; sleep 1; done
+	gateway_port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$work/gateway-url" | head -n1)
+	[ -n "$gateway_port" ] || { cat "$work/gateway-tunnel.log" >&2; exit 1; }
 	status=0
-	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
-		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo|TestTokenExchangeDemo|TestAWSDemo}" ./test/demo || status=$?
+	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" EACP_DEMO_LLM="http://127.0.0.1:$gateway_port" \
+		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo|TestTokenExchangeDemo|TestAWSDemo|TestStudioDemo}" ./test/demo || status=$?
 fi
 
 if [ "${KEEP:-}" = 1 ]; then

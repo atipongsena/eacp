@@ -114,3 +114,18 @@ autoscaling:
   enabled: false     # CPU HPAs; queue-depth scaling is deferred (ADR-029 Rev 1.1)
   api: {minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}
   worker: {minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70}
+
+# ADR-031 / ADR-033 Rev 1.4: only this optional gateway holds provider keys.
+llmGateway:
+  enabled: false
+  replicas: 1
+  providerSecret: ""      # Secret with key provider-secrets.json
+  providerPeers: []       # Explicit NetworkPolicy peers of the providers
+  providerPort: 443       # One shared provider port; development may use 8093
+  ingress:
+    from: []             # Additional agent peers; the enabled Studio runtime is always allowed
+  terminationGracePeriodSeconds: 30
+  env: {}
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}

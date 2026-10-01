@@ -336,6 +336,40 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Phase 27c: retain a settled typed model output under a live v2 lease.
+	// Populate both new tables through their real guards, so the exhaustive
+	// tenant sweep below also proves their isolation rather than excluding them.
+	modelVersion := v.f.ID(t, "stella", `SELECT eacp.studio_save(NULL, 'model-bot', 'Model bot', '', $1, $2)`, dept,
+		`{"kind":"agent","limits":{"timeout_seconds":3600,"max_output_tokens":100},"schema_version":2,"steps":[`+
+			`{"id":"classify","kind":"llm","model":"sonnet","instruction":"Return a JSON object.","input":{},`+
+			`"max_output_tokens":100,"output_schema":{"type":"object","properties":{"eligible":{"type":"boolean"}},`+
+			`"required":["eligible"],"additionalProperties":false},"next":"answer"},`+
+			`{"id":"answer","kind":"respond","text":"done"}]}`)
+	if err := v.f.Exec("rita", `SELECT eacp.studio_decide($1, true, 'isolation fixture')`, modelVersion); err != nil {
+		t.Fatal(err)
+	}
+	modelAgent := v.f.ID(t, "alice", `SELECT agent_id FROM eacp.agent_versions WHERE id=$1`, modelVersion)
+	v.f.ID(t, "alice", `INSERT INTO eacp.model_prices(tenant_id,provider,model,unit,input_per_mtok,output_per_mtok,reason)
+		VALUES(eacp.current_tenant_id(),'anthropic','up-1','USD',2,8,'isolation fixture') RETURNING id`)
+	v.f.FundAgent(t, modelAgent, "USD", "1")
+	modelRun := v.f.ID(t, "stella", `SELECT eacp.studio_run_start($1, '{}'::jsonb)`, modelAgent)
+	if err := v.f.Exec("rt", `SELECT eacp.studio_run_claim('r2', 'v1', 300, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	intent := v.f.ID(t, "rt", `SELECT (eacp.studio_llm_begin($1,'r2',1,0)->>'intent_id')::uuid`, modelRun)
+	ledger := llm.New(v.f.App)
+	admitted, err := ledger.Admit(ctx, v.f.Tenant, llm.AdmitRequest{AgentVersionID: modelVersion,
+		ModelName: "sonnet", Provider: "anthropic", Subject: "stella@tenant-a.test", GatewayID: "gw-a",
+		RequestBytes: 100, MaxOutputTokens: 100, StudioIntentID: intent, StudioRuntimeID: "r2", StudioGeneration: 1,
+		Decision: llm.Decision{ID: uuid.New(), BundleID: uuid.New(), Version: 1, Verdict: "allow"}})
+	if err != nil || admitted.Denial != "" {
+		t.Fatalf("Studio model admission denied: %q, %v", admitted.Denial, err)
+	}
+	if err := ledger.Settle(ctx, v.f.Tenant, admitted.CallID, llm.Settlement{Outcome: "succeeded", ProviderStatus: 200,
+		Usage: llm.Usage{Input: 10, Output: 5, Known: true}, StudioOutput: json.RawMessage(`{"eligible":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+
 	admin, err := pgx.Connect(ctx, v.f.DB.AdminDSN)
 	if err != nil {
 		t.Fatal(err)

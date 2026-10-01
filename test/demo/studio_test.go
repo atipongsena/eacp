@@ -32,9 +32,6 @@ const leaveAnswer = "You have 12 days of leave left."
 // kill scope: an operator kills one run and its step never runs.
 func TestStudioDemo(t *testing.T) {
 	d := newDemo(t, tenantStudio)
-	if d.p.name() != "compose" {
-		t.Skip("the Studio demo runs on compose (scripts/demo.sh)")
-	}
 
 	d.step("S0. Bootstrap tenant Wonka: people, the HR department and the runtime's own principal")
 	d.tenantWithCast("wonka", "Wonka", []member{
@@ -204,13 +201,15 @@ func TestStudioDemo(t *testing.T) {
 	}
 	d.logf("opal (a second operator) clears both kills: the killed run stays failed and its step stays %v, never sent", after)
 
-	d.step("S8. otto revokes every Studio key: runs stop at once")
+	d.builderDemo(hr["id"].(string), master)
+
+	d.step("S9. otto revokes every Studio key: runs stop at once")
 	revoked := d.must(200, "otto", "POST", "/v1/studio/credentials/revoke-all", map[string]any{"reason": "suspected runtime compromise (demo)"})
 	d.logf("otto revokes %v Studio key(s)", revoked["revoked"])
 	d.waitRun(d.runAs("stella", agent, "E-1"), "FAILED", "credential_pending")
 	d.logf("the next run fails closed: credential_pending, until a new key is proposed and approved")
 
-	d.step("S9. No master, derived key or runtime key anywhere; the answer is in no log and no journal entry")
+	d.step("S10. No master, derived key or runtime key anywhere; the answer is in no log and no journal entry")
 	d.studioScan(master, key)
 	v := d.must(200, "audra", "GET", "/v1/audit/verify", nil)
 	if v["valid"] != true {

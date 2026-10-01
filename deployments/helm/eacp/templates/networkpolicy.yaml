@@ -131,6 +131,11 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "eacp.selector" (dict "root" . "component" "api") | nindent 14 }}
+        {{- if $v.llmGateway.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "llm-gateway") | nindent 14 }}
+        {{- end }}
       ports: [{protocol: TCP, port: 8443}]
 ---
 apiVersion: networking.k8s.io/v1
@@ -168,4 +173,59 @@ spec:
             matchLabels:
               {{- include "eacp.selector" (dict "root" . "component" "api") | nindent 14 }}
       ports: [{protocol: TCP, port: 8080}]
+    {{- if $v.llmGateway.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "llm-gateway") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8083}]
+    {{- end }}
+{{- end }}
+{{- if $v.llmGateway.enabled }}
+---
+# Gateway authority remains PostgreSQL/PDP; provider egress is explicitly selected.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-llm-gateway
+  labels:
+    {{- include "eacp.labels" (dict "root" . "component" "network") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eacp.selector" (dict "root" . "component" "llm-gateway") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- if $v.studio.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "agent-runtime") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8083}]
+    {{- end }}
+    {{- with $v.llmGateway.ingress.from }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports: [{protocol: TCP, port: 8083}]
+    {{- end }}
+  egress:
+    - to:
+        {{- toYaml $v.database.peers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.database.port }}}]
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "eacp.selector" (dict "root" . "component" "pdp") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8443}]
+    - to:
+        {{- toYaml $v.llmGateway.providerPeers | nindent 8 }}
+      ports: [{protocol: TCP, port: {{ $v.llmGateway.providerPort }}}]
+    {{- with $v.otel.peers }}
+    - to:
+        {{- toYaml . | nindent 8 }}
+      {{- with $v.otel.ports }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
 {{- end }}

@@ -2,6 +2,7 @@ package demo
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +46,7 @@ type platform interface {
 	copyToFakeMCP(local, remote string) error
 	mcpCalls(token string) ([]byte, error) // GET fakemcp /v1/calls with the MCP credential
 	hrCalls(token string) ([]byte, error)  // GET fakemcp-hr /v1/calls with its credential
+	llmAudit(token string) ([]byte, error) // metadata-only provider audit
 	// startRuntime writes files (name to content) into agent-runtime's
 	// read-only volume and starts it (the Studio demo, compose only).
 	startRuntime(files map[string][]byte) error
@@ -125,8 +128,14 @@ func (c *composePlatform) hrCalls(token string) ([]byte, error) {
 		"--header", "Authorization: Bearer "+token, "http://fakemcp-hr:8091/v1/calls")
 	return cmd.Output()
 }
+func (c *composePlatform) llmAudit(token string) ([]byte, error) {
+	cmd := exec.Command("docker", "run", "--rm", "-i", "--network", c.project+"_llm", "busybox:1.37", "sh", "-c",
+		`read -r token; wget -q -O- --header "Authorization: Bearer $token" http://fakellm:8093/v1/audit`)
+	cmd.Stdin = strings.NewReader(token + "\n")
+	return cmd.Output()
+}
 func (c *composePlatform) startRuntime(files map[string][]byte) error {
-	if out, err := c.run("--profile", "studio", "create", "agent-runtime"); err != nil {
+	if out, err := c.run("--profile", "studio", "create", "--build", "agent-runtime"); err != nil {
 		return fmt.Errorf("%w: %s", err, out)
 	}
 	for name, content := range files {
@@ -178,9 +187,11 @@ func workload(service string) k8sWorkload {
 		return eacp("worker")
 	case "agt-pdp":
 		return eacp("pdp")
+	case "agent-runtime", "llm-gateway":
+		return eacp(service)
 	case "postgres":
 		return k8sWorkload{"eacp-deps", "statefulset/postgres", "app=postgres"}
-	case "nats", "fakeerp", "fakemcp":
+	case "nats", "fakeerp", "fakemcp", "fakemcp-hr", "fakellm":
 		return k8sWorkload{"eacp-deps", "deploy/" + service, "app=" + service}
 	}
 	panic("unknown demo service " + service)
@@ -465,6 +476,40 @@ func (k *k8sPlatform) agent(args ...string) (string, error) {
 	return k.kubectl(append([]string{"-n", "agents", "exec", "deploy/agent", "--"}, args...)...)
 }
 
+// studioNetworkProof runs a tokenless stand-in under the runtime's actual
+// selectors, against the cluster's enforced policies and dependency listeners.
+func (k *k8sPlatform) studioNetworkProof() {
+	k.t.Helper()
+	pod := "studio-probe-" + randomSuffix()
+	script := `set -eu
+nc -z -w 3 eacp-api 8080
+nc -z -w 3 eacp-llm-gateway 8083
+for target in postgres.eacp-deps.svc.cluster.local:5432 nats.eacp-deps.svc.cluster.local:4222 eacp-pdp:8443 fakemcp-hr.eacp-deps.svc.cluster.local:8091 fakellm.eacp-deps.svc.cluster.local:8093; do
+  host=${target%:*}; port=${target##*:}
+  nslookup "$host" >/dev/null
+  if nc -z -w 3 "$host" "$port"; then echo "unexpected runtime access: $target"; exit 1; fi
+done
+echo 'runtime network isolation verified'`
+	overrides, err := json.Marshal(map[string]any{"spec": map[string]any{
+		"automountServiceAccountToken": false,
+		"securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 65532,
+			"seccompProfile": map[string]any{"type": "RuntimeDefault"}},
+		"containers": []any{map[string]any{
+			"name": pod, "image": "busybox:1.37", "imagePullPolicy": "Never", "stdin": true,
+			"command": []string{"sh", "-c", script},
+			"securityContext": map[string]any{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true,
+				"capabilities": map[string]any{"drop": []string{"ALL"}}},
+		}},
+	}})
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	k.must("-n", "eacp", "run", pod, "--rm", "-i", "--restart=Never", "--image", "busybox:1.37",
+		"--image-pull-policy", "Never", "--pod-running-timeout=3m",
+		"--labels", "app.kubernetes.io/name=eacp,app.kubernetes.io/instance=eacp,app.kubernetes.io/component=agent-runtime",
+		"--overrides", string(overrides))
+}
+
 func (k *k8sPlatform) postgres(args ...string) (string, error) {
 	return k.kubectl(append([]string{"-n", "eacp-deps", "exec", "postgres-0", "-c", "postgres", "--"}, args...)...)
 }
@@ -479,7 +524,7 @@ func (k *k8sPlatform) logs() string {
 	k.t.Helper()
 	return k.must("-n", "eacp", "logs", "-l", "app.kubernetes.io/instance=eacp", "--all-containers", "--prefix",
 		"--tail=-1", "--max-log-requests=20") +
-		k.must("-n", "eacp-deps", "logs", "-l", "app in (postgres,nats,fakeerp,fakemcp)", "--all-containers",
+		k.must("-n", "eacp-deps", "logs", "-l", "app in (postgres,nats,fakeerp,fakemcp,fakemcp-hr,fakellm)", "--all-containers",
 			"--prefix", "--tail=-1", "--max-log-requests=20")
 }
 
@@ -489,8 +534,12 @@ var forwarding = regexp.MustCompile(`Forwarding from 127\.0\.0\.1:(\d+)`)
 // ERP pod's own network namespace, so the NetworkPolicy that keeps the
 // agent out does not apply to it, and it needs the ERP credential anyway.
 func (k *k8sPlatform) erpAudit(token string) ([]byte, error) {
-	cmd := exec.Command("kubectl", "--context", k.context, "-n", "eacp-deps", "port-forward", "svc/fakeerp",
-		"--address", "127.0.0.1", "0:8090")
+	return k.forwardedGet("fakeerp", 8090, "/v1/audit", token)
+}
+
+func (k *k8sPlatform) forwardedGet(service string, target int, path, token string) ([]byte, error) {
+	cmd := exec.Command("kubectl", "--context", k.context, "-n", "eacp-deps", "port-forward", "svc/"+service,
+		"--address", "127.0.0.1", fmt.Sprintf("0:%d", target))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -518,9 +567,9 @@ func (k *k8sPlatform) erpAudit(token string) ([]byte, error) {
 	select {
 	case p = <-port:
 	case <-time.After(30 * time.Second):
-		return nil, errors.New("kubectl port-forward to fakeerp did not start")
+		return nil, errors.New("kubectl port-forward to dependency did not start")
 	}
-	req, err := http.NewRequest("GET", "http://127.0.0.1:"+p+"/v1/audit", nil)
+	req, err := http.NewRequest("GET", "http://127.0.0.1:"+p+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +584,7 @@ func (k *k8sPlatform) erpAudit(token string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("ERP audit: HTTP %d %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("dependency audit: HTTP %d", resp.StatusCode)
 	}
 	return body, nil
 }
@@ -544,15 +593,59 @@ func (k *k8sPlatform) mcpCalls(string) ([]byte, error) {
 	return nil, errors.New("reading the Fake MCP call log is not supported on k8s")
 }
 
-func (k *k8sPlatform) hrCalls(string) ([]byte, error) {
-	return nil, errors.New("the Studio demo runs on compose only")
+func (k *k8sPlatform) hrCalls(token string) ([]byte, error) {
+	return k.forwardedGet("fakemcp-hr", 8091, "/v1/calls", token)
+}
+func (k *k8sPlatform) llmAudit(token string) ([]byte, error) {
+	return k.forwardedGet("fakellm", 8093, "/v1/audit", token)
 }
 
-func (k *k8sPlatform) startRuntime(map[string][]byte) error {
-	return errors.New("the Studio demo runs on compose only")
+func (k *k8sPlatform) startRuntime(files map[string][]byte) error {
+	dir := k.t.TempDir()
+	for name, content := range files {
+		secret := "eacp-studio-runtime-keys"
+		if name == "master" {
+			secret = "eacp-studio-master"
+		} else if name != "keys" {
+			return errors.New("unexpected runtime file")
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			return err
+		}
+		create := exec.Command("kubectl", "--context", k.context, "-n", "eacp", "create", "secret", "generic", secret, "--from-file="+name+"="+path, "--dry-run=client", "-o", "yaml")
+		data, err := create.Output()
+		if err != nil {
+			return errors.New("prepare runtime Secret failed")
+		}
+		apply := exec.Command("kubectl", "--context", k.context, "apply", "-f", "-")
+		apply.Stdin = bytes.NewReader(data)
+		if err = apply.Run(); err != nil {
+			return errors.New("apply runtime Secret failed")
+		}
+	}
+	helm := env("EACP_DEMO_HELM", "")
+	if helm == "" {
+		helm = "helm"
+		name := "helm"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		p := filepath.Join("..", "..", ".tools", name)
+		if _, err := os.Stat(p); err == nil {
+			helm = p
+		}
+	}
+	cmd := exec.Command(helm, "upgrade", "eacp", filepath.Join("..", "..", "deployments", "helm", "eacp"), "-n", "eacp", "--kube-context", k.context, "--reuse-values", "--set", "studio.enabled=true", "--set", "studio.masterSecret=eacp-studio-master", "--set", "studio.runtimeKeySecret=eacp-studio-runtime-keys", "--set", "studio.env.EACP_RUNTIME_ROTATE_INTERVAL=5s", "--wait", "--timeout", "5m")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("enable runtime: %w: %s", err, out)
+	}
+	return nil
 }
 
-func (k *k8sPlatform) runtimeLogs() string { return "" }
+func (k *k8sPlatform) runtimeLogs() string {
+	return k.must("-n", "eacp", "logs", "-l", "app.kubernetes.io/component=agent-runtime", "--all-containers", "--prefix", "--tail=-1")
+}
 
 func (k *k8sPlatform) copyToFakeMCP(string, string) error {
 	return errors.New("copying into the distroless Fake MCP pod is not supported on k8s")

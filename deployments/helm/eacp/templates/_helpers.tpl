@@ -24,7 +24,7 @@ app.kubernetes.io/component: {{ .component }}
 automountServiceAccountToken: false
 enableServiceLinks: false
 {{- if .sa }}
-serviceAccountName: {{ .root.Release.Name }}{{ if .worker }}-worker{{ end }}{{ if .runtime }}-agent-runtime{{ end }}
+serviceAccountName: {{ .root.Release.Name }}{{ if .worker }}-worker{{ end }}{{ if .runtime }}-agent-runtime{{ end }}{{ if .gateway }}-llm-gateway{{ end }}
 {{- end }}
 securityContext:
   runAsNonRoot: true

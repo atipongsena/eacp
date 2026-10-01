@@ -1,0 +1,24 @@
+# DEVELOPMENT ONLY: optional full-builder gateway; the demo supplies the runtime Secrets.
+llmGateway:
+  enabled: true
+  providerSecret: eacp-provider-keys
+  providerPort: 8093
+  providerPeers:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+      podSelector: {matchLabels: {app: fakellm}}
+  ingress:
+    from:
+      - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agents}}
+        podSelector: {matchLabels: {app: agent}}
+worker:
+  connectorEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+          podSelector:
+            matchExpressions:
+              - {key: app, operator: In, values: [fakeerp, fakemcp, fakemcp-hr]}
+      ports: [{protocol: TCP, port: 8090}, {protocol: TCP, port: 8091}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: eacp-deps}}
+          podSelector: {matchLabels: {app: vault}}
+      ports: [{protocol: TCP, port: 8200}]

@@ -11,6 +11,9 @@ import tempfile
 directory = Path(__file__).resolve().parent
 manifest = json.loads((directory / "connector-secrets.dev.json").read_text())
 llm_manifest = json.loads((directory / "llm-secrets.dev.json").read_text())
+studio_provider = next(entry for entry in llm_manifest["secrets"]
+                       if entry["secret_ref"] == "fakellm" and entry["host"] == "fakellm:8093")
+llm_manifest["secrets"].append({**studio_provider, "tenant_id": "00000000-0000-4000-8000-0000000000f5"})
 
 
 def write_file(prefix, filename, value):
@@ -64,5 +67,6 @@ write_verifier("fakeerp", "fakeerp:8090", "fakeerp-token.dev")
 write_verifier("fakemcp", "fakemcp:8091", "fakemcp-token.dev")
 write_verifier("hr-mcp", "fakemcp-hr:8091", "fakemcp-hr-token.dev")
 write_verifier("fakea2a", "fakea2a:8092", "fakea2a-token.dev")
+write_file("llm-manifest", "llm-secrets.generated.json", json.dumps(llm_manifest))
 write_verifier("fakellm", "fakellm:8093", "fakellm-key.dev", llm_manifest)
 write_oauth_client("fakeerp-jit", "eacp-worker", "fakeerp-oauth-client.dev")

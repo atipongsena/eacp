@@ -346,6 +346,7 @@ services:
       <<: *eacp-env
       EACP_HTTP_ADDR: ":8084"
       EACP_API_URL: http://controlplane-api:8080
+      EACP_RUNTIME_LLM_URL: http://llm-gateway:8083
       EACP_STUDIO_MASTER_FILE: /run/studio/master
       EACP_STUDIO_MASTER_VERSION: v1
       EACP_RUNTIME_KEY_FILE: /run/studio/keys
@@ -401,7 +402,7 @@ secrets:
   fakea2a_token:
     file: ./deployments/docker/secrets/fakea2a-token.dev # generated locally; never committed
   llm_secrets:
-    file: ./deployments/docker/secrets/llm-secrets.dev.json # local-development only
+    file: ./deployments/docker/secrets/llm-secrets.generated.json # local-development only
   fakellm_key:
     file: ./deployments/docker/secrets/fakellm-key.dev # generated locally; never committed
   fakeerp_oauth_client:

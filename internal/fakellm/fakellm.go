@@ -196,6 +196,17 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request, api string) {
 	if scenarios[text] {
 		scenario = text
 	}
+	if req.Model == "studio-triage" {
+		var input struct {
+			Request string `json:"request"`
+		}
+		if json.Unmarshal([]byte(text), &input) == nil {
+			switch input.Request {
+			case "studio_true", "studio_false", "studio_invalid", "studio_slow":
+				scenario = input.Request
+			}
+		}
+	}
 	e := Entry{API: api, Model: req.Model, Stream: req.Stream, Scenario: scenario, Status: http.StatusOK}
 	switch scenario {
 	case "error_429":
@@ -221,7 +232,7 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request, api string) {
 	}
 	usage := scenario != "no_usage"
 	if !req.Stream {
-		if scenario == "slow" {
+		if scenario == "slow" || scenario == "studio_slow" {
 			select {
 			case <-r.Context().Done():
 				return
@@ -240,10 +251,20 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request, api string) {
 
 func (p *provider) answer(w http.ResponseWriter, r *http.Request, api, id string, req request, e Entry, usage, cut bool) {
 	var body map[string]any
+	reply := Reply
+	if req.Model == "studio-triage" {
+		reply = `{"eligible":true}`
+		if e.Scenario == "studio_false" {
+			reply = `{"eligible":false}`
+		}
+		if e.Scenario == "studio_invalid" {
+			reply = "not-json"
+		}
+	}
 	if api == "anthropic" {
 		w.Header().Set("request-id", "req_"+id)
 		body = map[string]any{"id": "msg_" + id, "type": "message", "role": "assistant", "model": req.Model,
-			"content": []any{map[string]any{"type": "text", "text": Reply}}, "stop_reason": "end_turn",
+			"content": []any{map[string]any{"type": "text", "text": reply}}, "stop_reason": "end_turn",
 			"stop_sequence": nil}
 		if usage {
 			body["usage"] = map[string]any{"input_tokens": e.InputTokens, "output_tokens": e.OutputTokens,
@@ -253,7 +274,7 @@ func (p *provider) answer(w http.ResponseWriter, r *http.Request, api, id string
 		w.Header().Set("x-request-id", "req_"+id)
 		body = map[string]any{"id": "chatcmpl-" + id, "object": "chat.completion", "created": time.Now().Unix(),
 			"model": req.Model, "choices": []any{map[string]any{"index": 0, "finish_reason": "stop",
-				"message": map[string]any{"role": "assistant", "content": Reply}}}}
+				"message": map[string]any{"role": "assistant", "content": reply}}}}
 		if usage {
 			body["usage"] = map[string]any{"prompt_tokens": e.InputTokens, "completion_tokens": e.OutputTokens,
 				"total_tokens": e.InputTokens + e.OutputTokens, "prompt_tokens_details": map[string]any{"cached_tokens": 0}}

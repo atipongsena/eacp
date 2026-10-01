@@ -26,3 +26,33 @@ apiVersion: v1
 kind: Service
 metadata: {name: controlplane-api, namespace: agents}
 spec: {type: ExternalName, externalName: eacp-api.eacp.svc.cluster.local}
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakemcp-hr, namespace: eacp}
+spec: {type: ExternalName, externalName: fakemcp-hr.eacp-deps.svc.cluster.local}
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakemcp-hr, namespace: agents}
+spec: {type: ExternalName, externalName: fakemcp-hr.eacp-deps.svc.cluster.local}
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakellm, namespace: eacp}
+spec: {type: ExternalName, externalName: fakellm.eacp-deps.svc.cluster.local}
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakellm, namespace: agents}
+spec: {type: ExternalName, externalName: fakellm.eacp-deps.svc.cluster.local}
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: llm-gateway, namespace: agents}
+spec: {type: ExternalName, externalName: eacp-llm-gateway.eacp.svc.cluster.local}

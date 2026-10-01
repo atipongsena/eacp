@@ -49,7 +49,7 @@ func runtimeContainer(t *testing.T) (env []string, mounts []struct {
 // on the agents network (the API and nothing that holds data or
 // credentials), has no database URL and holds no connector or provider
 // secret; its master and keys are a read-only mount.
-func TestTheRuntimeReachesOnlyTheAPI(t *testing.T) {
+func TestTheRuntimeReachesOnlyTheAPIAndGateway(t *testing.T) {
 	requireCompose(t)
 	env, mounts, networks := runtimeContainer(t)
 	if !slices.Equal(networks, []string{"eacp_agents"}) {
@@ -57,7 +57,7 @@ func TestTheRuntimeReachesOnlyTheAPI(t *testing.T) {
 	}
 	all := strings.Join(env, "\n")
 	for _, want := range []string{"EACP_API_URL=http://controlplane-api:8080", "EACP_STUDIO_MASTER_FILE=/run/studio/master",
-		"EACP_RUNTIME_KEY_FILE=/run/studio/keys"} {
+		"EACP_RUNTIME_KEY_FILE=/run/studio/keys", "EACP_RUNTIME_LLM_URL=http://llm-gateway:8083"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("agent-runtime env lacks %s: %s", want, all)
 		}
@@ -79,10 +79,30 @@ func TestTheRuntimeReachesOnlyTheAPI(t *testing.T) {
 	}
 	// The agents network reaches neither PostgreSQL nor the MCP servers
 	// (the stand-in agent shares it: TestAgentCannotReachPostgres and below).
-	for _, url := range []string{"http://fakemcp-hr:8091/healthz", "http://fakeerp:8090/healthz"} {
+	for _, url := range []string{"http://fakemcp-hr:8091/healthz", "http://fakeerp:8090/healthz", "http://fakellm:8093/healthz"} {
 		if out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", url); err == nil {
 			t.Fatalf("the agents network reached %s: %q", url, out)
 		}
+	}
+}
+
+func TestStudioNetworkReachesAuthenticatedGateway(t *testing.T) {
+	requireCompose(t)
+	out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", "http://llm-gateway:8083/readyz")
+	var probe struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	if err != nil || json.Unmarshal([]byte(out), &probe) != nil || probe.Status != "ok" || len(probe.Checks) == 0 {
+		t.Fatal("the runtime network cannot reach the gateway")
+	}
+	for name, status := range probe.Checks {
+		if status != "ok" {
+			t.Fatalf("gateway readiness check %s failed", name)
+		}
+	}
+	if out, err := fromAgent("wget", "-q", "-T", "3", "-O", "-", "--header", "Content-Type: application/json", "--post-data", `{"model":"triage","max_tokens":100,"messages":[]}`, "http://llm-gateway:8083/v1/chat/completions"); err == nil || !strings.Contains(out, "401") {
+		t.Fatal("unauthenticated model request was not refused")
 	}
 }
 
