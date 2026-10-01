@@ -72,6 +72,7 @@ type fakeLedger struct {
 	admitErr  error
 	denial    string // returned when the decision carries none
 	model     llm.Model
+	studio    *llm.StudioBinding
 	settled   chan settlement
 	epoch     atomic.Int64
 	killed    atomic.Bool
@@ -93,6 +94,7 @@ func (l *fakeLedger) Admit(_ context.Context, tn uuid.UUID, r llm.AdmitRequest) 
 		l.onAdmit()
 	}
 	a := llm.Admission{CallID: uuid.New()}
+	a.Studio = l.studio
 	switch {
 	case r.Decision.Denial != "":
 		a.Denial = r.Decision.Denial

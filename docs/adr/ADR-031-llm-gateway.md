@@ -1,6 +1,7 @@
 # ADR-031: The LLM gateway
 
 Status: Accepted (Rev 1.0, 2026-09-27). Scope: Phase 25b (MASTER_PLAN §97, §45).
+Rev 1.1 rules for Phase 27c were approved on 2026-10-01. The Studio binding and typed-output exception below are accepted; the full Phase 27c delivery is still in progress.
 Related: ADR-001 §2 (ingress over the shared core; who holds secrets), ADR-002 (the PDP), ADR-003 (registry, allowlists), ADR-005 §5a (no transaction open across the PDP), ADR-012 (hard budgets), ADR-016 (kill states and epochs), ADR-018 (canary cohorts), ADR-019 (credential providers), ADR-025 (FinOps, the rate card), ADR-026 (Governance-as-Code), ADR-029 (replicas without a leader).
 
 ## Context
@@ -140,9 +141,22 @@ Wire facts were verified against the official Go SDKs, `github.com/anthropics/an
 - **Invariant 11 (secrets).** No provider key or agent key appears in any row, journal, outbox or log, and no agent holds a provider key. Tests: `TestNothingSecretIsPersistedByTheGateway`, `TestOnlyTheGatewayHoldsProviderSecrets`, `TestProviderSecretsOnlyInTheGateway`.
 - Nothing reaches a provider without an `ADMITTED` row, and a killed call is cut within one poll (`TestKillScopesBindLLMCalls`, `TestAKillDuringAdmissionStopsTheCallBeforeTheProvider`, `TestKillCutsAStream`, `TestAKillBeforeTheUpstreamCallCuts`).
 
+## Studio binding and typed-output exception (Rev 1.1)
+
+ADR-033 Rev 1.4 adds a narrow exception for Studio model nodes. Ordinary agents retain the existing provider relay and admission behavior. The PDP still receives metadata only and runs without an open transaction. Provider credentials remain gateway-only.
+
+- Every Studio key must name its current one-use node intent, requester and live runtime fence. `EACP-Studio-Intent`, `EACP-Studio-Runtime` and `EACP-Studio-Generation` are identifiers, stripped before the provider request. PostgreSQL fixes the version, requester, model, provider and output cap; the caller cannot choose another. The same intent id survives an unconsumed takeover, with the new fence. Admission consumes denied calls too, and a consumed intent never returns permission to forward.
+- Studio requests are non-streaming and tool-free. PostgreSQL requires a leaf account in the pinned price's unit before admission and reserves the existing estimate. The run deadline bounds the provider timeout. There is no retry after an ambiguous gateway response or crash after admission; the sweeper may abandon a call that never reached the provider.
+- PostgreSQL binds the ledger row to its run and node. The existing kill epoch polling also checks run containment; a run failed `killed` remains contained after the switch is cleared. A settlement that observes a kill fails the run immediately. Usage still settles; a killed, expired, terminal or replaced run receives no content.
+- For an eligible Studio call, the gateway extracts exactly one JSON object from a single completed OpenAI assistant text or Anthropic text block. Refusal, tool/function blocks, truncated answers, code fences, duplicate keys, invalid schemas, oversized content and credential content produce a named failure. The immutable definition has a small closed schema without references or network resolution. Numbers retain their JSON precision. Known usage settles even when content is invalid.
+- Only this validated typed object may be retained, at most 65,536 bytes. PostgreSQL independently validates it, computes the digest, size and expiry, and records it atomically with successful settlement. Prompts, full provider envelopes, headers and keys are never stored, journaled or logged. The HTTP response carries metadata only; the runtime reads the object through its live fenced Studio API.
+- `eacp_app` cannot select result content or write it. Operators and claim responses receive metadata only. Terminal run transitions clear content; overdue content is pruned by the existing Studio sweeper. The content table has no audit trigger. Lock order is run, node, call, registry, kill advisory lock, reservation, audit head; no Studio transaction locks an action after a run.
+
+Raw SQL tests in `internal/studio/llm_schema_test.go` prove intent and fence checks, budget prerequisites, atomic output, private reads and kill/settlement races. `internal/llmgateway/studio_test.go` checks both provider shapes and unsafe answers; `TestStudioGatewayOverPostgresForwardsOneCallAndKeepsOutputPrivate` exercises the actual gateway and ledger together.
+
 ## Out of scope
 
-- Inspecting or transforming prompts and responses.
+- General prompt or response inspection or transformation beyond the Studio typed-output exception above.
 - Bedrock, Vertex AI and Azure routes; SigV4 providers.
 - Embeddings, the Responses API, legacy completions, batch, files and count-tokens.
 - Tools the gateway executes; caching; retries or fallback between models.

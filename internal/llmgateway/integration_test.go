@@ -65,13 +65,16 @@ func (l ledgerHook) Admit(ctx context.Context, tenant uuid.UUID, r llm.AdmitRequ
 	return a, err
 }
 
-func newLLMEnv(t *testing.T, afterAdmit func(*llmEnv)) *llmEnv {
+func newLLMEnv(t *testing.T, afterAdmit func(*llmEnv), provider ...http.Handler) *llmEnv {
 	t.Helper()
 	f := registrytest.New(t)
 	e := &llmEnv{t: t, f: f, store: llm.New(f.App), logs: &syncBuffer{}}
 	fake, err := fakellm.New(fakeKey, filepath.Join(t.TempDir(), "fakellm.log"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(provider) > 0 {
+		fake = provider[0]
 	}
 	e.fake = httptest.NewServer(fake)
 	t.Cleanup(e.fake.Close)

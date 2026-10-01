@@ -97,7 +97,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		AND relkind = 'r' AND relname IN ('incident_events', 'incidents') ORDER BY relname`); !slices.Equal(got, incidents) {
 		t.Errorf("reviewed incident tables missing: %v", got)
 	}
-	studio := []string{"studio_agents", "studio_credentials", "studio_listing_proposals", "studio_listings",
+	studio := []string{"studio_agents", "studio_credentials", "studio_listing_proposals", "studio_listings", "studio_node_results",
 		"studio_run_nodes", "studio_run_steps", "studio_runs", "studio_save_marks", "studio_versions"}
 	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
 		AND relkind = 'r' AND relname LIKE 'studio%' ORDER BY relname`); !slices.Equal(got, studio) {
@@ -149,6 +149,11 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 	// tenant and binds the transaction's principal. Studio runs' functions
 	// (Phase 27a-2) are their only writers, check the requester or the
 	// runtime's lease, and keep inputs and answers from eacp_app;
+	// Phase 27c node functions additionally check the current graph cursor;
+	// preview_start proves an approved owner. studio_llm_settle binds the
+	// gateway actor, locks run/node before the call and stores only validated
+	// typed output. studio_node_results content has no direct application
+	// privilege or cross-tenant exception; node_output requires a live lease.
 	// studio_run_tenants returns only ids. The Hub's writers (Phase 27b) are
 	// the only writers of listings and proposals, bind the transaction's
 	// principal and decide each rule of ADR-033 Rev 1.3; studio_clone saves
@@ -181,6 +186,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.studio_listing_propose(uuid,uuid,text,text[],text)",
 		"eacp.studio_listing_retire(uuid,text,text)",
 		"eacp.studio_llm_begin(uuid,text,bigint,integer)",
+		"eacp.studio_llm_settle(uuid,text,integer,bigint,bigint,bigint,bigint,boolean,jsonb,text)",
 		"eacp.studio_node_begin(uuid,text,bigint,integer)",
 		"eacp.studio_node_complete(uuid,text,bigint,integer,jsonb)",
 		"eacp.studio_node_output(uuid,text,bigint,integer)",

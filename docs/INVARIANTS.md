@@ -56,6 +56,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestRawDispatchIntentIsDatabaseFencedByKill — raw T16 cannot commit an attempt under a killed scope
 - `internal/registry` TestScanLeaseFencesStaleScanners — the database fences scan records by worker, generation and expiry
 - `internal/worker` TestOnlyTheLeaseHolderRecordsASuccess — only the lease holder at the current generation keeps a result, and only for its succeeded attempt (ADR-034)
+- `internal/studio` TestStudioTakeoverCannotResendAConsumedIntent — Studio takeover fences the old LLM request; the current intent consumes one call and cannot authorize another (ADR-033 Rev 1.4)
 
 ## 2 [A] One-time approval cannot release two execution claims
 
@@ -80,6 +81,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/action` TestABudgetDenialNeverSpendsTheApproval — the budget is checked before the grant is consumed
 - `internal/action` TestBudgetFailuresDenyClosed — no account or an invalid cost denies
 - `internal/llm` TestReservationGuardForLLMCalls — an LLM call's reservation is made only inside `llm_admit` by its agent, for the estimate, and committed or released only by the gateway or the sweeper, never above the amount (ADR-031)
+- `internal/studio` TestStudioLLMRequiresALeafBudget — a Studio LLM admission without its priced leaf account is denied and consumes its intent (ADR-033 Rev 1.4)
 - `internal/llm` TestAdmitReservesTheEstimate — admission reserves PostgreSQL's estimate on the agent's leaf and denies `budget_exceeded` when it does not fit
 - `internal/llmgateway` TestUnboundedInputsAreRefused — URL, file, server-tool, MCP, container, web-search, audio, prediction and priority-tier requests, whose usage the request's bytes do not bound, are refused before admission (ADR-031 §4)
 - `internal/llm` TestAnOverrunCountsAgainstTheNextAdmission — a call's cost above its reservation counts against every later admission of the agent, so an overrun stops further spend
@@ -156,6 +158,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestOnlyTheActionsAgentReadsTheResult — another agent, a principal, a worker and the sweeper read no result content (ADR-034)
 - `internal/worker` TestResultContentIsNotSelectable — the application role cannot select a result's content
 - `internal/studio` TestOnlyTheRequesterReadsTheAnswerBeforeItExpires — a Studio run's answer is read only by its requester, never by another principal or the runtime (ADR-033)
+- `internal/studio` TestStudioOutputIsAtomicWithSettlementAndPrivate — typed model output commits with successful settlement, is unavailable to direct application reads or stale leases, and is cleared at the terminal run state (ADR-033 Rev 1.4)
 - `internal/studio` TestTwoRuntimesNeverShareARun — a Studio run is leased to one runtime and generation; a lapsed lease fences the old holder
 
 ## 9 [B] Connector failure cannot starve unrelated connector pools
@@ -202,6 +205,8 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/worker` TestACredentialInTheOutputIsWithheld — an output carrying a credential the worker holds is withheld, never kept (ADR-034)
 - `internal/studioruntime` TestNoKeyOrMasterLeaks — after a Studio run and a key rotation, neither the master nor a derived key appears in any response, log line, row, journal or outbox entry (ADR-033)
 - `internal/config` TestOnlyTheRuntimeHoldsTheStudioMaster — only agent-runtime accepts the Studio master, and it refuses a database and every other secret
+- `internal/llmgateway` TestStudioGatewayRejectsUnsafeModelAnswersAndStillSettlesUsage — invalid, ambiguous or credential-bearing model answers retain no typed output while settling spend (ADR-031 Rev 1.1)
+- `internal/llmgateway` TestStudioGatewayOverPostgresForwardsOneCallAndKeepsOutputPrivate — a real gateway/database flow admits one provider request, withholds content from its response and keeps keys and input out of logs
 
 ## 12 [A] After a dispatch intent, re-dispatch only when READ_ONLY or natively idempotent, after authoritative absence, or after a human resolution, with the same operation key
 

@@ -57,6 +57,9 @@ type AdmitRequest struct {
 	Stream                                           bool
 	RequestBytes, MaxOutputTokens                    int64
 	Decision                                         Decision
+	StudioIntentID                                   uuid.UUID
+	StudioRuntimeID                                  string
+	StudioGeneration                                 int64
 }
 
 // Model is what an admitted call may be sent to.
@@ -74,6 +77,14 @@ type Admission struct {
 	Denial   string
 	Model    Model
 	Deadline time.Time
+	Studio   *StudioBinding
+}
+
+// StudioBinding is the immutable output contract for one admitted node.
+type StudioBinding struct {
+	RunID        uuid.UUID       `json:"run_id"`
+	Index        int             `json:"index"`
+	OutputSchema json.RawMessage `json:"output_schema"`
 }
 
 // Usage is the provider's token usage as the gateway read it. Known is false
@@ -88,6 +99,8 @@ type Settlement struct {
 	Outcome        string
 	ProviderStatus int
 	Usage          Usage
+	StudioOutput   json.RawMessage
+	StudioFailure  string
 }
 
 // Call is one ledger row. Amounts are PostgreSQL's numeric text.
@@ -160,20 +173,24 @@ func (s *Store) Admit(ctx context.Context, tenant uuid.UUID, r AdmitRequest) (Ad
 	if r.MaxOutputTokens > 0 {
 		in["max_output_tokens"] = r.MaxOutputTokens
 	}
+	if r.StudioIntentID != uuid.Nil {
+		in["studio_intent_id"], in["studio_runtime_id"], in["studio_generation"] = r.StudioIntentID, r.StudioRuntimeID, r.StudioGeneration
+	}
 	body, err := json.Marshal(in)
 	if err != nil {
 		return Admission{}, err
 	}
 	var out struct {
-		CallID          uuid.UUID `json:"call_id"`
-		Denial          string    `json:"denial"`
-		ModelID         uuid.UUID `json:"model_id"`
-		UpstreamModel   string    `json:"upstream_model"`
-		BaseURL         string    `json:"base_url"`
-		SecretRef       string    `json:"secret_ref"`
-		TimeoutMS       int64     `json:"timeout_ms"`
-		MaxOutputTokens int64     `json:"max_output_tokens"`
-		Deadline        time.Time `json:"deadline"`
+		CallID          uuid.UUID      `json:"call_id"`
+		Denial          string         `json:"denial"`
+		ModelID         uuid.UUID      `json:"model_id"`
+		UpstreamModel   string         `json:"upstream_model"`
+		BaseURL         string         `json:"base_url"`
+		SecretRef       string         `json:"secret_ref"`
+		TimeoutMS       int64          `json:"timeout_ms"`
+		MaxOutputTokens int64          `json:"max_output_tokens"`
+		Deadline        time.Time      `json:"deadline"`
+		Studio          *StudioBinding `json:"studio"`
 	}
 	err = storage.InTenantTx(ctx, s.pool, tenant.String(), func(tx pgx.Tx) error {
 		if err := storage.SetAgent(ctx, tx, r.AgentVersionID); err != nil {
@@ -188,7 +205,7 @@ func (s *Store) Admit(ctx context.Context, tenant uuid.UUID, r AdmitRequest) (Ad
 	if err != nil {
 		return Admission{}, fmt.Errorf("llm: admit: %w", err)
 	}
-	a := Admission{CallID: out.CallID, Denial: out.Denial}
+	a := Admission{CallID: out.CallID, Denial: out.Denial, Studio: out.Studio}
 	if out.Denial == "" {
 		a.Model = Model{ID: out.ModelID, UpstreamModel: out.UpstreamModel, BaseURL: out.BaseURL, SecretRef: out.SecretRef,
 			Timeout: time.Duration(out.TimeoutMS) * time.Millisecond, MaxOutputTokens: out.MaxOutputTokens}
@@ -214,8 +231,16 @@ func (s *Store) Settle(ctx context.Context, tenant, call uuid.UUID, st Settlemen
 		if err := storage.SetSystem(ctx, tx, gatewayActor); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `SELECT eacp.llm_settle($1, $2, $3, $4, $5, $6, $7, $8)`,
-			call, st.Outcome, status, u.Input, u.CacheRead, u.CacheWrite, u.Output, u.Known)
+		var output, failure *string
+		if len(st.StudioOutput) > 0 {
+			value := string(st.StudioOutput)
+			output = &value
+		}
+		if st.StudioFailure != "" {
+			failure = &st.StudioFailure
+		}
+		_, err := tx.Exec(ctx, `SELECT eacp.studio_llm_settle($1, $2, $3, $4, $5, $6, $7, $8,$9::jsonb,$10)`,
+			call, st.Outcome, status, u.Input, u.CacheRead, u.CacheWrite, u.Output, u.Known, output, failure)
 		return err
 	})
 	if err != nil {

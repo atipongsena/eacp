@@ -142,12 +142,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // call is one request as it moves through the gateway.
 type call struct {
-	api    api
-	caller identity.Caller
-	req    request
-	id     uuid.UUID
-	model  llm.Model
-	log    *slog.Logger
+	api           api
+	caller        identity.Caller
+	req           request
+	id            uuid.UUID
+	model         llm.Model
+	studio        *llm.StudioBinding
+	output        []byte
+	outputFailure string
+	log           *slog.Logger
 }
 
 func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, a api) {
@@ -192,6 +195,11 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, a api) {
 		g.fail(w, a, http.StatusBadRequest, bad.errorCode(), bad.why)
 		return
 	}
+	intent, runtimeID, generation, err := studioFence(r, req)
+	if err != nil {
+		g.fail(w, a, http.StatusBadRequest, "invalid_studio_request", "")
+		return
+	}
 	subject := r.Header.Get("EACP-Subject")
 	if len(subject) > 256 || hasControl(subject) {
 		g.fail(w, a, http.StatusBadRequest, "invalid_request", "EACP-Subject must be at most 256 characters")
@@ -214,13 +222,13 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, a api) {
 	adm, err := g.o.Ledger.Admit(ctx, tenant, llm.AdmitRequest{AgentVersionID: caller.AgentVersionID,
 		ModelName: req.model, Provider: a.provider(), Subject: subject, TraceID: traceID(r.Header.Get("traceparent")),
 		GatewayID: g.o.ID, Stream: req.stream, RequestBytes: int64(len(body)), MaxOutputTokens: req.maxOut,
-		Decision: decision})
+		Decision: decision, StudioIntentID: intent, StudioRuntimeID: runtimeID, StudioGeneration: generation})
 	if err != nil {
 		c.log.ErrorContext(ctx, "llm admission failed", "err", err)
 		g.unavailable(w, a, "ledger_unavailable")
 		return
 	}
-	c.id, c.model = adm.CallID, adm.Model
+	c.id, c.model, c.studio = adm.CallID, adm.Model, adm.Studio
 	c.log = c.log.With("call", c.id.String())
 	if adm.Denial != "" {
 		c.log.InfoContext(ctx, "llm call denied", "denial", adm.Denial)
@@ -366,6 +374,11 @@ func (g *Gateway) forward(w http.ResponseWriter, r *http.Request, c *call, epoch
 		return
 	}
 	if mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mt == "text/event-stream" {
+		if c.studio != nil {
+			g.settle(ctx, c, llm.OutcomeUsageUnknown, resp.StatusCode, llm.Usage{})
+			g.fail(w, c.api, http.StatusBadGateway, "llm_invalid_output", "")
+			return
+		}
 		g.relayStream(w, r, c, upCtx, &killed, resp)
 		return
 	}
@@ -380,6 +393,10 @@ func (g *Gateway) forward(w http.ResponseWriter, r *http.Request, c *call, epoch
 		return
 	}
 	usage, ok := c.api.usage(data)
+	if c.studio != nil {
+		g.studioResponse(w, r, c, data, resp.StatusCode, usage, ok, secret, killed.Load())
+		return
+	}
 	relayHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(data)
@@ -485,6 +502,10 @@ func (g *Gateway) relayError(w http.ResponseWriter, r *http.Request, c *call, up
 		return
 	}
 	g.settle(r.Context(), c, llm.OutcomeProviderError, resp.StatusCode, llm.Usage{})
+	if c.studio != nil {
+		g.fail(w, c.api, http.StatusBadGateway, "llm_failed", "")
+		return
+	}
 	if tooLarge {
 		g.fail(w, c.api, http.StatusBadGateway, "response_too_large", "")
 		return
@@ -558,17 +579,18 @@ func (g *Gateway) relayStream(w http.ResponseWriter, r *http.Request, c *call, u
 
 // settle records how a call ended; a settlement that fails is left to the
 // sweeper, which abandons the call at its deadline.
-func (g *Gateway) settle(ctx context.Context, c *call, outcome string, status int, u llm.Usage) {
+func (g *Gateway) settle(ctx context.Context, c *call, outcome string, status int, u llm.Usage) bool {
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
 	defer cancel()
-	err := g.o.Ledger.Settle(sctx, c.caller.TenantID, c.id, llm.Settlement{Outcome: outcome, ProviderStatus: status, Usage: u})
+	err := g.o.Ledger.Settle(sctx, c.caller.TenantID, c.id, llm.Settlement{Outcome: outcome, ProviderStatus: status, Usage: u, StudioOutput: c.output, StudioFailure: c.outputFailure})
 	attrs := []any{"outcome", outcome, "status", status, "stream", c.req.stream, "input_tokens", u.Input,
 		"cache_read_tokens", u.CacheRead, "cache_write_tokens", u.CacheWrite, "output_tokens", u.Output}
 	if err != nil {
 		c.log.ErrorContext(ctx, "llm settlement failed", append(attrs, "err", err)...)
-		return
+		return false
 	}
 	c.log.InfoContext(ctx, "llm call settled", attrs...)
+	return true
 }
 
 // fail writes a provider-shaped error.
