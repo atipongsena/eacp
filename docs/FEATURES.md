@@ -422,7 +422,7 @@ Rev 1.4). PostgreSQL validates every path and derives the exact model/tool union
 local samples. Confirmed previews use an approved owned version and model budgets, with no tool actions. Stale saves
 retain the draft and offer a separately confirmed copy. The department gate remains not met.
 The connected node graph shows both branch paths and a selected-node inspector, with click/drag connections and zoom.
-Compose verification has passed; live Kubernetes verification remains pending ([evidence](superpowers/specs/spec-phase-27c-full-builder/VERIFICATION.md)).
+Compose and full live Kubernetes verification passed, including enforced Calico runtime isolation and disruption ([evidence](superpowers/specs/spec-phase-27c-full-builder/VERIFICATION.md)).
 
 | Capability | Evidence |
 |---|---|

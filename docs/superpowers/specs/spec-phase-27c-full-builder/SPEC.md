@@ -68,4 +68,4 @@ On compose and a development Kubernetes cluster, an author builds a triage agent
 
 ## Approval and remaining gate
 
-- The owner approved schema migrations, Studio-specific authorization, runtime configuration and development deployment changes on 2026-10-01, then extended the UI to connected node editing. The implementation follows the amended ADRs. Kubernetes end-to-end verification requires separately approved minikube/Calico downloads; that permission remains pending.
+- The owner approved schema migrations, Studio-specific authorization, runtime configuration and development deployment changes on 2026-10-01, then extended the UI to connected node editing. The implementation follows the amended ADRs. The owner separately authorized the required minikube/Calico downloads and continuation through the complete Kubernetes gate on 2026-10-01.

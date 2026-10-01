@@ -1,12 +1,12 @@
 # ADR-033: Agent Studio and the runtime's agent credentials
 
-Phase 27c Rev 1.4 design accepted by the owner on 2026-10-01; implementation is in progress. The
+Phase 27c Rev 1.4 design accepted and delivered on 2026-10-01. The
 [full-builder contract](../superpowers/specs/spec-phase-27c-full-builder/SPEC.md) and its design fix schema-v2
 forward graphs, exact derived model/tool capabilities, fenced one-use Studio LLM admission, private bounded
-typed output, approval-required real LLM preview and compose/Kubernetes proof. Rev 1.4 is not yet delivered.
+typed output, approval-required real LLM preview and compose/Kubernetes proof. Rev 1.4 is delivered, including the owner-requested connected node editor.
 The existing v1 definitions and distinct-person approval rules remain binding.
 
-Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built; Rev 1.2 (2026-09-30) records what Phase 27a-2 built; Rev 1.3 (2026-09-30) records the Agent Hub, Phase 27b. Scope: Phase 27-0, 27a and 27b.
+Status: Accepted (Rev 1.0, 2026-09-30; the owner asked to start Phase 27a after reviewing it). Rev 1.1 (2026-09-30) records what Phase 27a-1 built; Rev 1.2 (2026-09-30) records what Phase 27a-2 built; Rev 1.3 (2026-09-30) records the Agent Hub, Phase 27b; Rev 1.4 (2026-10-01) records the full builder and connected node editor, Phase 27c. Scope: Phase 27-0, 27a, 27b and 27c.
 Related: ADR-001 (the product boundary, agents never hold enterprise credentials), ADR-003 §5 (API keys), ADR-019 (credential custody and providers), ADR-029 (replicas), ADR-031 (the LLM gateway authenticates agent keys), ADR-034 (the result channel); the program spec `docs/superpowers/specs/2026-09-29-agent-studio-program-design.md` sections 2, 5 and 11.
 
 ## Context
@@ -214,7 +214,7 @@ not met and each open point keeps its conservative default. Migration 00029:
 ## Revision 1.4: the full builder (Phase 27c)
 
 The owner accepted the [Phase 27c contract](../superpowers/specs/spec-phase-27c-full-builder/SPEC.md) on
-2026-10-01. Migrations 00031–00034 implement it; full race, compose, security, UI and Helm checks passed. Live Kubernetes verification remains pending.
+2026-10-01. Migrations 00031–00034 implement it; full race, compose, security, UI and Helm checks passed. The full live Kubernetes gate also passed with enforced Calico policies, including Studio, runtime isolation and disruption.
 
 - **Definitions.** Schema v1 is preserved. Schema v2 is a forward-only graph of at most 20 reachable nodes:
   `tool_call`, `llm`, `branch` and `respond`. Each destination is fixed; every path terminates in `respond`.

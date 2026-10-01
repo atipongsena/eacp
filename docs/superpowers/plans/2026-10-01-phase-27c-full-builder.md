@@ -10,7 +10,7 @@
 
 **Spec:** [SPEC.md](../specs/spec-phase-27c-full-builder/SPEC.md), [design.md](../specs/spec-phase-27c-full-builder/design.md) and [architecture spine](../specs/spec-phase-27c-full-builder/ARCHITECTURE-SPINE.md).
 
-**Status:** Owner accepted the complete scope on 2026-10-01. Implementation, node UI, full race suite and compose/security/Helm proof are validated. Live Kubernetes remains pending separately required download permission; Phase 27c is not yet marked complete.
+**Status:** Phase 27c complete on 2026-10-01. The owner accepted the complete scope, connected node UI and required minikube/Calico downloads. Full race, UI, compose/security, Helm and the complete live Kubernetes gate passed. Stop before Phase 29. See [verification evidence](../specs/spec-phase-27c-full-builder/VERIFICATION.md).
 
 ## Global constraints
 
@@ -101,11 +101,11 @@
 - [x] Write chart tests for safe gateway rendering, named-only secrets, startup refusals, no runtime DB/provider/connector egress and DNS/PDP/provider rules. Write security assertions for runtime-to-gateway reachability and downstream refusal. Write full-builder demo assertions for both branches, invalid output, preview tool refusal, budget/model denial, one-call recovery and run/model containment.
 - [x] Run `EACP_HELM_REQUIRED=1 go test -count=1 ./test/helm` using installed pinned Helm; observe failures before chart changes. Unit demo fixtures run before stack execution.
 - [x] Implement optional gateway chart and narrow networking, non-secret compose runtime origin and development-only fake LLM/Studio bootstrapping. Keep existing secret custody, DNS settings, draining behavior and public API-only examples. Inspect cached tools/images first; request download permission separately if required.
-- [ ] Run fresh Helm tests, `DEMO=S bash scripts/demo.sh`, full compose examples/security, and the full required Kubernetes end-to-end script with the new Studio tests. Run them sequentially and stop long-lived demo resources according to their cleanup rules; do not weaken a failing isolation assertion.
-- [x] Amend ADR-029 packaging and commit scoped infrastructure/demo changes as the owner after successful checks; live Kubernetes remains unverified and the phase is not marked complete.
+- [x] Run fresh Helm tests, `DEMO=S bash scripts/demo.sh`, full compose examples/security, and the full required Kubernetes end-to-end script with the new Studio tests. Run them sequentially and stop long-lived demo resources according to their cleanup rules; do not weaken a failing isolation assertion.
+- [x] Amend ADR-029 packaging and commit scoped infrastructure/demo changes as the owner after successful checks; the complete live Kubernetes gate subsequently passed.
 
 
-- [x] Fresh compose demo, full stack, examples twice, full security and Helm passed; the only unverified deployment gate is live Kubernetes. Download permission remains pending.
+- [x] Fresh compose demo, full stack, examples twice, full security and Helm passed; the complete live Kubernetes gate subsequently passed after authorized downloads and two test-harness corrections, without weakening isolation or one-send assertions.
 
 ## Task 7: Documents, screenshots and final validation
 
@@ -116,7 +116,7 @@
 - [x] Stop competing stacks; bring up isolated test PostgreSQL using cached images. Run `bash scripts/ci/lint.sh`, `go vet ./...`, then `EACP_UI_NODE_REQUIRED=1 go test -race -timeout 45m ./...` with the test DSN. Report skips accurately. Rerun an environment-failed socket/database package alone only when evidence identifies that cause.
 - [x] Run fresh invariants/catalogue/opensource/translation guards and any demo/security/Helm/Kubernetes check justified by changes made since its prior run. Do not repeat unaffected expensive checks merely to add output.
 - [x] Inspect `git diff --check`, final diff, scoped staged files and status as the implementer. Confirm Git owner identity before committing and omit every attribution trailer. Preserve `graft/` and do not push.
-- [ ] Report the entire Phase 27c result, exact validation and remaining unverified gates. Mark completion only if every required gate passed. Stop; Phase 29 requires a new owner request.
+- [x] Report the entire Phase 27c result, exact validation and remaining unverified gates. Mark completion only if every required gate passed. Stop; Phase 29 requires a new owner request.
 
 ## Owner-directed UI extension: connected node builder
 

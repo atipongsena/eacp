@@ -417,7 +417,7 @@ PostgreSQL ตรวจทุกเส้นทางและคำนวณช
 ในหน้าเว็บ preview ต้องยืนยัน ใช้เวอร์ชันของตนที่อนุมัติและ budget model โดยไม่ส่ง action ของ tool save ที่เก่า
 จะเก็บ draft ไว้ให้ยืนยันบันทึกเป็นสำเนา gate ทดลองกับแผนกยังถือว่าไม่ผ่าน
 กราฟโหนดแสดง branch ทั้งสองเส้นทางและแผงรายละเอียดของโหนดที่เลือก เชื่อมด้วยการคลิกหรือลาก และซูมได้
-การตรวจบน Compose ผ่านแล้ว ส่วนการตรวจ Kubernetes จริงยังรอดำเนินการ ([หลักฐาน](superpowers/specs/spec-phase-27c-full-builder/VERIFICATION.md))
+การตรวจบน Compose และ Kubernetes จริงทั้งชุดผ่านแล้ว รวมการแยกเครือข่าย runtime ที่บังคับใช้ด้วย Calico และ disruption ([หลักฐาน](superpowers/specs/spec-phase-27c-full-builder/VERIFICATION.md))
 
 | Capability | Evidence |
 |---|---|

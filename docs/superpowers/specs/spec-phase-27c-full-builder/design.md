@@ -1,6 +1,6 @@
-# Phase 27c: implementation design and proposed ADR amendments
+# Phase 27c: implementation design and ADR amendments
 
-Date: 2026-10-01. Status: accepted; implementation and deployment verification are in progress.
+Date: 2026-10-01. Status: accepted and delivered; implementation and deployment verification passed.
 Program: [section 8](../2026-09-29-agent-studio-program-design.md).
 Contract: [SPEC.md](SPEC.md). All of Phase 27c is one owner-facing delivery.
 
@@ -118,10 +118,10 @@ Do not run a command that could download a tool/module/image without permission.
 
 ## 9. Permission boundary
 
-The owner selected the entire Phase 27c and Fast path drafting. This design does not authorize its own implementation. The repository's explicit Ask first rule required permission for migrations, admission/preview authorization and infrastructure configuration. Approval should cover sections 2–7 as one concrete scope, including ADR amendments; it does not cover downloads, dependency upgrades, external writes or production deployment. Until then, only local proposed specifications/plans may change.
+The owner selected the entire Phase 27c and Fast path drafting, then approved sections 2–7, including migrations, admission/preview authorization, development infrastructure and ADR amendments, on 2026-10-01. The owner subsequently approved the connected node UI and the required minikube/Calico downloads. Dependency upgrades, external Git writes and production deployment remain outside this scope.
 
 ## 10. Owner-requested connected node UI
 
 The owner extended Phase 27c on 2026-10-01 to an editable node-based graph. `UX-DESIGN.md` and `EXPERIENCE.md` specify deterministic forward layers, labelled True/False edges, click/drag port connections, a selected-node inspector and read-only saved graphs. This replaces the earlier canvas exclusion only for this bounded editor. No arbitrary node position persistence, execution authority, dependency or API change is introduced. Schema-v1 remains an explicit sequential form.
 
-The owner granted the proposed migration, authorization and development infrastructure scope on 2026-10-01. Downloads remain separately permissioned.
+The owner granted the proposed migration, authorization and development infrastructure scope on 2026-10-01. The separately required minikube/Calico downloads were also authorized on 2026-10-01.
