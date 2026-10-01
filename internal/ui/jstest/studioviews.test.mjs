@@ -51,11 +51,50 @@ async function confirmDialog(reason = '') {
 }
 const settle = () => new Promise(r => setTimeout(r, 10));
 const catalogue = {
+  'model.list': {ok: true, status: 200, data: {models: [{name: 'triage', provider: 'openai'}]}},
   'connector.list': {ok: true, status: 200, data: {connectors: [{id: CONN, name: 'hr-mcp', tools: ['get_leave_balance']},
     {id: '34343434-3434-4343-8343-343434343434', name: 'empty', tools: []}]}},
   'connector.tools': {ok: true, status: 200, data: {tools: [{name: 'get_leave_balance', executable: true,
     definition: {read_only: true, risk: 'low'}}]}},
 };
+
+test('a stale new-version save keeps the edited form and offers a separately confirmed copy', async () => {
+  const client = fakeClient({...catalogue, 'studio.agents': agentList('ready'), 'studio.version': version('ready'),
+    'studio.newversion': {ok: false, status: 409, error: 'conflict', detail: 'studio_version_stale'},
+    'studio.save': {ok: true, status: 201, data: {agent_id: AGENT}}});
+  const node = await form.render(ctxFor('new', [], {agent: AGENT}, client));
+  const answer = all(node).find(e => e.tagName === 'TEXTAREA' && e.textContent.startsWith('You have'));
+  answer.value = 'My edited answer'; await answer.dispatch('input');
+  let click = byText(node, 'button', 'Save the new version…').dispatch('click');
+  assert.equal(client.calls.some(c => c.name === 'studio.newversion'), false);
+  await confirmDialog(); await click;
+  const write = client.calls.find(c => c.name === 'studio.newversion');
+  assert.equal(write.opts.body.expected_version_id, VERSION);
+  assert.equal(write.opts.body.definition.steps[1].text, 'My edited answer');
+  assert.equal(answer.value, 'My edited answer');
+  await byText(node, 'button', 'Save as copy').dispatch('click');
+  const name = all(node).find(e => e.tagName === 'INPUT' && e.value === 'leave-bot-copy');
+  name.value = 'copied'; await name.dispatch('input');
+  click = byText(node, 'button', 'Save…').dispatch('click'); await confirmDialog(); await click;
+  assert.equal(client.calls.find(c => c.name === 'studio.save').opts.body.definition.steps[1].text, 'My edited answer');
+});
+
+test('an approved owner preview confirms real model spend and sends only tool samples', async () => {
+  const client = fakeClient({'studio.agents': agentList('ready'), 'studio.version': version('ready'),
+    'studio.preview': {ok: true, status: 201, data: {id: RUN}}});
+  const ctx = ctxFor('agents', [AGENT], {}, client);
+  const node = await agents.render(ctx);
+  const areas = all(node).filter(e => e.tagName === 'TEXTAREA');
+  assert.equal(areas.length, 2);
+  areas[0].value = '{"employee_id":"E-1"}'; await areas[0].dispatch('input');
+  areas[1].value = '{"lookup":{"structuredContent":{"days":12}},"unused":{"x":1}}'; await areas[1].dispatch('input');
+  const click = byText(node, 'button', 'Preview approved version…').dispatch('click');
+  assert.equal(client.calls.some(c => c.name === 'studio.preview'), false);
+  assert.match(document.body.childNodes.at(-1).textContent, /real calls/);
+  await confirmDialog(); await click;
+  assert.deepEqual(client.calls.find(c => c.name === 'studio.preview').opts, {params: {id: VERSION}, body: {inputs: {employee_id: 'E-1'}, samples: {lookup: {structuredContent: {days: 12}}}}});
+  assert.deepEqual(ctx.went, [`#/runs/${RUN}`]);
+});
 
 test('the template form saves the fixture definition into the author’s department', async () => {
   const client = fakeClient({...catalogue,

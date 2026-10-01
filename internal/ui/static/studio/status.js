@@ -51,6 +51,14 @@ export const FAILURES = {
   answer_too_large: () => t('The answer was too long to keep.'),
   deadline_exceeded: () => t('The run took longer than its time limit.'),
   killed: () => t('An operator stopped this run with the kill switch; it sends no more steps.'),
+  branch_invalid: () => t('The choice has missing, null or incompatible values; the run stopped.'),
+  llm_denied: () => t('The model call was denied before the provider was called.'),
+  llm_failed: () => t('The model call failed or the gateway is unavailable.'),
+  llm_unknown: () => t('The model call has an unknown outcome; the runtime will not send it again.'),
+  llm_invalid_output: () => t('The model did not return the required JSON object and schema.'),
+  llm_output_unavailable: () => t('The model output is unavailable or expired; the runtime will not recreate it.'),
+  llm_output_contains_credential: () => t('The model output contained a credential and was withheld.'),
+  budget_pending: () => t('An administrator must configure this agent’s leaf budget before model calls can run.'),
 };
 
 export const failureSentence = reason => (Object.hasOwn(FAILURES, reason)
@@ -59,7 +67,7 @@ export const failureSentence = reason => (Object.hasOwn(FAILURES, reason)
 export function runSentence(state) {
   switch (state) {
   case 'QUEUED': return t('Waiting for the agent runtime to pick it up.');
-  case 'RUNNING': return t('Running: each step goes through the governed action path.');
+  case 'RUNNING': return t('Running: tool actions and model calls pass their governance checks.');
   case 'SUCCEEDED': return t('Finished.');
   case 'FAILED': return t('Failed.');
   default: return t('The run is {state}.', {state: String(state ?? '—')});

@@ -15,7 +15,7 @@ const ID = '0b5e3c1a-7f2d-4c8e-9a61-3d2f5e7a9b10';
 test('the leave-balance template is the demo fixture, value for value', () => {
   const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
   assert.deepEqual(template('leave-balance').definition, fixture);
-  assert.equal(TEMPLATES.length, 1);
+  assert.equal(TEMPLATES.length, 3);
   assert.equal(template('nope'), null);
 });
 
@@ -33,6 +33,8 @@ test('the form round-trips the template to the same definition', () => {
 
 test('the form builds exactly the server shape: no empty inputs, respond last, limits', () => {
   const form = emptyForm();
+  // Schema-v1 authoring remains supported alongside the new blank v2 form.
+  form.schemaVersion = 1;
   form.inputs = [{name: 'employee_id', maxLength: '64'}, {name: '', maxLength: '10'}];
   form.steps = [
     {kind: 'tool_call', id: 'lookup', tool: 'hr-mcp.get_leave_balance', toolSchemaVersion: '1', operation: 'lookup',
@@ -92,7 +94,8 @@ test('every failure reason the runtime names has its own sentence; an unknown on
   setLang('en');
   const reasons = ['credential_pending', 'credential_expired', 'credential_revoked', 'version_replaced',
     'action_denied', 'action_failed', 'action_cancelled', 'action_unknown', 'result_unavailable',
-    'answer_too_large', 'deadline_exceeded', 'killed'];
+    'answer_too_large', 'deadline_exceeded', 'killed', 'branch_invalid', 'llm_denied', 'llm_failed', 'llm_unknown',
+    'llm_invalid_output', 'llm_output_unavailable', 'llm_output_contains_credential', 'budget_pending'];
   assert.deepEqual(Object.keys(FAILURES).sort(), [...reasons].sort());
   const seen = new Set();
   for (const r of reasons) {

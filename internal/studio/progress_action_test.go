@@ -1,7 +1,11 @@
 package studio_test
 
 import (
+	"context"
 	"testing"
+
+	"github.com/atipongsena/eacp/internal/registry"
+	"github.com/atipongsena/eacp/internal/studio"
 )
 
 func TestStudioGraphRecordsPendingActionWithoutAdvancing(t *testing.T) {
@@ -28,4 +32,9 @@ func TestStudioGraphRecordsPendingActionWithoutAdvancing(t *testing.T) {
 		t.Fatal("pending action advanced cursor")
 	}
 	wantState(t, f.Exec("rt", `SELECT eacp.studio_node_complete($1,$2,$3,1,$4::jsonb)`, run, "r1", c.Generation, `{"action_id":"`+act.String()+`"}`), sqlBadState)
+	view, err := studio.New(f.App).Run(context.Background(), registry.Actor{TenantID: f.Tenant, PrincipalID: f.P["stella"]}, run, false)
+	ok(t, err)
+	if len(view.Nodes) != 2 || view.Nodes[0].Kind != "branch" || view.Nodes[0].State != "completed" || view.Nodes[1].ActionID == nil || *view.Nodes[1].ActionID != act {
+		t.Fatal("run view did not expose durable metadata")
+	}
 }

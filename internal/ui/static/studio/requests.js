@@ -31,6 +31,7 @@ export async function render(ctx) {
     section(t('Runtime keys waiting for approval'), table([
       [t('Agent'), k => `${k.agent_name} v${k.version}`],
       [t('Tools'), k => k.capability.join(', ') || '—'],
+      [t('Models'), k => (k.models ?? []).join(', ') || '—'],
       [t('Proposed'), k => [relTime(k.proposed_at, Date.now(), {node: true}), ' ',
         k.proposed_by_runtime ? t('by the agent runtime') : t('by a person')]],
       [t('Master'), k => k.master_version || '—'],
@@ -74,6 +75,8 @@ function request(ctx, r, own) {
   const out = h('div');
   return h('div', {class: 'request'},
     h('h3', {}, `${r.agent_name} v${r.version}`),
+    h('p', {}, t('Models: {models}', {models: (r.models ?? []).join(', ') || '—'})),
+    h('p', {class: 'hint'}, t('Model steps require an approved runtime key, an active allowlist, prices and a leaf budget. The cap sums every declared model step, including both branches.')),
     h('ul', {}, r.tools.map(x => h('li', {}, h('code', {}, x.ref), ' — ', effects(x.side_effects)))),
     h('details', {}, h('summary', {}, t('What it does')), definitionView(r.definition)),
     own ? h('p', {class: 'hint'}, t('You saved this agent, so another registry approver must decide it.')) : h('div', {class: 'actions'},
@@ -86,8 +89,10 @@ async function decide(ctx, r, approve, out) {
   const c = await ask({title: approve ? t('Approve {agent} v{version}', {agent: r.agent_name, version: r.version})
     : t('Reject {agent} v{version}', {agent: r.agent_name, version: r.version}),
   reason: 'required', danger: !approve, confirmLabel: approve ? t('Approve') : t('Reject'),
-  lines: [t('It may use: {tools}.', {tools: r.capability.join(', ') || '—'}),
-    approve ? t('Approval activates this version with exactly those tools and retires its previous version.')
+  lines: [t('Models: {models}', {models: (r.models ?? []).join(', ') || '—'}),
+    t('Total declared cap: {cap} output tokens.', {cap: r.definition?.limits?.max_output_tokens ?? 0}),
+    t('It may use: {tools}.', {tools: r.capability.join(', ') || '—'}),
+    approve ? t('Approval activates this version with exactly its declared tools and models and retires its previous version.')
       : t('The author sees your reason.')]});
   if (!c) return;
   const req = {params: {id: r.id}, body: {reason: c.reason}};
@@ -101,6 +106,7 @@ function keyButton(ctx, k) {
     const c = await ask({title: t('Approve the key for {agent} v{version}', {agent: k.agent_name, version: k.version}),
       confirmLabel: t('Approve'),
       lines: [t('The agent runtime derived this key; nobody sees it. Approving lets the agent act with it until it expires.'),
+        t('Models: {models}', {models: (k.models ?? []).join(', ') || '—'}),
         t('It may use: {tools}.', {tools: k.capability.join(', ') || '—'})]});
     if (!c) return;
     const r = await ctx.client.call('credential.approve', {params: {id: k.id}});

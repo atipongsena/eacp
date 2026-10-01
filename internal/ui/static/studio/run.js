@@ -30,6 +30,7 @@ async function one(ctx, id) {
     h('p', {}, link(t('← Agent'), format('agents', [r.agent_id]))),
     h('h1', {}, t('Run {id}', {id: r.id.slice(0, 8)})),
     h('div', {class: 'chips'}, badge(r.state)),
+    r.mode === 'preview' ? h('p', {class: 'hint'}, t('Preview: tools use samples; model calls are real.')) : null,
     h('p', {class: 'status-line', role: 'status'}, runSentence(r.state)),
     r.state === 'FAILED' ? h('div', {class: 'notice error', role: 'alert'}, failureSentence(r.failure_reason),
       ' ', h('code', {}, r.failure_reason)) : null,
@@ -38,9 +39,13 @@ async function one(ctx, id) {
       : r.state === 'SUCCEEDED' && !own ? h('p', {class: 'hint'}, t('Only the person who ran it reads the answer.')) : null,
     section(t('Steps'), table([
       [t('Step'), s => `${s.index + 1}. ${s.step_id}`],
+      [t('Kind'), s => s.kind ?? 'tool_call'],
+      [t('Progress'), s => s.state ?? '—'],
       [t('Action state'), s => badge(s.action_state)],
-      [t('Action'), s => h('code', {}, s.action_id)],
-    ], r.steps, t('No step has run yet.'))),
+      [t('Action'), s => h('code', {}, s.action_id ?? '—')],
+      [t('Model call'), s => h('code', {}, s.call_id ?? '—')],
+      [t('Model state'), s => s.call_state ?? '—'],
+    ], r.nodes?.length ? r.nodes : r.steps, t('No step has run yet.'))),
     section(t('Record'), kv([
       [t('Run id'), h('code', {}, r.id)],
       [t('Version id'), h('code', {}, r.version_id)],

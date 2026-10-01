@@ -9,7 +9,7 @@ function fakeFetch(status, body, calls = []) {
   return async (url, init) => {
     calls.push({url, init});
     return {status, ok: status >= 200 && status < 300,
-      json: async () => { if (body === undefined) throw new SyntaxError('no body'); return body; }};
+      text: async () => { if (body === undefined) throw new SyntaxError('no body'); return JSON.stringify(body); }};
   };
 }
 

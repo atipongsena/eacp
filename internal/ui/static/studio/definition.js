@@ -1,73 +1,68 @@
-// definition.js maps the Studio form to an agent definition and back
-// (ADR-033, schema version 1: tool_call steps and a final respond). The form
-// checks only what it must to build JSON (a payload is a JSON object, a
-// number is a number); PostgreSQL validates everything else and derives the
-// capability, and the page shows its answer.
+// The form builds JSON; PostgreSQL validates and derives the capability.
 import {t} from '../i18n.js';
+import {ExactNumber, parseJSON, stringifyJSON} from '../json.js';
 
-const toolStep = (id = '') => ({kind: 'tool_call', id, tool: '', toolSchemaVersion: '1', operation: '', target: '',
-  resource: '', payload: '{}'});
+export const newToolStep = (id = '', next = '') => ({kind: 'tool_call', id, tool: '', toolSchemaVersion: '1', operation: '', target: '', resource: '', payload: '{}', next});
+export const newModelStep = (id = '', next = '') => ({kind: 'llm', id, model: '', instruction: 'Return one JSON object.', input: '{}', maxOutputTokens: '100', outputSchema: '{"type":"object","properties":{"eligible":{"type":"boolean"}},"required":["eligible"],"additionalProperties":false}', next});
+export const newBranchStep = (id = '', next = '') => ({kind: 'branch', id, left: '"{{inputs.NAME}}"', operator: 'eq', right: '""', then: next, else: next});
 
-export const newToolStep = toolStep;
-
-// emptyForm is a blank agent: one input, one tool call and the answer.
 export function emptyForm() {
-  return {
-    inputs: [{name: '', maxLength: '64'}],
-    steps: [toolStep('lookup'), {kind: 'respond', id: 'answer', text: ''}],
-    timeoutSeconds: '120',
-  };
+  return {schemaVersion: 2, inputs: [{name: '', maxLength: '64'}],
+    steps: [newToolStep('lookup', 'answer'), {kind: 'respond', id: 'answer', text: ''}], timeoutSeconds: '120', maxOutputTokens: '100'};
 }
 
-// fromDefinition fills the form from a saved definition. Values stay as the
-// server sent them; a payload becomes indented JSON text.
 export function fromDefinition(def) {
   const inputs = Object.entries(def?.inputs ?? {}).map(([name, spec]) => ({name, maxLength: String(spec?.max_length ?? '')}));
-  const steps = (def?.steps ?? []).map(s => (s.kind === 'respond'
-    ? {kind: 'respond', id: s.id ?? '', text: s.text ?? ''}
-    : {kind: 'tool_call', id: s.id ?? '', tool: s.tool ?? '', toolSchemaVersion: s.tool_schema_version ?? '',
-      operation: s.operation ?? '', target: s.target ?? '', resource: s.resource ?? '',
-      payload: JSON.stringify(s.payload ?? {}, null, 2)}));
-  return {inputs: inputs.length ? inputs : [{name: '', maxLength: '64'}], steps,
-    timeoutSeconds: String(def?.limits?.timeout_seconds ?? '')};
+  const steps = (def?.steps ?? []).map(s => {
+    const base = {kind: s.kind, id: s.id ?? '', next: s.next ?? ''};
+    switch (s.kind) {
+    case 'respond': return {...base, text: s.text ?? ''};
+    case 'tool_call': return {...base, tool: s.tool ?? '', toolSchemaVersion: s.tool_schema_version ?? '', operation: s.operation ?? '', target: s.target ?? '', resource: s.resource ?? '', payload: stringifyJSON(s.payload ?? {}, 2)};
+    case 'llm': return {...base, model: s.model ?? '', instruction: s.instruction ?? '', input: stringifyJSON(s.input ?? {}, 2), maxOutputTokens: String(s.max_output_tokens ?? ''), outputSchema: stringifyJSON(s.output_schema ?? {}, 2)};
+    case 'branch': return {...base, left: stringifyJSON(s.condition?.left), operator: s.condition?.operator ?? '', right: stringifyJSON(s.condition?.right), then: s.then ?? '', else: s.else ?? ''};
+    default: return base;
+    }
+  });
+  return {schemaVersion: def?.schema_version, inputs, steps, timeoutSeconds: String(def?.limits?.timeout_seconds ?? ''), maxOutputTokens: String(def?.limits?.max_output_tokens ?? '')};
 }
 
-const integer = value => (/^\d{1,6}$/.test(String(value).trim()) ? Number(String(value).trim()) : null);
-
-// toDefinition builds the definition, or names the fields it cannot build:
-// {ok: true, definition} or {ok: false, errors: [{field, message}]}. An input
-// row without a name is skipped.
+const integer = v => /^\d{1,6}$/.test(String(v).trim()) ? Number(String(v).trim()) : null;
 export function toDefinition(form) {
-  const errors = [];
-  const inputs = {};
+  const errors = []; const inputs = {};
+  const bad = field => errors.push({field, message: t('Enter a valid value for this field.')});
+  const object = (text, field) => {
+    try { const v = parseJSON(String(text)); if (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof ExactNumber)) return v; } catch {}
+    bad(field); return {};
+  };
   (form.inputs ?? []).forEach((row, i) => {
-    const name = String(row.name ?? '').trim();
-    if (name === '') return;
-    const max = integer(row.maxLength);
-    if (max === null) errors.push({field: `inputs.${i}.max_length`, message: t('Maximum length must be a whole number.')});
-    inputs[name] = {type: 'string', max_length: max ?? 0};
+    const name = String(row.name ?? '').trim(); if (!name) return;
+    const max = integer(row.maxLength); if (max === null) bad(`inputs.${i}.max_length`);
+    if (Object.hasOwn(inputs, name) || ['__proto__', 'constructor', 'prototype'].includes(name)) bad(`inputs.${i}.name`);
+    else inputs[name] = {type: 'string', max_length: max ?? 0};
   });
+  const v2 = form.schemaVersion === 2;
+  if (![1, 2].includes(form.schemaVersion)) bad('schema_version');
   const steps = (form.steps ?? []).map((s, i) => {
-    if (s.kind === 'respond') return {id: String(s.id).trim(), kind: 'respond', text: String(s.text ?? '')};
-    let payload = null;
-    try {
-      payload = JSON.parse(String(s.payload ?? ''));
-    } catch {
-      payload = null;
+    const base = {id: String(s.id ?? '').trim(), kind: s.kind};
+    switch (s.kind) {
+    case 'respond': return {...base, text: String(s.text ?? '')};
+    case 'tool_call': return {...base, tool: String(s.tool ?? '').trim(), tool_schema_version: String(s.toolSchemaVersion ?? '').trim(), operation: String(s.operation ?? '').trim(), target: String(s.target ?? '').trim(), resource: String(s.resource ?? '').trim(), payload: object(s.payload, `steps.${i}.payload`), ...(v2 ? {next: s.next} : {})};
+    case 'llm': {
+      const cap = integer(s.maxOutputTokens); if (cap === null) bad(`steps.${i}.max_output_tokens`);
+      return {...base, model: s.model, instruction: s.instruction, input: object(s.input, `steps.${i}.input`), max_output_tokens: cap ?? 0, output_schema: object(s.outputSchema, `steps.${i}.output_schema`), next: s.next};
     }
-    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-      errors.push({field: `steps.${i}.payload`, message: t('The payload must be a JSON object, such as {"employee_id": "{{inputs.employee_id}}"}.')});
+    case 'branch': {
+      const condition = {operator: s.operator};
+      for (const side of ['left', 'right']) { try { condition[side] = parseJSON(s[side]); } catch { bad(`steps.${i}.condition.${side}`); } }
+      return {...base, condition, then: s.then, else: s.else};
     }
-    return {id: String(s.id).trim(), kind: 'tool_call', tool: String(s.tool).trim(),
-      tool_schema_version: String(s.toolSchemaVersion).trim(), operation: String(s.operation).trim(),
-      target: String(s.target).trim(), resource: String(s.resource).trim(), payload: payload ?? {}};
+    default: bad(`steps.${i}.kind`); return base;
+    }
   });
-  const timeout = integer(form.timeoutSeconds);
-  if (timeout === null) errors.push({field: 'limits.timeout_seconds', message: t('The time limit must be a whole number of seconds.')});
-  if (errors.length) return {ok: false, errors};
-  return {ok: true, definition: {schema_version: 1, kind: 'agent', inputs, steps, limits: {timeout_seconds: timeout}}};
+  const timeout = integer(form.timeoutSeconds); if (timeout === null) bad('limits.timeout_seconds');
+  const limits = {timeout_seconds: timeout};
+  if (v2) { limits.max_output_tokens = integer(form.maxOutputTokens); if (limits.max_output_tokens === null) bad('limits.max_output_tokens'); }
+  return errors.length ? {ok: false, errors} : {ok: true, definition: {schema_version: form.schemaVersion, kind: 'agent', inputs, steps, limits}};
 }
-
-// tools lists the tools a definition's steps call, in order and once each:
-// what the save asks a registry approver to allow.
-export const tools = def => [...new Set((def?.steps ?? []).filter(s => s.kind === 'tool_call').map(s => s.tool))];
+export const tools = d => [...new Set((d?.steps ?? []).filter(s => s.kind === 'tool_call').map(s => s.tool))];
+export const models = d => [...new Set((d?.steps ?? []).filter(s => s.kind === 'llm').map(s => s.model))];

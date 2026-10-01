@@ -7,7 +7,8 @@ import {format, isUUID} from '../router.js';
 import {ask} from '../confirm.js';
 import {t} from '../i18n.js';
 import {STAGES, stageIndex, statusSentence} from './status.js';
-import {tools} from './definition.js';
+import {tools, models} from './definition.js';
+import {approvedPreview} from './preview.js';
 import {definitionView, stageBadge, scopeBadge, stateBadge, approverOf} from './common.js';
 
 export async function render(ctx) {
@@ -56,6 +57,7 @@ async function detail(ctx, id) {
     mine ? h('div', {class: 'actions'}, link(t('Save a new version…'), format('new', [], {agent: agent.id}))) : null,
     v.status === 'ready' ? runForm(ctx, {agentId: agent.id, displayName: agent.display_name, version: v.version,
       definition: v.definition}) : null,
+    mine && v.status === 'ready' ? approvedPreview(ctx, {versionId: v.id, agentId: agent.id, definition: v.definition}) : null,
     hub,
     runs.length ? section(t('Runs you started in this tab'), table([
       [t('Run'), r => link(r.id.slice(0, 8), format('runs', [r.id]))],
@@ -66,6 +68,7 @@ async function detail(ctx, id) {
       [t('Version id'), h('code', {}, v.id)],
       [t('Digest'), h('code', {}, v.digest)],
       [t('Tools it may use'), v.capability.join(', ') || '—'],
+      [t('Models it may use'), (v.models ?? []).join(', ') || '—'],
       [t('Saved'), relTime(v.created_at, Date.now(), {node: true})],
       v.decided_at ? [t('Decided'), relTime(v.decided_at, Date.now(), {node: true})] : null,
     ])));
@@ -93,8 +96,9 @@ export function runForm(ctx, {agentId, displayName, version, definition}) {
     const values = Object.fromEntries(inputs.map(([name]) => [name, given[name] ?? '']));
     const c = await ask({title: t('Run {agent}', {agent: displayName}), confirmLabel: t('Run'),
       lines: [t('It runs as you, with version {version}.', {version}),
+        t('Models: {models}', {models: models(definition).join(', ') || '—'}),
         t('It may call: {tools}.', {tools: tools(definition).join(', ') || '—'}),
-        t('Each step is an action: policy, approvals, budgets and kill switches apply to it.')]});
+        t('Tool steps are governed actions; model steps use the gateway and the agent’s budget. Kill switches apply to both.')]});
     if (!c) return;
     const r = await ctx.client.call('studio.runstart', {params: {id: agentId}, body: {inputs: values}});
     if (!r.ok) {

@@ -3,6 +3,7 @@
 // call a route that does not exist. Both are clients: the API and
 // PostgreSQL decide every request.
 import {isUUID} from './router.js';
+import {parseJSON, stringifyJSON} from './json.js';
 
 // [name, method, path, allowed query parameters]
 export const ROUTES = [
@@ -52,6 +53,8 @@ export const ROUTES = [
   ['studio.reject', 'POST', '/v1/studio/versions/{id}/reject', []],
   ['studio.runstart', 'POST', '/v1/studio/agents/{id}/runs', []],
   ['studio.run', 'GET', '/v1/studio/runs/{id}', []],
+  ['studio.preview', 'POST', '/v1/studio/versions/{id}/previews', []],
+  ['model.list', 'GET', '/v1/llm-models', []],
   ['hub.list', 'GET', '/v1/studio/hub', ['q', 'tag', 'department']],
   ['hub.get', 'GET', '/v1/studio/hub/{id}', []],
   ['hub.listing', 'GET', '/v1/studio/agents/{id}/listing', []],
@@ -98,7 +101,7 @@ export function createClient({session, fetch: f = (...a) => globalThis.fetch(...
       const init = {method, headers, credentials: 'omit', cache: 'no-store', redirect: 'error'};
       if (body !== undefined) {
         headers['Content-Type'] = 'application/json';
-        init.body = JSON.stringify(body);
+        init.body = stringifyJSON(body);
       }
       let res;
       try {
@@ -109,7 +112,7 @@ export function createClient({session, fetch: f = (...a) => globalThis.fetch(...
       let data = null;
       if (res.status !== 204) {
         try {
-          data = await res.json();
+          data = parseJSON(await res.text());
         } catch {
           data = null;
         }

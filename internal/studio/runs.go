@@ -27,6 +27,7 @@ type Run struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`
 	Steps           []RunStep  `json:"steps"`
+	Nodes           []RunNode  `json:"nodes"`
 	Answer          *string    `json:"answer,omitempty"`
 	AnswerExpiresAt *time.Time `json:"answer_expires_at,omitempty"`
 }
@@ -37,6 +38,19 @@ type RunStep struct {
 	StepID      string    `json:"step_id"`
 	ActionID    uuid.UUID `json:"action_id"`
 	ActionState string    `json:"action_state"`
+}
+
+// RunNode exposes graph progress metadata, never model output or samples.
+type RunNode struct {
+	Index         int        `json:"index"`
+	StepID        string     `json:"step_id"`
+	Kind          string     `json:"kind"`
+	State         string     `json:"state"`
+	ActionID      *uuid.UUID `json:"action_id,omitempty"`
+	CallID        *uuid.UUID `json:"call_id,omitempty"`
+	ActionState   string     `json:"action_state,omitempty"`
+	CallState     string     `json:"call_state,omitempty"`
+	FailureReason string     `json:"failure_reason,omitempty"`
 }
 
 // Start starts a run of agent with inputs as a (a department member).
@@ -79,6 +93,22 @@ func (s *Service) Run(ctx context.Context, a registry.Actor, id uuid.UUID, reade
 		r.Steps, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (RunStep, error) {
 			var st RunStep
 			return st, row.Scan(&st.Index, &st.StepID, &st.ActionID, &st.ActionState)
+		})
+		if err != nil {
+			return err
+		}
+		rows, err = tx.Query(ctx, `SELECT n.step_index,n.step_id,n.kind,n.state,n.action_id,n.call_id,
+			COALESCE(a.state,''),COALESCE(c.state,''),COALESCE(c.denial,n.failure_reason,'')
+			FROM eacp.studio_run_nodes n
+			LEFT JOIN eacp.actions a ON a.tenant_id=n.tenant_id AND a.id=n.action_id
+			LEFT JOIN eacp.llm_calls c ON c.tenant_id=n.tenant_id AND c.id=n.call_id
+			WHERE n.run_id=$1 ORDER BY n.step_index`, id)
+		if err != nil {
+			return err
+		}
+		r.Nodes, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (RunNode, error) {
+			var n RunNode
+			return n, row.Scan(&n.Index, &n.StepID, &n.Kind, &n.State, &n.ActionID, &n.CallID, &n.ActionState, &n.CallState, &n.FailureReason)
 		})
 		if err != nil {
 			return err

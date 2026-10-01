@@ -3,6 +3,7 @@
 // definition holds came from its author and is shown as text only.
 import {h, badge, cls} from '../dom.js';
 import {t} from '../i18n.js';
+import {stringifyJSON} from '../json.js';
 
 const STAGE_LABELS = {
   waiting_for_approval: () => t('waiting for approval'),
@@ -45,8 +46,15 @@ export function definitionView(def) {
       h('strong', {}, `${i + 1}. ${s.id}`), ' ',
       s.kind === 'respond'
         ? [t('answers:'), ' ', h('em', {}, s.text)]
-        : [t('calls {tool} ({operation} on {target})', {tool: s.tool, operation: s.operation, target: s.target}),
-          h('pre', {class: 'json'}, JSON.stringify(s.payload ?? {}, null, 2))]))),
+        : s.kind === 'llm' ? [t('calls model {model}, capped at {cap} output tokens', {model: s.model, cap: s.max_output_tokens}),
+          h('p', {}, s.instruction), h('pre', {class: 'json'}, stringifyJSON(s.input, 2)),
+          h('pre', {class: 'json'}, stringifyJSON(s.output_schema, 2)), h('p', {}, t('Next: {next}', {next: s.next}))]
+        : s.kind === 'branch' ? [t('fixed choice: true → {yes}, false → {no}', {yes: s.then, no: s.else}),
+          h('pre', {class: 'json'}, stringifyJSON(s.condition, 2))]
+        : s.kind === 'tool_call' ? [t('calls {tool} ({operation} on {target})', {tool: s.tool, operation: s.operation, target: s.target}),
+          h('pre', {class: 'json'}, stringifyJSON(s.payload ?? {}, 2)), s.next ? h('p', {}, t('Next: {next}', {next: s.next})) : null]
+        : t('Unsupported step kind: {kind}', {kind: s.kind})))),
+    def?.schema_version === 2 ? h('p', {class: 'hint'}, t('Total declared cap: {cap} output tokens.', {cap: def.limits.max_output_tokens})) : null,
     h('p', {class: 'hint'}, t('Time limit: {n} seconds.', {n: def?.limits?.timeout_seconds ?? '—'})));
 }
 
