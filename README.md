@@ -373,9 +373,10 @@ The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is bu
 ## Status and what is not built yet
 
 EACP is under active development. Everything described above exists and is tested, and a release has not been cut
-yet. Not built yet:
+yet. [Inbound A2A](docs/USER_GUIDE.md#inbound-a2a) now accepts a structured governed action using an approved EACP agent key; the optional routes share the ordinary action engine.
 
-- **Inbound A2A.** EACP delegates to remote agents but does not yet accept delegations from them.
+Not built yet:
+
 - **A global kill scope.** It waits for platform authority. Tenant, team, agent, version, action, connector, tool,
   model and Studio run kills work.
 - **Multi-region.** One PostgreSQL is the authority; replicas share it.

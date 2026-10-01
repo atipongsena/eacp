@@ -146,7 +146,7 @@ func TestOnlyTheWorkerHoldsConnectorSecrets(t *testing.T) {
 		}
 	}
 	logs, err := exec.Command("docker", "compose", "logs", "--no-color", "execution-worker").CombinedOutput()
-	if err != nil || !manifestBindings(t, "connector-secrets.dev.json").Match(logs) {
+	if err != nil || !manifestBindings(t, "connector-secrets.generated.json").Match(logs) {
 		t.Fatalf("worker did not load its credentials (err=%v): %s", err, logs)
 	}
 	if strings.Contains(string(logs), "dev-only-fakeerp-token") || strings.Contains(string(logs), "dev-only-fakemcp-token") ||

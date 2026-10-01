@@ -24,7 +24,7 @@ These ADRs hold the normative detail behind `docs/MASTER_PLAN.md` (Revision 2). 
 | [ADR-028](ADR-028-operator-console.md) | The Operator Console | Accepted (Rev 1.0) | Phase 22b |
 | [ADR-029](ADR-029-high-availability.md) | High Availability: Replicas Without a Leader | Accepted (Rev 1.1) | Phase 23 |
 | [ADR-019](ADR-019-credential-custody.md) | Credential Custody: Providers and Just-in-Time Credentials | Accepted (Rev 1.1) | Phases 24a, 24b |
-| [ADR-030](ADR-030-a2a-delegation.md) | Governed A2A Delegation | Accepted (Rev 1.0) | Phase 25a |
+| [ADR-030](ADR-030-a2a-delegation.md) | Governed A2A Delegation | Accepted (Rev 1.1) | Phases 25a, 29 |
 | [ADR-031](ADR-031-llm-gateway.md) | The LLM Gateway | Accepted (Rev 1.0) | Phase 25b |
 | [ADR-032](ADR-032-mcp-tools-call.md) | Governed MCP `tools/call` | Accepted (Rev 1.0) | Phase 26a |
 | [ADR-033](ADR-033-agent-studio-and-runtime-credentials.md) | Agent Studio and the runtime's agent credentials | Accepted (Rev 1.0) | Phase 27-0 |

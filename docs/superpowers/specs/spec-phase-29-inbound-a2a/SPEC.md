@@ -1,6 +1,6 @@
 # Phase 29 — inbound A2A
 
-Status: approved by the owner on 2026-10-02; implementation delivered, phase verification in progress.
+Status: complete on 2026-10-02 after owner approval and phase verification; see [evidence](VERIFICATION.md).
 
 ## Why
 

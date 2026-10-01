@@ -3800,7 +3800,7 @@ authority stays governed
 
 execution remains observable
 
-**Delivered (Phase 25a, 2026-09-27, ADR-030):** outbound A2A 1.0 delegation as a connector. A remote agent is a connector with protocol `a2a` whose one tool, `delegate`, is discovered from its Agent Card and certified over the whole card; a delegation is an ordinary action sent at most once by the execution worker, followed with `GetTask`, cancelled when EACP stops following it, and settled by a human when its outcome is unknown. Inbound A2A and the LLM Gateway (25b) remain.
+**Delivered (Phase 25a, 2026-09-27, ADR-030):** outbound A2A 1.0 delegation as a connector. A remote agent is a connector with protocol `a2a` whose one tool, `delegate`, is discovered from its Agent Card and certified over the whole card; a delegation is an ordinary action sent at most once by the execution worker, followed with `GetTask`, cancelled when EACP stops following it, and settled by a human when its outcome is unknown. The LLM Gateway followed in Phase 25b; inbound A2A followed in Phase 29.
 
 LLM Gateway (optional): a new ingress on the same shared core (§3.1)
 
@@ -3808,7 +3808,9 @@ LLM Gateway (optional): a new ingress on the same shared core (§3.1)
 identity + capability + GovernanceProvider + audit + budget
 ```
 
-**Delivered (Phase 25b, 2026-09-27, ADR-031):** the `llm-gateway` service. Agents send Anthropic Messages or OpenAI Chat Completions requests, streamed or not, with their own EACP key; the gateway authenticates the agent, asks the PDP (metadata only, never content), admits the call in PostgreSQL against a per-version model allowlist, kill scopes (including the new `model` scope) and a hard budget reservation at the rate card's price, forwards it with a provider key only the gateway holds, cuts it within seconds when killed, and settles its priced usage. An insert-only ledger (`eacp.llm_calls`) records every call without content; a sweeper settles abandoned calls. Inbound A2A remains later work.
+**Delivered (Phase 25b, 2026-09-27, ADR-031):** the `llm-gateway` service. Agents send Anthropic Messages or OpenAI Chat Completions requests, streamed or not, with their own EACP key; the gateway authenticates the agent, asks the PDP (metadata only, never content), admits the call in PostgreSQL against a per-version model allowlist, kill scopes (including the new `model` scope) and a hard budget reservation at the rate card's price, forwards it with a provider key only the gateway holds, cuts it within seconds when killed, and settles its priced usage. An insert-only ledger (`eacp.llm_calls`) records every call without content; a sweeper settles abandoned calls. Inbound A2A followed in Phase 29.
+
+**Delivered (Phase 29, 2026-10-02, ADR-030 Rev 1.1):** opt-in A2A 1.0 JSON-RPC on controlplane-api accepts one structured governed action using an existing approved EACP agent key. `SendMessage`, `GetTask` and `CancelTask` project the shared action engine; tasks use action UUIDs and existing idempotency, ownership, governance, approval, budgets and kill rules. Unknown outcomes stay working; cancellation is final only when PostgreSQL records it. Artifacts use the private retained result channel. There is no new schema, task store or service. Full race, compose/SDK replay, all 11 live Kubernetes/Calico scenarios, examples and security passed ([evidence](superpowers/specs/spec-phase-29-inbound-a2a/VERIFICATION.md)).
 
 ---
 

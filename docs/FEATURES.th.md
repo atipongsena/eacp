@@ -452,3 +452,5 @@ latency แต่ละขั้น, error, รายการซ้ำ แล�
 Phase 29 ([ADR-030 Rev 1.1](adr/ADR-030-a2a-delegation.md)) รับ structured governed action หนึ่งรายการจาก remote caller ที่ใช้ A2A 1.0 เปิดด้วย `EACP_A2A_PUBLIC_URL` ของ controlplane-api; ค่าว่างปิดทั้ง discovery และ RPC Agent Card แบบคงที่ประกาศ JSON-RPC ที่ `/a2a` โดยใช้ EACP agent key ที่ผ่านการอนุมัติเดิม `SendMessage`, `GetTask` และ `CancelTask` แสดงสถานะจาก action engine เดิม ไม่มี task runner หรือตารางฐานข้อมูลแยก
 
 message ID และ request เดิมใช้ action เดิม แม้ API restart แล้ว หาก authority หรือ payload เปลี่ยนจะ conflict กฎ approval, allowlist, lifecycle, hard budget และ kill ยังเป็นข้อบังคับ ผลที่ไม่แน่ชัดยังเป็น working; cancellation เป็น final เฉพาะเมื่อฐานข้อมูลบันทึก `CANCELLED` artifact ที่เก็บจากงานสำเร็จอ่านได้เฉพาะ caller ผ่าน ADR-034 ไม่คืน input history การวางแผนจากข้อความอิสระ conversation, streaming, push และ foreign identity federation ยังไม่อยู่ในขอบเขต `DEMO=I` ตรวจ flow บน compose และ Kubernetes gate รวม flow นี้ด้วย
+
+ดู [หลักฐานการตรวจสอบ](superpowers/specs/spec-phase-29-inbound-a2a/VERIFICATION.md): full race, reference client บน compose/Kubernetes, examples และ security ผ่านครบแล้ว

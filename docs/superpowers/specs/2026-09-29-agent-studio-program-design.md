@@ -183,10 +183,10 @@ the wider parts.
 | 27b | Agent Hub: listings, scopes, tiered approval, run, clone, department leads ([design](2026-09-30-phase-27b-agent-hub-design.md)) | 033 Rev 1.3 | done (2026-09-30) |
 | 27c | The full builder with connected node editing, more templates and the end-to-end demo on compose and Kubernetes | 033 Rev 1.4 | **done** (2026-10-01; full race, UI, compose/security, Helm and live Kubernetes/Calico proof; owner selected the fallback) |
 | 28 | The `run` kill scope, using the authenticated run binding a Studio run provides ([design](2026-10-01-phase-28-run-kill-scope-design.md)) | 016 Rev 1.1 | done (2026-10-01) |
-| 29 | Inbound A2A: accept delegations from remote agents | 030 revision | independent, can move |
+| 29 | Inbound A2A: accept structured governed actions from remote agents | 030 Rev 1.1 | **done** (2026-10-02; full race, reference-client compose/Kubernetes, examples and security proof) |
 
 Phase 26a comes first because most enterprise integrations an employee will pick are MCP tools, and today an action
-on one expires unclaimed. Phase 29 does not depend on Studio and can move. **The `global` scope** stays out: it
+on one expires unclaimed. Phase 29 does not depend on Studio. **The `global` scope** stays out: it
 waits for platform authority, not for run bindings. Each phase still gets its own brainstorm, ADR and plan, and
 the repository rule stands: stop and report after every phase.
 

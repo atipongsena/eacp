@@ -1,5 +1,7 @@
 # Phase 29 inbound A2A implementation plan
 
+Status: all four tasks complete; [verification evidence](../specs/spec-phase-29-inbound-a2a/VERIFICATION.md).
+
 > Execute inline using Superpowers executing-plans and TDD. The owner forbids Codex reviewers; do not dispatch reviewers or subagents.
 
 **Spec:** `docs/superpowers/specs/spec-phase-29-inbound-a2a/SPEC.md`.
