@@ -381,7 +381,7 @@ A member of an agent's department runs an approved Studio agent with its inputs 
 
 | Capability | Evidence |
 |---|---|
-| The runtime reaches only the API and holds no database URL, connector or provider secret; only it mounts the Studio master | `TestTheRuntimeReachesOnlyTheAPI`, `TestOnlyTheRuntimeHoldsTheStudioMaster` (compose), `TestTheRuntimePodIsHardened`, `TestTheRuntimeReachesOnlyTheAPIInTheCluster` (Helm) |
+| The runtime reaches API/gateway only (Phase 27c) and holds no database URL, connector or provider secret; only it mounts the Studio master | `TestTheRuntimeReachesOnlyTheAPIAndGateway`, `TestOnlyTheRuntimeHoldsTheStudioMaster` (compose), `TestTheRuntimePodIsHardened`, `TestTheRuntimeReachesOnlyTheAPIInTheCluster` (Helm) |
 | The chart refuses a runtime without its Secrets or with a secret, database URL or chart-set variable in `studio.env` | `TestTheRuntimeNeedsItsSecrets`, `TestRuntimeEnvIsValidated`, `TestTheRuntimeIsOffByDefault` |
 | Fake MCP answers only the tools it lists; `get_leave_balance` returns structured content | `TestAToolOutsideTheListIsRefused`, `TestLeaveBalanceAnswersStructuredContent`, `TestLeaveBalanceErrIsAToolError` |
 | From a template to an answer, with a second approver, department-only runs, fail-closed keys and no secret or answer leaked | `TestStudioDemo` |
@@ -413,6 +413,25 @@ An agent's owner proposes it to the Hub for their department or the whole organi
 | Listings and proposals are written only through their functions, and journaled | `TestTheHubIsWrittenOnlyThroughItsFunctions` |
 | The API and the page: search, run, copy, propose and decide | `TestTheHubThroughTheAPI`, `the owner proposes a ready agent to the Hub and sees who decides it`, `a lead decides a Hub proposal, and never loads the approvers’ queue` (`jstest`) |
 | An HR lead publishes to HR, a colleague runs it, a finance author's copy starts unapproved | `TestStudioDemo` |
+
+## Phase 27c: the full Studio builder
+
+The English/Thai form supports `llm`, deterministic `branch`, fixed forward paths and three templates: leave balance,
+leave request triage and procurement request triage ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md)
+Rev 1.4). PostgreSQL validates every path and derives the exact model/tool union; v1 remains editable. Draft tests use
+local samples. Confirmed previews use an approved owned version and model budgets, with no tool actions. Stale saves
+retain the draft and offer a separately confirmed copy. The department gate remains not met.
+The connected node graph shows both branch paths and a selected-node inspector, with click/drag connections and zoom.
+Compose verification has passed; live Kubernetes verification remains pending ([evidence](superpowers/specs/spec-phase-27c-full-builder/VERIFICATION.md)).
+
+| Capability | Evidence |
+|---|---|
+| Bounded graphs, references available on all paths, exact capabilities and stale saves | `internal/studio/builder_schema_test.go` |
+| Fenced one-use intents, preview isolation, leaf budgets and atomic private output | `internal/studio/progress_schema_test.go`, `internal/studio/llm_schema_test.go`, `internal/llmgateway/studio_integration_test.go` |
+| Exact branches, both providers and recovery without another request | `internal/studioruntime/graph_test.go`, `internal/studioruntime/branch_test.go`, `internal/studioruntime/llm_test.go` |
+| Connected nodes, form, samples, approved previews and template parity | `internal/ui/jstest/studio-builder.test.mjs`, `internal/ui/jstest/studio-graph.test.mjs`, `internal/ui/jstest/studioviews.test.mjs` |
+| Optional isolated Helm gateway and runtime API/gateway networking | `TestStudioGatewayIsOptionalAndIsolated`, `TestStudioGatewayRefusesUnsafeValues`, `TestTheRuntimeReachesOnlyTheAPIAndGateway`, `TestStudioNetworkReachesAuthenticatedGateway` |
+| Compose/Kubernetes: both branches, budget denial, invalid output, preview, recovery, kills and canaries | `TestStudioDemo` (S8), `scripts/demo.sh`, `scripts/k8s-e2e.sh` |
 
 ## Phase 28: the `run` kill scope
 

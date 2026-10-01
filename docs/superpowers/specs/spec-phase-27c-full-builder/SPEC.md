@@ -1,10 +1,12 @@
 ---
 id: SPEC-phase-27c-full-builder
-status: proposed
+status: accepted
 date: 2026-10-01
 companions:
   - design.md
   - ARCHITECTURE-SPINE.md
+  - UX-DESIGN.md
+  - EXPERIENCE.md
   - ../../../adr/ADR-033-agent-studio-and-runtime-credentials.md
   - ../../../adr/ADR-031-llm-gateway.md
   - ../../../adr/ADR-028-operator-console.md
@@ -31,7 +33,7 @@ The owner selected Phase 27c after the Studio thin slice, Hub and run kill scope
   - **success:** Both branch outcomes reach a response, only the chosen path executes, and missing values or incompatible operand types stop execution. The model cannot supply a step id, tool name or executable condition.
 - **CAP-4**
   - **intent:** Authors build, test and submit agents through English and Thai forms with understandable approval requirements.
-  - **success:** The page provides basics, inputs, step editors, test and capability review; draft tests make no external calls. An approved owned version can run a real LLM preview with sample tool outputs, and PostgreSQL refuses every tool action from that preview. All writes use confirmation and existing console security rules hold.
+  - **success:** The page provides basics, inputs, a connected node graph with a selected-node inspector, test and capability review; draft tests make no external calls. An approved owned version can run a real LLM preview with sample tool outputs, and PostgreSQL refuses every tool action from that preview. All writes use confirmation and existing console security rules hold.
 - **CAP-5**
   - **intent:** Authors start from concrete templates and operators can demonstrate the full governed path on both supported deployment environments.
   - **success:** Leave balance, leave request triage and procurement request triage have matching page/demo fixtures. Compose and Kubernetes demos exercise two-person capability/key approval, both branch outcomes, model and run containment, refusal, recovery and secret isolation.
@@ -50,7 +52,7 @@ The owner selected Phase 27c after the Studio thin slice, Hub and run kill scope
 
 ## Non-goals
 
-- Phase 29/inbound A2A, global kills, SSO, schedules, chat triggers, webhooks, canvas, loops, retrieval, co-authoring or cross-tenant sharing.
+- Phase 29/inbound A2A, global kills, SSO, schedules, chat triggers, webhooks, loops, retrieval, co-authoring or cross-tenant sharing.
 - Provider structured-output guarantees, streaming Studio generation, automatic model fallback or replay of an admitted LLM request.
 - Automatic budget/price provisioning, capability approval, key approval or Hub publication.
 
@@ -64,6 +66,6 @@ On compose and a development Kubernetes cluster, an author builds a triage agent
 - Real model preview requires an approved immutable version owned by the author. Draft preview uses samples for both tools and LLMs. This conservative amendment to program section 7 preserves the approval boundary.
 - Template model/tool names are explicit deployment prerequisites selected by the author; copying a template grants nothing.
 
-## Open Questions
+## Approval and remaining gate
 
-- Implementation requires the owner's permission for schema migrations, Studio-specific admission/preview authorization, non-secret runtime gateway configuration and compose/Helm/development Kubernetes infrastructure changes described in `design.md`. Accepted ADRs remain unchanged until that decision.
+- The owner approved schema migrations, Studio-specific authorization, runtime configuration and development deployment changes on 2026-10-01, then extended the UI to connected node editing. The implementation follows the amended ADRs. Kubernetes end-to-end verification requires separately approved minikube/Calico downloads; that permission remains pending.

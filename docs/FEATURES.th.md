@@ -376,7 +376,7 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 
 | ความสามารถ | หลักฐาน |
 |---|---|
-| runtime เข้าถึงได้เพียง API และไม่มี URL ของฐานข้อมูล secret ของ connector หรือ provider มีเพียงมันที่ mount master ของ Studio | `TestTheRuntimeReachesOnlyTheAPI`, `TestOnlyTheRuntimeHoldsTheStudioMaster` (compose), `TestTheRuntimePodIsHardened`, `TestTheRuntimeReachesOnlyTheAPIInTheCluster` (Helm) |
+| runtime เข้าถึง API/gateway เท่านั้น (Phase 27c) และไม่มี URL ของฐานข้อมูล secret ของ connector หรือ provider มีเพียงมันที่ mount master ของ Studio | `TestTheRuntimeReachesOnlyTheAPIAndGateway`, `TestOnlyTheRuntimeHoldsTheStudioMaster` (compose), `TestTheRuntimePodIsHardened`, `TestTheRuntimeReachesOnlyTheAPIInTheCluster` (Helm) |
 | chart ปฏิเสธ runtime ที่ไม่มี Secret ของมัน หรือมี secret, URL ของฐานข้อมูล หรือตัวแปรที่ chart ตั้งเองใน `studio.env` | `TestTheRuntimeNeedsItsSecrets`, `TestRuntimeEnvIsValidated`, `TestTheRuntimeIsOffByDefault` |
 | Fake MCP ตอบเฉพาะ tool ที่อยู่ในรายการ และ `get_leave_balance` คืน structured content | `TestAToolOutsideTheListIsRefused`, `TestLeaveBalanceAnswersStructuredContent`, `TestLeaveBalanceErrIsAToolError` |
 | จาก template ถึงคำตอบ โดยมีผู้อนุมัติคนที่สอง รันได้เฉพาะในแผนก key ล้มเหลวแบบปิด และไม่มี secret หรือคำตอบรั่วไหล | `TestStudioDemo` |
@@ -408,6 +408,25 @@ contract เลือกเก็บผลลัพธ์ของการเ�
 | รายการและคำเสนอเขียนได้เฉพาะผ่านฟังก์ชันของมัน และถูกบันทึกใน journal | `TestTheHubIsWrittenOnlyThroughItsFunctions` |
 | API และหน้าเว็บ: ค้นหา รัน คัดลอก เสนอ และตัดสิน | `TestTheHubThroughTheAPI`, `the owner proposes a ready agent to the Hub and sees who decides it`, `a lead decides a Hub proposal, and never loads the approvers’ queue` (`jstest`) |
 | หัวหน้า HR เผยแพร่ให้ HR เพื่อนร่วมงานรันมัน และสำเนาของผู้เขียนฝ่ายการเงินเริ่มต้นแบบยังไม่ได้รับอนุมัติ | `TestStudioDemo` |
+
+## Phase 27c: Studio builder เต็มรูปแบบ
+
+ฟอร์ม EN/TH รองรับ `llm`, `branch` แบบกำหนดแน่นอน เส้นทางไปข้างหน้าที่ตายตัว และ template ยอดวันลา
+คัดกรองคำขอลา และคัดกรองคำขอจัดซื้อ ([ADR-033](adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.4)
+PostgreSQL ตรวจทุกเส้นทางและคำนวณชุด model/tool ที่ตรงกับ definition v1 ยังแก้ไขได้ draft ทดสอบด้วยตัวอย่าง
+ในหน้าเว็บ preview ต้องยืนยัน ใช้เวอร์ชันของตนที่อนุมัติและ budget model โดยไม่ส่ง action ของ tool save ที่เก่า
+จะเก็บ draft ไว้ให้ยืนยันบันทึกเป็นสำเนา gate ทดลองกับแผนกยังถือว่าไม่ผ่าน
+กราฟโหนดแสดง branch ทั้งสองเส้นทางและแผงรายละเอียดของโหนดที่เลือก เชื่อมด้วยการคลิกหรือลาก และซูมได้
+การตรวจบน Compose ผ่านแล้ว ส่วนการตรวจ Kubernetes จริงยังรอดำเนินการ ([หลักฐาน](superpowers/specs/spec-phase-27c-full-builder/VERIFICATION.md))
+
+| Capability | Evidence |
+|---|---|
+| graph มีขอบเขต reference มีค่าทุกเส้นทาง capability ตรง และตรวจ save เก่า | `internal/studio/builder_schema_test.go` |
+| intent มี fence ใช้ครั้งเดียว แยก preview ต้องมี leaf budget และ output ส่วนตัวแบบ atomic | `internal/studio/progress_schema_test.go`, `internal/studio/llm_schema_test.go`, `internal/llmgateway/studio_integration_test.go` |
+| branch แม่นยำ provider ทั้งสองแบบ และกู้คืนโดยไม่ส่งใหม่ | `internal/studioruntime/graph_test.go`, `internal/studioruntime/branch_test.go`, `internal/studioruntime/llm_test.go` |
+| โหนดที่เชื่อมกัน ฟอร์ม ตัวอย่าง preview ที่อนุมัติ และ template ตรง fixture | `internal/ui/jstest/studio-builder.test.mjs`, `internal/ui/jstest/studio-graph.test.mjs`, `internal/ui/jstest/studioviews.test.mjs` |
+| Helm gateway ที่เปิดตามต้องการและแยกสิทธิ์ runtime เข้าถึง API/gateway | `TestStudioGatewayIsOptionalAndIsolated`, `TestStudioGatewayRefusesUnsafeValues`, `TestTheRuntimeReachesOnlyTheAPIAndGateway`, `TestStudioNetworkReachesAuthenticatedGateway` |
+| Compose/Kubernetes ทั้งสอง branch ปฏิเสธ budget output ผิด preview recovery kill และ canary | `TestStudioDemo` (S8), `scripts/demo.sh`, `scripts/k8s-e2e.sh` |
 
 ## Phase 28: kill scope แบบ `run`
 

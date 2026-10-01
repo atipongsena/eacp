@@ -7,6 +7,14 @@ Related: ADR-004 (leases, fencing, unknown outcomes), ADR-011 (scheduler), ADR-0
 NATS carries signals), ADR-022 (bulkheads, circuits), ADR-025/-027/-018 (the FinOps, incident and release
 evaluators).
 
+Rev 1.3 (2026-10-01, owner accepted, Phase 27c): optional `llmGateway.enabled` adds a hardened gateway,
+its tokenless ServiceAccount and ClusterIP Service. Provider credentials are a Secret referenced by name, mounted
+read-only into the gateway alone. Provider peers/port must be explicit. The gateway reaches PostgreSQL, the PDP,
+its providers and optional telemetry, plus DNS; it has no NATS, connector secret or Studio master. Its ingress is
+explicit agent peers and the enabled runtime. The runtime reaches API/gateway plus DNS and has no database URL
+or provider secret. The gateway uses the Go DNS retry and shutdown rules. Development-only HR/provider fixtures
+extend `scripts/k8s-e2e.sh` with the full Studio demo and enforced runtime isolation. PostgreSQL/NATS remain external.
+
 ## Context
 
 §95 asks for multiple API nodes, multiple scheduler nodes, worker autoscaling, pod disruption handling and

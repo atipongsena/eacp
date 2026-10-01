@@ -421,6 +421,33 @@ Each step names a tool, what it does (`operation`, `target`, `resource`) and the
 for what the person running the agent gives and `{{steps.ID.output...}}` for an earlier step's result. **Save** makes
 an unchangeable version; to change it later, save a new version.
 
+### Models, branches and testing
+
+Choose the leave request triage or procurement request triage template for the full builder. **Basics**, **Inputs**,
+**Steps**, **Test** and **Review** keep the definition together. Existing leave-balance agents remain editable;
+**Enable full builder** explicitly converts their draft to schema v2.
+
+The full builder shows connected nodes beside a selected-node inspector. Click a node to edit it; click an output and a following input, or drag between their ports, to connect them. Branch ports are labelled True and False. Use zoom and scrolling to inspect both paths. Connections must point forward to unique node ids; errors stay visible until fixed. Saved versions show the graph read-only. Schema-v1 agents keep the sequential form until you explicitly enable the full builder.
+
+![Agent Studio: model and branch steps in the full builder](images/studio-builder.png)
+
+An `llm` step names a registered model, instruction, input, output token cap, closed JSON output schema and next step.
+A `branch` compares two fixed values or references using `eq`, `ne`, `lt`, `le`, `gt` or `ge`, then follows its fixed
+true/false destination. Numbers compare exactly. Missing/null values or mismatched types fail the run; a model never
+chooses a destination or a tool. Every path must end with an answer, and output references must exist on every path
+to their consumer. Review lists every model/tool, including those on other paths, and all declared token caps.
+
+In **Test**, supply inputs and sample tool/model JSON to check a draft locally. This sends no real call. An owned,
+approved agent also offers **Preview approved version**: confirm the model spending and supply tool samples. This
+uses the saved approved version, makes governed model calls and dispatches no tool actions. Changing a draft does
+not change that preview. Samples remain private to the tab/run. Model agents need approved keys and a funded leaf
+hard budget in the model's price unit; a missing budget denies the call before the provider is contacted.
+
+If another save makes your draft stale, it stays in the form. Reload deliberately or choose **Save as copy** and
+confirm the new agent; the copy needs its own approval and key. Run pages show visited node and call/action ids,
+while typed model output stays private to the runtime and is cleared when the run ends. Recovery waits on an admitted
+call instead of sending it again. Invalid output fails closed. A run/model kill cuts an in-flight call permanently.
+
 ### Get it approved, then run it
 
 After you save, the agent's page shows where it is and who acts next: a registry approver who is not you approves the

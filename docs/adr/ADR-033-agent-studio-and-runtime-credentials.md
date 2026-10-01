@@ -211,6 +211,49 @@ not met and each open point keeps its conservative default. Migration 00029:
 | Seeing a listing | Enabled humans only; the runtime and other service principals see none |
 | Cloning a deprecated listing | Refused |
 
+## Revision 1.4: the full builder (Phase 27c)
+
+The owner accepted the [Phase 27c contract](../superpowers/specs/spec-phase-27c-full-builder/SPEC.md) on
+2026-10-01. Migrations 00031–00034 implement it; full race, compose, security, UI and Helm checks passed. Live Kubernetes verification remains pending.
+
+- **Definitions.** Schema v1 is preserved. Schema v2 is a forward-only graph of at most 20 reachable nodes:
+  `tool_call`, `llm`, `branch` and `respond`. Each destination is fixed; every path terminates in `respond`.
+  References to earlier outputs must dominate their consumer on every path. PostgreSQL validates the definition,
+  resolves tenant-local model/tool ids and derives their exact union, including unchosen paths. The sum of declared
+  model output caps cannot exceed the definition's token limit. A stale save is refused against its expected latest
+  version; copying the retained draft creates an ordinary unapproved agent.
+- **Model nodes.** Non-streaming Anthropic Messages and OpenAI Chat Completions only, with an immutable model,
+  instruction, input, output cap and bounded closed JSON output schema. No tool selection, schema network resolution
+  or arbitrary code. Studio admission requires a leaf hard budget in the model's price unit. The existing gateway,
+  PostgreSQL allowlist, PDP, reservation, settlement and containment remain the authorities.
+- **Progress and recovery.** PostgreSQL owns the current node and records a pending tool action before waiting.
+  A model node has one intent, bound to the run, node, runtime id and lease generation. The derived agent key carries
+  `EACP-Studio-Intent`, `EACP-Studio-Runtime`, `EACP-Studio-Generation` and the requester's `EACP-Subject`; these
+  identifiers never reach the provider. Admission consumes the intent and binds one call atomically. An unconsumed
+  intent can be re-fenced; a consumed intent is never resent. Recovery waits on the original action/call. A stale fence
+  is 403 and a consumed intent 409, without a retry hint; a ledger outage remains 503.
+- **Private output.** ADR-031's narrow exception retains only validated Studio JSON, at most 65 536 bytes, atomically
+  with successful settlement. Reads require the live runtime lease. Terminal runs and deadlines clear it; operators
+  see metadata only. Provider envelopes, prompts, headers and keys are never stored, journaled, logged or messaged.
+  Duplicate JSON keys, missing values and wrong types fail closed. A killed or replaced run cannot publish late output;
+  spend still settles. Clearing a kill never revives the run or allows another provider request.
+- **Branches.** `eq`, `ne`, `lt`, `le`, `gt` and `ge` compare fixed literals or declared input/prior-output references.
+  Equality requires matching scalar types; ordered comparisons require numbers. JSON decimals and large integers are
+  compared exactly, including browser parsing and serialization. Missing/null/container values fail `branch_invalid`.
+- **Tests and previews.** Draft tests are local sample-only traversal. Real model preview requires the owner's approved,
+  active version and an approved agent key. Its immutable `preview` mode substitutes private tool samples; PostgreSQL
+  refuses every action under that run even if the runtime is compromised. Preview spends the same governed model budget.
+- **Builder and packaging.** The form has Basics, Inputs, a connected node graph and selected-node inspector, Test and Review, with leave balance, leave request triage
+  and procurement request triage fixtures. Every real write remains confirmed and English/Thai text remains literal.
+  The runtime has no database URL, connector secret or provider key. `EACP_RUNTIME_LLM_URL` names only the gateway
+  origin. Compose permits API/gateway egress on `agents`; optional Helm `llmGateway.enabled` packages a separate,
+  tokenless gateway with a named provider Secret and explicit provider peers. Runtime policies grant only API/gateway
+  egress plus DNS. Development-only Kubernetes resources reproduce the same demo and isolation.
+
+The department gate remains not met. Free-position canvas persistence, schedules, chat, arbitrary expressions, inbound A2A and
+production deployment remain outside Phase 27c. The approved-version preview restriction is the conservative
+resolution of the program's draft real-model test proposal.
+
 ## Verification
 
 Rev 1.0 is a decision document; it changes no code. Rev 1.1's rules are tested in raw SQL as `eacp_app` in `internal/studio/schema_test.go`, and the API in `internal/api/studio_test.go`. Rev 1.2's rules are tested in raw SQL in `internal/studio/runs_schema_test.go`, the routes in `internal/api/studio_runs_test.go`, and the runtime against a real API, worker and database in `internal/studioruntime` (invariants 4 to 7: `TestKeyFromSecretAuthenticatesUnchanged`, `TestNoKeyOrMasterLeaks`, `TestOnlyTheRuntimeHoldsTheStudioMaster`, `TestTheRuntimeRefusesAWeakMaster`, `TestARunFailsClosedWithoutAKey`, `TestTheBulkRevocationRevokesOnlyStudioKeys`). Rev 1.3's rules are tested in raw SQL in

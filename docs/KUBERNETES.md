@@ -1,9 +1,12 @@
+[English](KUBERNETES.md) | [ไทย](KUBERNETES.th.md)
+
 # Running EACP on Kubernetes
 
 The Helm chart `deployments/helm/eacp` runs the control-plane API, the execution worker and the AGT PDP sidecar
 as replicated Deployments, with the same network boundary as compose (ADR-001 §3/§3a) and the availability
 rules of ADR-029 (Rev 1.0 for the binaries, Rev 1.1 for the chart). PostgreSQL and NATS are **not** part of the
-chart: use managed or HA services. The chart never holds a secret value.
+chart: use managed or HA services. The chart never holds a secret value. Optional Studio runtime and LLM gateway
+packaging follow ADR-033 Rev 1.4 and ADR-029 Rev 1.3.
 
 ## Prerequisites
 
@@ -25,14 +28,15 @@ Create these Secrets yourself (or with your secret manager's operator). Values n
 
 | Value | Keys | Reaches |
 |---|---|---|
-| `database.appSecret` | `url` — the `eacp_app` DSN | api, worker |
+| `database.appSecret` | `url` — the `eacp_app` DSN | api, worker, optional llm-gateway |
 | `database.ownerSecret` | `url` — the `eacp_owner` DSN | the migrate Job only |
-| `pdp.tlsSecret` | `ca.pem`, `client.pem`, `client-key.pem`, `server.pem`, `server-key.pem` | api: CA and client pair; pdp: CA and server pair |
+| `pdp.tlsSecret` | `ca.pem`, `client.pem`, `client-key.pem`, `server.pem`, `server-key.pem` | api/gateway: CA and client pair; pdp: CA and server pair |
 | `nats.relaySecret` | `url` — the `relay` user | api (only with `nats.enabled`) |
 | `nats.workerSecret` | `url` — the `worker` user | worker (only with `nats.enabled`) |
 | `worker.connectorSecrets` | `connector-secrets.json` | worker only |
 | `studio.masterSecret` | `master` — the Studio master, at least 32 random bytes | agent-runtime only (only with `studio.enabled`) |
 | `studio.runtimeKeySecret` | `keys` — the runtime principal's `pk` keys, one per tenant and line | agent-runtime only (only with `studio.enabled`) |
+| `llmGateway.providerSecret` | `provider-secrets.json` — provider manifest | llm-gateway only (only with `llmGateway.enabled`) |
 
 The PDP certificate must name the PDP Service (`<release>-pdp`, `<release>-pdp.<namespace>.svc`). For
 development, `EACP_ENV=development eacpctl pdp-dev-certs --dir <dir> --name eacp-pdp --name
@@ -90,6 +94,11 @@ eacp-pdp.eacp.svc --name eacp-pdp.eacp.svc.cluster.local` makes a throwaway PKI.
   JWT-SVID TTL of at least 2.5 × (the longest call budget + 30 s) (ADR-019 §3d).
 - `api.ingress.from` — who may reach the API on 8080. Default `[]`: any source, port 8080 only (the API
   authenticates every call). Narrow it to your ingress controller and agent namespaces.
+- `llmGateway.enabled` — default `false`; when enabled, names `providerSecret`, explicit `providerPeers` and
+  `providerPort` (default 443). `ingress.from` selects additional agent peers; the enabled runtime is admitted
+  automatically. Without Studio, at least one ingress peer is required. Provider peers must match the real provider
+  addresses; every provider call still authenticates and reserves in PostgreSQL. The runtime receives the chart-owned
+  `EACP_RUNTIME_LLM_URL` and cannot override it. Its own master and principal key remain its only mounted Secrets.
 - `otel.peers` / `otel.ports` — optional egress for the OTLP exporter.
 - `environment` — `EACP_ENV` of the API and the worker, default `production`. Outside `development` and `test`
   the NATS URL must be `tls://` (ADR-014 §6). The binaries alone default to `development`; the chart does not.
@@ -113,7 +122,8 @@ The chart fails at render time (`helm template` / `install` stops with a message
 - the governance provider is not `microsoft-agt` (or `local` with `governance.allowLocal`, for tests);
 - with `studio.enabled`: a Studio Secret name is missing, `studio.masterVersion` is not `v` and 1 to 4 digits,
   or `studio.env` sets a secret file, the database URL, a URL with credentials or a variable the chart sets
-  (also `EACP_API_URL`, `EACP_STUDIO_MASTER_FILE`, `EACP_STUDIO_MASTER_VERSION` and `EACP_RUNTIME_KEY_FILE`).
+  (also `EACP_API_URL`, `EACP_STUDIO_MASTER_FILE`, `EACP_STUDIO_MASTER_VERSION`, `EACP_RUNTIME_KEY_FILE` and
+  `EACP_RUNTIME_LLM_URL`); enabled gateway Secrets/peers/port/ingress and sensitive environment overrides are validated too.
 
 ## Install and upgrade
 
@@ -134,14 +144,17 @@ A failed migration fails the install or upgrade and leaves the running pods unto
 | every chart pod | — | DNS (kube-system `k8s-app=kube-dns`, 53 UDP/TCP) |
 | api | 8080 from `api.ingress.from` | PostgreSQL, NATS, PDP 8443, OTLP |
 | worker | none (kubelet probes only) | PostgreSQL, NATS, `worker.connectorEgress`, OTLP |
-| pdp | 8443 from api pods only | none |
+| pdp | 8443 from api and optional gateway pods | none |
 | migrate Job | none | PostgreSQL |
-| agent-runtime (with `studio.enabled`) | none | api 8080 only |
+| agent-runtime (with `studio.enabled`) | none | api 8080; enabled gateway 8083 |
+| llm-gateway (with `llmGateway.enabled`) | 8083 from runtime and `llmGateway.ingress.from` | PostgreSQL, PDP 8443, explicit providers/port, OTLP |
 
 With `studio.enabled` and a narrowed `api.ingress.from`, the API also admits the agent-runtime pods. `agent-runtime`
-(ADR-033) runs Agent Studio agents through the API only: its own ServiceAccount without a token, no database URL
+(ADR-033) runs Agent Studio agents through API/gateway only: its own ServiceAccount without a token, no database URL
 and no connector or provider secret; its two Secrets are mounted read-only at `/run/studio`. It is off by default.
-Everything else in the namespace is denied both ways. An agent namespace reaches only the API; your enterprise
+The gateway has its own tokenless ServiceAccount and the read-only provider manifest. Both optional services use
+Go DNS retry and hardened pods. Everything else in the namespace is denied both ways. An agent namespace reaches
+the API and an explicitly allowed gateway; your enterprise
 systems should also accept only the worker, as the dev Fake ERP does.
 
 ## Availability
@@ -187,12 +200,13 @@ enforced:
 4. creates namespaces `eacp` (restricted), `eacp-deps` and `agents`, the dev Secrets (from
    `deployments/docker/secrets` and `eacpctl pdp-dev-certs`) and the dev dependencies of
    `deployments/k8s/dev` — PostgreSQL, NATS, Fake ERP, Fake MCP, a dev-mode Vault with its init Job
-   (Kubernetes auth for the worker) and a busybox stand-in agent, each protecting itself with its own
+   (Kubernetes auth for the worker), HR Fake MCP, Fake LLM and a busybox stand-in agent, each protecting itself with its own
    NetworkPolicies, all pinned to the control-plane node;
-5. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml --wait`;
+5. `helm upgrade --install eacp … -f deployments/k8s/e2e-values.yaml -f deployments/k8s/studio-e2e-values.yaml --wait`;
 6. opens `minikube service eacp-api --url` (through the Service, so it survives pod restarts) and runs
    `TestSliceADemo`, `TestKubernetesDisruption` and the credential demos (`TestJITDemo`,
-   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`, `TestTokenExchangeDemo`, `TestAWSDemo`) from `test/demo` with
+   `TestFederatedJITDemo`, `TestPrivateKeyJWTDemo`, `TestVaultDemo`, `TestSPIFFEDemo`, `TestTokenExchangeDemo`, `TestAWSDemo`)
+   and the full `TestStudioDemo` from `test/demo` with
    `EACP_DEMO_PLATFORM=k8s`;
 7. deletes the profile.
 
@@ -218,6 +232,12 @@ fails now and then the same way, when a DNS query lost during the churn stalls t
 
 The Slice C demo copies a file into the distroless Fake MCP pod, so it runs on compose only
 (`scripts/demo.sh`); on Kubernetes it skips.
+
+The Studio demo creates its runtime principal through the public API, projects a random master and its principal key
+into two named Secrets without displaying them, then enables Studio through Helm. It exercises the same three fixtures
+as compose, both provider shapes, branch paths, budget/model denial, malformed output, approved preview isolation,
+one-call recovery and run/model kills. A tokenless busybox probe under the runtime's selectors reaches API/gateway
+and fails direct DB/PDP/NATS/HR/provider connections. Prompts, provider keys and typed terminal outputs have leak checks.
 
 The render tests run without a cluster: `EACP_HELM_REQUIRED=1 go test ./test/helm` (without the variable they
 skip when Helm is missing).

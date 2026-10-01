@@ -210,7 +210,8 @@ agent calls it with its own EACP key. The PDP sees only metadata: the model, whe
 cap and the request size. PostgreSQL admits the call (allowlisted model, no kill switch, a budget reservation at
 its own estimate) before anything is sent. The call reaches the provider at most once and is settled with the
 provider's reported usage; if the usage is unknown, the full reservation is charged. No prompt, response, header
-or key is ever stored.
+or key is ever stored. ADR-031's Studio-only exception keeps validated bounded JSON for the live runtime lease,
+atomically with settlement, and clears it at termination/deadline; it never retains the provider envelope or prompt.
 
 ## Agents and their lifecycle
 
@@ -248,6 +249,19 @@ rows relies on row locks and compare-and-set. The lock only avoids duplicated wo
 is the same without it. On shutdown a service fails `/readyz`, stops its loops and keeps serving for a grace
 period. The Helm chart ([`deployments/helm`](../deployments/helm)) deploys the services with NetworkPolicies;
 PostgreSQL and NATS stay outside the chart.
+
+## Studio's full builder
+
+Schema-v2 Studio is a bounded forward graph. PostgreSQL validates every path, derives the exact model/tool union,
+owns the cursor and consumes a fenced model intent once. The runtime calls tools through the action API and models
+through the existing gateway with its derived agent key; it has no database or provider access. Recovery waits on
+the recorded action/call. Fixed typed branches compare JSON numbers exactly. V1 keeps its existing path.
+
+Only validated, bounded model JSON is retained privately, atomically with settlement, for the live runtime lease.
+Terminal/deadline cleanup clears it; metadata views and audit never expose it. Approved-version previews have
+immutable mode and private tool samples, so PostgreSQL refuses tool actions. Local draft tests call nothing.
+Optional Helm gateway packaging preserves the runtime's API/gateway boundary and provider credential custody.
+See [ADR-033 Rev 1.4](adr/ADR-033-agent-studio-and-runtime-credentials.md) and [ADR-031](adr/ADR-031-llm-gateway.md).
 
 ## Where to read next
 

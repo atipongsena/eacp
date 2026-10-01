@@ -193,3 +193,18 @@ service and **E**levation of privilege. Tests are named as package and function.
 | Forged or replayed governance decision | B2 |
 | Malicious operator or admin | B6 |
 | Sensitive data in traces and audit | B3, B5, B7, residual risks |
+
+## Studio model and preview boundary
+
+A model answer is untrusted data, never an instruction to dispatch. Closed schemas, exact scalar comparisons,
+fixed destinations and PostgreSQL's complete capability union bound the graph. Prompt injection cannot add a tool,
+model or successor. A model can still return a misleading schema-valid value; approval and human review remain necessary.
+Studio requires a leaf hard budget before model admission. One fenced intent binds one call; takeover never resends
+an admitted call. A stale fence is refused and a killed run stays stopped after a second operator clears containment.
+
+The runtime holds derived agent keys but no provider key or database URL. Provider credentials remain gateway-only.
+Private typed JSON is bounded and committed with settlement, read by the live lease only and cleared at termination
+or deadline; prompts and provider envelopes are never retained. Operators see metadata only. A runtime compromise
+still exposes approved agents' capabilities and live private output until containment. Approved previews have immutable
+mode, use private tool samples and cannot insert actions in PostgreSQL. Draft tests call nothing. See
+[ADR-033 Rev 1.4](../adr/ADR-033-agent-studio-and-runtime-credentials.md).

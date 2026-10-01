@@ -1,6 +1,6 @@
 # Phase 27c: implementation design and proposed ADR amendments
 
-Date: 2026-10-01. Status: proposed; no migration, authentication or deployment change has been made.
+Date: 2026-10-01. Status: accepted; implementation and deployment verification are in progress.
 Program: [section 8](../2026-09-29-agent-studio-program-design.md).
 Contract: [SPEC.md](SPEC.md). All of Phase 27c is one owner-facing delivery.
 
@@ -84,7 +84,7 @@ Draft tests render locally using supplied tool/model sample outputs. They create
 
 This amends program section 7's draft real-LLM test requirement: an unapproved draft does not obtain real model access. The UI explains how to request approval for a real model test.
 
-Templates: preserve leave balance; add leave request triage (read balance, structured model advice, fixed eligible/ineligible branches) and procurement request triage (structured category/risk, a fixed branch to a governed tool or a response). No model-selected action and no connector/tool declared by a template. Use an explicit configuration form to select existing tenant tools/models; templates carry no key, active allowlist or listing. Static page definitions and demo fixtures remain equal, tested in node. Hub clones/templates preserve existing two-person listing rules.
+Templates: preserve leave balance; add leave request triage (read balance, structured model advice, fixed eligible/ineligible branches) and procurement request triage (a structured eligibility decision and fixed branches to human-review responses; it deliberately creates no purchase or commitment). No model-selected action and no connector/tool declared by a template. Use an explicit configuration form to select existing tenant tools/models; templates carry no key, active allowlist or listing. Static page definitions and demo fixtures remain equal, tested in node. Hub clones/templates preserve existing two-person listing rules.
 
 Every visible literal has its Thai catalogue entry. Add served files to `consoleFiles`; preserve ROUTES, CSP, sink bans, memory-only credentials and `?lang=`. Generate screenshots only through `scripts/screenshots.sh` and inspect them for layout and secret absence.
 
@@ -118,4 +118,10 @@ Do not run a command that could download a tool/module/image without permission.
 
 ## 9. Permission boundary
 
-The owner selected the entire Phase 27c and Fast path drafting. This design does not authorize its own implementation. The repository's explicit Ask first rule requires permission for migrations, admission/preview authorization and infrastructure configuration. Approval should cover sections 2–7 as one concrete scope, including ADR amendments; it does not cover downloads, dependency upgrades, external writes or production deployment. Until then, only local proposed specifications/plans may change.
+The owner selected the entire Phase 27c and Fast path drafting. This design does not authorize its own implementation. The repository's explicit Ask first rule required permission for migrations, admission/preview authorization and infrastructure configuration. Approval should cover sections 2–7 as one concrete scope, including ADR amendments; it does not cover downloads, dependency upgrades, external writes or production deployment. Until then, only local proposed specifications/plans may change.
+
+## 10. Owner-requested connected node UI
+
+The owner extended Phase 27c on 2026-10-01 to an editable node-based graph. `UX-DESIGN.md` and `EXPERIENCE.md` specify deterministic forward layers, labelled True/False edges, click/drag port connections, a selected-node inspector and read-only saved graphs. This replaces the earlier canvas exclusion only for this bounded editor. No arbitrary node position persistence, execution authority, dependency or API change is introduced. Schema-v1 remains an explicit sequential form.
+
+The owner granted the proposed migration, authorization and development infrastructure scope on 2026-10-01. Downloads remain separately permissioned.

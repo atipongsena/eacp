@@ -1,6 +1,6 @@
 ---
 title: Phase 27c architecture spine
-status: proposed
+status: accepted
 date: 2026-10-01
 updated: 2026-10-01
 ---
@@ -73,8 +73,8 @@ Database-enforced governance with an API-only leased interpreter. The immutable 
 
 ## Deferred
 
-Inbound A2A, global platform authority, general DAG workflows, schedules, streaming Studio LLM calls, canvas, SSO and network-resolved schemas remain outside this phase. Department usability feedback remains deferred until a real trial; it does not change the phase's correctness gates.
+Inbound A2A, global platform authority, general DAG workflows, schedules, streaming Studio LLM calls, persisted free-position canvas geometry, SSO and network-resolved schemas remain outside this phase. Department usability feedback remains deferred until a real trial; it does not change the phase's correctness gates.
 
 ## Approval state
 
-Proposed for owner review. The accepted ADRs are still the authority. No independent Codex review is dispatched, in accordance with the owner's standing rule; mechanical checks and source reconciliation do not substitute for such a review.
+Accepted by the owner on 2026-10-01. The accepted ADRs are still the authority. No independent Codex review is dispatched, in accordance with the owner's standing rule; mechanical checks and source reconciliation do not substitute for such a review.

@@ -341,6 +341,8 @@ The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is bu
 10. **Agent security operations center.** Incidents, the SOC summary and the operator console
     ([ADR-027](docs/adr/ADR-027-incidents-and-agent-soc.md), [ADR-028](docs/adr/ADR-028-operator-console.md)).
 
+11. **Agent Studio.** English/Thai form, governed model steps, exact typed branches, three templates, approved previews, the Hub and run containment ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.4). PostgreSQL owns capability/progress; compose and Kubernetes share the full demo.
+
 [FEATURES.md](docs/FEATURES.md) lists every capability phase by phase, with its tests and API routes.
 
 ## Evidence of quality

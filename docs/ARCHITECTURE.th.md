@@ -194,6 +194,8 @@ gateway เป็นอีกทางเข้าสู่แกนกลาง
 PDP เห็นเพียง metadata คือ model, เป็น stream หรือไม่, เพดาน output และขนาดคำขอ PostgreSQL admit การเรียก (model อยู่ใน allowlist,
 ไม่มี kill switch, จองงบประมาณตามการประเมินของตัวเอง) ก่อนจะมีอะไรถูกส่งออกไป การเรียกไปถึงผู้ให้บริการไม่เกินหนึ่งครั้ง และปิดยอดตาม
 usage ที่ผู้ให้บริการรายงาน ถ้าไม่รู้ usage จะคิดเต็มจำนวนที่จองไว้ ไม่มีการเก็บ prompt, คำตอบ, header หรือ key ใดๆ
+ข้อยกเว้นเฉพาะ Studio ใน ADR-031 เก็บ JSON ที่ตรวจแล้วและมีขอบเขตสำหรับ lease runtime ที่ยังอยู่ พร้อม settlement
+ใน transaction เดียว และล้างเมื่อจบ/เลย deadline ไม่เก็บ envelope provider หรือ prompt
 
 ## agent และวงจรชีวิต
 
@@ -229,6 +231,19 @@ replica ไม่แชร์สิ่งใดที่ใช้ตัดสิ
 ใช้ advisory lock และข้าม tenant ที่ replica อื่นถืออยู่ ส่วน loop ที่ย้ายแถวอาศัย row lock และ compare-and-set lock มีไว้เพียงเลี่ยงงานซ้ำ
 และมี test แสดงว่าผลลัพธ์เหมือนเดิมเมื่อไม่มี lock เมื่อจะปิด service จะให้ `/readyz` ล้ม หยุด loop และยังให้บริการต่อช่วงหนึ่ง Helm chart
 ([`deployments/helm`](../deployments/helm)) deploy service พร้อม NetworkPolicy ส่วน PostgreSQL และ NATS อยู่นอก chart
+
+## Studio builder เต็มรูปแบบ
+
+Studio schema v2 เป็น graph ไปข้างหน้าที่มีขอบเขต PostgreSQL ตรวจทุกเส้นทาง คำนวณชุด model/tool ที่ตรง
+ถือ cursor และใช้ intent ของ model ที่มี fence เพียงครั้งเดียว runtime เรียก tool ผ่าน action API และ model
+ผ่าน gateway เดิมด้วย key ของ agent ที่ derive ไว้ โดยเข้า database หรือ provider โดยตรงไม่ได้ การกู้คืนรอ
+action/call ที่บันทึกแล้ว branch มีปลายทางตายตัวและเปรียบเทียบตัวเลข JSON อย่างแม่นยำ v1 ใช้เส้นทางเดิม
+
+เก็บเฉพาะ JSON model ที่ตรวจแล้วและมีขอบเขตแบบส่วนตัวพร้อม settlement ใน transaction เดียว ให้อ่านเฉพาะ
+runtime ที่ถือ lease อยู่ ล้างเมื่อจบหรือเลย deadline และไม่แสดงใน metadata หรือ audit preview ของเวอร์ชัน
+ที่อนุมัติมี mode เปลี่ยนไม่ได้และใช้ตัวอย่างผล tool เป็นส่วนตัว PostgreSQL จึงปฏิเสธ action ของ tool การทดสอบ draft
+ในหน้าเว็บไม่เรียกอะไร Helm gateway ที่เปิดตามต้องการรักษาขอบเขต API/gateway ของ runtime และการถือ credential
+provider ดู [ADR-033 Rev 1.4](adr/ADR-033-agent-studio-and-runtime-credentials.md) และ [ADR-031](adr/ADR-031-llm-gateway.md)
 
 ## อ่านต่อ
 

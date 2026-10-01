@@ -328,6 +328,8 @@ policy และงบ นักพัฒนา agent ส่งคำขอแ�
 10. **ศูนย์ดูแลความปลอดภัยของ agent (SOC)** incident สรุปภาพรวม SOC และ operator console
     ([ADR-027](docs/adr/ADR-027-incidents-and-agent-soc.md), [ADR-028](docs/adr/ADR-028-operator-console.md))
 
+11. **Agent Studio** ฟอร์ม EN/TH ขั้น model ที่กำกับ branch แบบมีชนิดแม่นยำ template สามแบบ preview ที่อนุมัติ Hub และการหยุด run ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.4) PostgreSQL ถือ capability/progress และ compose/Kubernetes ใช้ demo เต็มเดียวกัน
+
 ความสามารถทั้งหมดแยกทีละ phase พร้อม test และ API route อยู่ใน [FEATURES.th.md](docs/FEATURES.th.md)
 
 ## ทำไมถึงเชื่อได้

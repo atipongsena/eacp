@@ -301,10 +301,10 @@ binding ใดเลย
 
 ## Agent Studio demo
 
-`TestStudioDemo` แสดง Phase 27a, 27b (ADR-033) และ 28 (ADR-016 Rev 1.1) และรันด้วย `DEMO=S` บน compose เท่านั้น Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
+`TestStudioDemo` แสดง Phase 27a, 27b, 27c (ADR-033 Rev 1.4) และ 28 (ADR-016 Rev 1.1) และรันด้วย `DEMO=S` บน compose และใน `scripts/k8s-e2e.sh` บน Kubernetes Fake MCP ตัวที่สอง `fakemcp-hr` (`fakemcp-hr:8091` บนเครือข่าย
 `erp` ที่มีเพียง worker เข้าได้ และมี token ของตัวเอง) มี tool เดียวคือ `get_leave_balance` ซึ่งตอบ `{"days": N}` ตาม id ของพนักงาน (E-1 มี 12 วัน)
 และตอบ tool error สำหรับ `ERR` `agent-runtime` รันใต้ compose profile `studio` บนเครือข่าย `agents` เท่านั้น ไม่มี URL ของฐานข้อมูล และไม่มี secret
-ของ connector หรือ provider demo เขียน master และ key ของมันลงใน volume `studio_runtime` ผ่าน stdin แล้วจึงเริ่มมัน
+ของ connector หรือ provider demo เขียน master และ key ของมันลงใน volume `studio_runtime` ผ่าน stdin แล้วจึง build และเริ่มมัน บน Kubernetes mount ไฟล์เดียวกันเป็น Secret สองชื่อต่างหากและเปิด runtime ผ่าน Helm
 
 - **S0** bootstrap tenant Wonka stella (`studio_author`) และ hana อยู่ในกลุ่ม HR ที่มี lena เป็นหัวหน้า finn (`studio_author`) อยู่ในฝ่ายการเงิน ส่วน carol ไม่อยู่ทั้งสองกลุ่ม otto และ opal เป็น operator service principal `studio-runtime` ถือ `studio_runtime`
   เพียงบทบาทเดียว policy อนุญาตการค้นข้อมูล HR แบบอ่านอย่างเดียว
@@ -325,11 +325,12 @@ binding ใดเลย
 - **S7** otto kill tool `get_leave_balance` run ถัดไปของ stella จึงรออยู่ที่ step ของมัน (action ค้างอยู่ที่ `QUEUED`) จากนั้นเขา kill run นั้น
   ใน heartbeat ถัดไป PostgreSQL ทำให้มันล้มเหลวเป็น `killed` และ runtime หยุดโดยไม่ปิด run เอง opal ซึ่งเป็น operator คนที่สองยกเลิก kill ทั้งสอง
   run ที่ถูก kill ยังล้มเหลวอยู่ และ step ของมันไม่เคยถูกส่ง (จำนวนการเรียกของ fakemcp-hr ไม่เปลี่ยน)
-- **S8** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
-- **S9** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
+- **S8** builder เต็มรูปแบบ: ลงทะเบียนและตั้งราคา model OpenAI/Anthropic อนุมัติ fixture คัดกรองคำขอลา/จัดซื้อและ key ของมัน ไม่มี leaf budget หรือ JSON ผิดจะล้มเหลวแบบปิด ทั้งสอง branch ตอบได้ preview ใช้ตัวอย่าง HR เรียก model ครั้งเดียวและส่ง tool ไม่ได้ takeover รอ call เดิมโดยไม่ส่งซ้ำ ปฏิเสธ model ผิดและ intent ที่ใช้แล้ว kill run/model ตัด call ถาวร canary ของ prompt/key provider ไม่อยู่ใน log หรือข้อมูลที่เก็บไว้ ล้าง typed output เมื่อจบ Kubernetes ตรวจ policy runtime กับ listener จริงด้วย
+- **S9** otto เพิกถอน key ของ Studio ทั้งหมด run ถัดไปล้มเหลวแบบปิด (`credential_pending`)
+- **S10** master, key ที่ derive ทุกตัว และ key ของ runtime ไม่ปรากฏในคำตอบของ API, log ของ service (รวมของ runtime) หรือ dump ของฐานข้อมูลใดเลย
   คำตอบไม่อยู่ใน log บรรทัดใดและไม่อยู่ใน journal และ audit chain ตรวจสอบผ่าน
 
-runtime เข้าถึงได้เพียง API และมีเพียงมันที่ถือ master ของ Studio (`test/security` `TestTheRuntimeReachesOnlyTheAPI`,
+runtime เข้าถึง API/gateway เท่านั้น และมีเพียงมันที่ถือ master ของ Studio (`test/security` `TestTheRuntimeReachesOnlyTheAPIAndGateway`,
 `TestOnlyTheRuntimeHoldsTheStudioMaster`)
 
 ## ขอบเขต

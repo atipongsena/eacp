@@ -187,3 +187,17 @@ disclosure (ข้อมูลรั่วไหล), **D**enial of service (ท
 | Forged or replayed governance decision | B2 |
 | Malicious operator or admin | B6 |
 | Sensitive data in traces and audit | B3, B5, B7, ความเสี่ยงที่เหลืออยู่ |
+
+## ขอบเขต model และ preview ของ Studio
+
+คำตอบ model เป็นข้อมูลที่ไม่เชื่อถือ ไม่ใช่คำสั่งให้ส่งงาน schema แบบปิด การเปรียบเทียบ scalar อย่างแม่นยำ
+ปลายทางตายตัว และชุด capability ทั้งหมดจาก PostgreSQL จำกัด graph prompt injection เพิ่ม tool/model/ปลายทาง
+ไม่ได้ แต่ model ยังให้ค่าที่ผ่าน schema แล้วทำให้เข้าใจผิดได้ จึงยังต้องมีการอนุมัติและตรวจโดยมนุษย์ Studio ต้องมี
+leaf hard budget ก่อน admit model intent ที่มี fence หนึ่งตัวผูก call เดียว takeover ไม่ส่ง call ที่ admit แล้วซ้ำ
+ปฏิเสธ fence เก่า และ run ที่ถูก kill ยังหยุดแม้ operator คนที่สองจะยกเลิก containment
+
+runtime ถือ key ของ agent ที่ derive แต่ไม่มี key provider หรือ URL database credential provider อยู่เฉพาะ gateway
+JSON แบบมีชนิดเป็นส่วนตัว มีขอบเขต บันทึกพร้อม settlement อ่านได้เฉพาะ lease ที่ยังถืออยู่และล้างเมื่อจบหรือเลย deadline
+ไม่เก็บ prompt หรือ envelope provider operator เห็น metadata เท่านั้น หาก runtime ถูกยึด ยังเสี่ยงต่อ capability
+ของ agent ที่อนุมัติแล้วและ output ส่วนตัวที่ยังอยู่จนกว่าจะหยุด preview มี mode เปลี่ยนไม่ได้ ใช้ตัวอย่าง tool เป็นส่วนตัว
+และ insert action ใน PostgreSQL ไม่ได้ draft ทดสอบโดยไม่เรียกอะไร ดู [ADR-033 Rev 1.4](../adr/ADR-033-agent-studio-and-runtime-credentials.md)

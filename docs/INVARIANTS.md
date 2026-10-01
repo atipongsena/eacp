@@ -137,7 +137,7 @@ Format: one `## <n> [A]` (or `[B]`) section per invariant, and one list item per
 - `internal/storage` TestTenantSeesOnlyItsOwnRows — the RLS convention
 - `internal/storage` TestMissingTenantContextSeesNothing — no tenant context, no rows
 - `internal/service` TestStartRefusesRoleThatCanBypassRLS — services refuse a role that bypasses RLS
-- `internal/worker` TestAnotherTenantSeesAndChangesNothingAfterAFullFlow — after a full flow, another tenant reads and changes nothing in any table, the Studio tables included (ADR-033)
+- `internal/worker` TestAnotherTenantSeesAndChangesNothingAfterAFullFlow — after a full flow, another tenant reads and changes nothing in any table, including Studio v2 node metadata and a settled private typed output (ADR-033)
 - `internal/api` TestActionsOfOtherTenantsAreNotFound — the action API answers 404 across tenants
 - `internal/api` TestOtherTenantsResourcesAreNotFound — the registry API answers 404 across tenants
 - `internal/registry` TestCrossTenantReferencesAreRejected — rows cannot reference another tenant's rows
