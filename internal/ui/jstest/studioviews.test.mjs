@@ -58,6 +58,22 @@ const catalogue = {
     definition: {read_only: true, risk: 'low'}}]}},
 };
 
+test('the full builder selects node details, retains edits and adds a selected node without external writes', async () => {
+  const client = fakeClient(catalogue), node = await form.render(ctxFor('new', [], {template: 'procurement-triage'}, client));
+  const choose = index => all(node).find(e => e.getAttribute('data-select-node') === String(index));
+  assert.ok(choose(0), 'visible graph nodes');
+  assert.equal(all(node).filter(e => e.getAttribute('class') === 'step-editor').length, 1);
+  await choose(2).dispatch('click');
+  const answer = all(node).find(e => e.tagName === 'TEXTAREA' && e.textContent.includes('review'));
+  assert.ok(answer, 'selected response editor'); answer.value = 'Edited in node panel'; await answer.dispatch('input');
+  await choose(0).dispatch('click'); await choose(2).dispatch('click');
+  assert.ok(all(node).some(e => e.tagName === 'TEXTAREA' && e.value === 'Edited in node panel'));
+  await byText(node, 'button', 'Add a branch').dispatch('click');
+  assert.match(node.textContent, /Step 4: fixed choice/);
+  assert.match(node.textContent, /Total declared cap:/);
+  assert.equal(client.calls.some(c => c.name.startsWith('studio.') && c.name !== 'studio.agents'), false);
+});
+
 test('a stale new-version save keeps the edited form and offers a separately confirmed copy', async () => {
   const client = fakeClient({...catalogue, 'studio.agents': agentList('ready'), 'studio.version': version('ready'),
     'studio.newversion': {ok: false, status: 409, error: 'conflict', detail: 'studio_version_stale'},

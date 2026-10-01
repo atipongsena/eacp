@@ -140,11 +140,11 @@ func signIn(tab context.Context, url, key string, width, height int) error {
 		chromedp.WaitVisible(`#key`, chromedp.ByQuery),
 		chromedp.SendKeys(`#key`, key, chromedp.ByQuery),
 		chromedp.Click(`form.signin button[type=submit]`, chromedp.ByQuery),
-		chromedp.Poll(`!document.body.classList.contains('signed-out') || !!document.querySelector('#main .notice.error')`,
+		chromedp.Poll(`!document.body.classList.contains('signed-out') || !!document.querySelector('form.signin .notice.error')`,
 			&ok, chromedp.WithPollingTimeout(20*time.Second)),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			var failed bool
-			if err := chromedp.Evaluate(`!!document.querySelector('#main .notice.error')`, &failed).Do(ctx); err != nil {
+			if err := chromedp.Evaluate(`document.body.classList.contains('signed-out')`, &failed).Do(ctx); err != nil {
 				return err
 			}
 			if failed {

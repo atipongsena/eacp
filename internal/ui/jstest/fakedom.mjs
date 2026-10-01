@@ -28,6 +28,8 @@ export class Element extends Node {
     super();
     this.tagName = tag.toUpperCase();
     this.attributes = new Map();
+    const properties = new Map();
+    this.style = {setProperty: (key, value) => properties.set(key, value), getPropertyValue: key => properties.get(key) ?? ''};
     this.listeners = {};
     this.open = false;
     this._value = null;
@@ -55,7 +57,7 @@ export class Element extends Node {
         : options.find(o => o.getAttribute('selected') !== null);
       return (chosen ?? options[0])?.getAttribute('value') ?? '';
     }
-    return this._value ?? this.getAttribute('value') ?? '';
+    return this._value ?? this.getAttribute('value') ?? (this.tagName === 'TEXTAREA' ? this.textContent : '');
   }
   set value(v) { this._value = String(v); }
   get disabled() { return this._disabled ?? this.getAttribute('disabled') !== null; }

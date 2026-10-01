@@ -4,6 +4,7 @@
 import {h, badge, cls} from '../dom.js';
 import {t} from '../i18n.js';
 import {stringifyJSON} from '../json.js';
+import {graphView} from './graph.js';
 
 const STAGE_LABELS = {
   waiting_for_approval: () => t('waiting for approval'),
@@ -37,6 +38,7 @@ export const effects = list => (list?.length ? list.map(sideEffect).join('; ') :
 export function definitionView(def) {
   const inputs = Object.entries(def?.inputs ?? {});
   return h('div', {class: 'definition'},
+    def?.schema_version === 2 ? graphView(def.steps ?? []) : null,
     h('h3', {}, t('It asks for')),
     inputs.length ? h('ul', {}, inputs.map(([name, spec]) =>
       h('li', {}, h('code', {}, name), ' ', t('(text, at most {n} characters)', {n: spec?.max_length ?? '—'}))))

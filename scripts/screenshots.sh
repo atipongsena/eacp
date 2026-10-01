@@ -17,6 +17,8 @@ command -v python3 >/dev/null 2>&1 || python=python
 docker compose up -d --build --wait
 bash examples/setup.sh
 . examples/env.sh
+scope=${SCREENSHOTS:-all}
+case "$scope" in all|studio) ;; *) echo "SCREENSHOTS must be all or studio" >&2; exit 2 ;; esac
 
 # api KEY METHOD PATH [JSON] prints the response body; it fails on a non-2xx status.
 api() {
@@ -37,6 +39,7 @@ api() {
 submit() { # submit IDEMPOTENCY_KEY JSON prints the action id
 	IDEMPOTENCY_KEY=$1 api "$AGENT_KEY" POST /v1/actions "$2" | "$JQ" -r .id
 }
+if [ "$scope" = all ]; then
 run=$(date +%s)
 
 # The ERP takes the order, times out, and shows it only much later: the
@@ -93,6 +96,7 @@ echo "screenshots: incidents are open"
 
 evidence=$(api "$OPERATOR_KEY" GET '/v1/actions?state=SUCCEEDED&limit=50' |
 	"$JQ" -r '[.actions[] | select(.operation == "purchase_high_value")][0].id')
+fi
 
 # Agent Studio (Phase 27a-3b). The runtime gets a fresh random master, written
 # once through stdin into its volume (never printed, never in the repository),
@@ -177,6 +181,7 @@ fi
 [ -n "$chrome" ] || { echo "no Chrome or Edge found; set CHROME" >&2; exit 1; }
 
 out=$(pwd)/docs/images
+if [ "$scope" = all ]; then
 (cd tools/screenshots && go run . -api "$EACP_API" -out "$out" -chrome "$chrome" -full evidence \
 	"approvals:APPROVER_KEY:#/approvals/$approval" \
 	"overview:OPERATOR_KEY:#/overview" \
@@ -186,8 +191,10 @@ out=$(pwd)/docs/images
 	"fleet:OPERATOR_KEY:#/fleet" \
 	"dependencies:OPERATOR_KEY:#/dependencies?kind=tool&id=$TOOL_CREATE_PO_ID" \
 	"cost:OPERATOR_KEY:#/cost")
-(cd tools/screenshots && go run . -page studio -api "$EACP_API" -out "$out" -chrome "$chrome" \
+fi
+(cd tools/screenshots && go run . -page studio -api "$EACP_API" -out "$out" -chrome "$chrome" -full builder \
 	"new:STUDIO_AUTHOR_KEY:#/new?template=leave-balance" \
+	"builder:STUDIO_AUTHOR_KEY:#/new?template=procurement-triage" \
 	"agent:STUDIO_AUTHOR_KEY:#/agents/$agent" \
 	"run:STUDIO_AUTHOR_KEY:#/runs/$studio_run" \
 	"hub:STUDIO_AUTHOR_KEY:#/hub" \

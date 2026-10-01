@@ -10,9 +10,21 @@ const TAGS = new Set(['a', 'button', 'code', 'dd', 'details', 'dialog', 'div', '
 
 const ATTRS = new Set(['autocomplete', 'checked', 'class', 'disabled', 'for', 'hidden', 'href', 'id', 'lang', 'maxlength',
   'method', 'name', 'placeholder', 'required', 'role', 'rows', 'scope', 'selected', 'size', 'spellcheck', 'title',
-  'type', 'value']);
+  'type', 'value', 'draggable']);
 
-const EVENTS = new Set(['onchange', 'onclick', 'oninput', 'onsubmit']);
+const EVENTS = new Set(['onchange', 'onclick', 'oninput', 'onsubmit', 'ondragstart', 'ondragover', 'ondrop', 'ondragend', 'onkeydown']);
+
+// Graph geometry has no string/CSS input. Validate the whole update before
+// applying only these numeric properties; arbitrary style attributes stay refused.
+export function geometry(el, values) {
+  const entries = Object.entries(values);
+  for (const [key, value] of entries) {
+    if (!['x', 'y', 'width', 'height', 'scale'].includes(key) || typeof value !== 'number' || !Number.isFinite(value)
+      || (key === 'scale' ? value < 0.5 || value > 2 : value < 0 || value > 8192)) throw new Error('invalid graph geometry');
+  }
+  for (const [key, value] of entries) el.style.setProperty(`--graph-${key}`, key === 'scale' ? String(value) : `${value}px`);
+  return el;
+}
 
 export function h(tag, attrs, ...children) {
   if (!TAGS.has(tag)) throw new Error(`element <${tag}> is not allowed`);

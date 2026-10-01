@@ -7,6 +7,7 @@ import {format, isUUID} from '../router.js';
 import {ask} from '../confirm.js';
 import {t} from '../i18n.js';
 import {successors, testPanel} from './preview.js';
+import {graphView} from './graph.js';
 import {stringifyJSON} from '../json.js';
 import {TEMPLATES, template} from './templates.js';
 import {emptyForm, fromDefinition, toDefinition, tools, models, newToolStep, newModelStep, newBranchStep} from './definition.js';
@@ -64,6 +65,8 @@ function build(ctx, state, catalogue, modelList, chosen) {
   const root = h('div');
   const errors = h('div');
   const review = h('div');
+  const graph = h('div');
+  let selected = state.form.steps[0];
   const draftTest = testPanel(() => toDefinition(state.form));
   const groups = ctx.session.me().groups;
   const text = (value, set, attrs = {}) => input(undefined, {value, oninput: e => { set(e.target.value); showReview(); }, ...attrs});
@@ -73,11 +76,20 @@ function build(ctx, state, catalogue, modelList, chosen) {
     replace(review,
       h('p', {}, t('Tools: {tools}', {tools: built.ok ? tools(built.definition).join(', ') || '—' : '—'})),
       h('p', {}, t('Models: {models}', {models: built.ok ? models(built.definition).join(', ') || '—' : '—'})),
+      h('ul', {}, state.form.steps.filter(s => s.kind === 'tool_call').map(s => h('li', {}, toolLabel(catalogue.find(x => x.ref === s.tool) ?? {ref: s.tool, executable: false})))),
+      h('ul', {}, state.form.steps.filter(s => s.kind === 'llm').map(s => h('li', {}, t('calls model {model}, capped at {cap} output tokens', {model: s.model || '—', cap: s.maxOutputTokens})))),
+      state.form.schemaVersion === 2 ? h('p', {}, t('Total declared cap: {cap} output tokens.', {cap: state.form.maxOutputTokens})) : null,
+      h('p', {}, t('Time limit: {n} seconds.', {n: state.form.timeoutSeconds})),
       built.ok ? h('details', {}, h('summary', {}, t('Definition JSON')), h('pre', {}, stringifyJSON(built.definition, 2))) : null);
+    if (state.form.schemaVersion === 2) replace(graph, graphView(state.form.steps, {selected: state.form.steps.indexOf(selected),
+      onSelect: i => { selected = state.form.steps[i]; draw(); }, onChange: draw}));
   };
+
+  const add = step => { state.form.steps.splice(Math.max(0, state.form.steps.length - 1), 0, step); selected = step; draw(); };
 
   const draw = () => {
     const isNew = !state.agent;
+    if (!state.form.steps.includes(selected)) selected = state.form.steps[0];
     showReview();
     return replace(root,
     h('p', {}, link(isNew ? t('← Agents') : t('← Back to the agent'), isNew ? format('agents') : format('agents', [state.agent.id]))),
@@ -103,22 +115,24 @@ function build(ctx, state, catalogue, modelList, chosen) {
         field(t('Maximum length'), text(row.maxLength, v => { row.maxLength = v; }, {size: 6})),
         button(t('Remove'), () => { state.form.inputs.splice(i, 1); draw(); }, {kind: 'ghost'}))),
       h('div', {class: 'actions'}, button(t('Add an input'), () => { state.form.inputs.push({name: '', maxLength: '64'}); draw(); }))),
-    section(t('Steps, in order'),
+    section(state.form.schemaVersion === 2 ? t('Agent graph') : t('Steps, in order'),
       h('p', {class: 'hint'}, t('Each tool call is an action: policy, approvals, budgets and kill switches apply to it. Use an earlier step’s output as {{steps.ID.output...}}.')),
-      state.form.steps.map((s, i) => stepEditor(state, s, i, catalogue, modelList, text, area, draw)),
+      state.form.schemaVersion === 2 ? h('div', {class: 'graph-workspace'}, graph,
+        h('div', {class: 'graph-inspector'}, h('h3', {}, t('Selected node')),
+          selected ? stepEditor(state, selected, state.form.steps.indexOf(selected), catalogue, modelList, text, area, draw) : h('p', {}, t('Add a node to start.'))))
+        : state.form.steps.map((s, i) => stepEditor(state, s, i, catalogue, modelList, text, area, draw)),
       state.form.schemaVersion === 1 ? button(t('Enable the full builder'), () => {
         state.form.schemaVersion = 2; state.form.maxOutputTokens = '100';
         state.form.steps.forEach((s, i) => { if (s.kind === 'tool_call') s.next = state.form.steps[i + 1]?.id ?? ''; }); draw();
       }) : null,
       h('div', {class: 'actions'}, button(t('Add a tool call'), () => {
         const last = state.form.steps.at(-1)?.id ?? '';
-        state.form.steps.splice(Math.max(0, state.form.steps.length - 1), 0, newToolStep(`step${state.form.steps.length}`, last));
-        draw();
-      }))),
+        add(newToolStep(`step${state.form.steps.length}`, last));
+      }, {disabled: state.form.schemaVersion === 2 && state.form.steps.length >= 20}))),
     state.form.schemaVersion === 2 ? h('div', {class: 'actions'},
-      button(t('Add a model step'), () => { state.form.steps.splice(Math.max(0, state.form.steps.length - 1), 0, newModelStep(`model${state.form.steps.length}`, state.form.steps.at(-1)?.id ?? '')); draw(); }),
-      button(t('Add a branch'), () => { state.form.steps.splice(Math.max(0, state.form.steps.length - 1), 0, newBranchStep(`choose${state.form.steps.length}`, state.form.steps.at(-1)?.id ?? '')); draw(); }),
-      button(t('Add an answer'), () => { state.form.steps.push({id: `answer${state.form.steps.length}`, kind: 'respond', text: ''}); draw(); })) : null,
+      button(t('Add a model step'), () => add(newModelStep(`model${state.form.steps.length}`, state.form.steps.at(-1)?.id ?? '')), {disabled: state.form.steps.length >= 20}),
+      button(t('Add a branch'), () => add(newBranchStep(`choose${state.form.steps.length}`, state.form.steps.at(-1)?.id ?? '')), {disabled: state.form.steps.length >= 20}),
+      button(t('Add an answer'), () => { selected = {id: `answer${state.form.steps.length}`, kind: 'respond', text: ''}; state.form.steps.push(selected); draw(); }, {disabled: state.form.steps.length >= 20})) : null,
     section(t('Limits'), field(t('Time limit in seconds (10 to 3600)'),
       text(state.form.timeoutSeconds, v => { state.form.timeoutSeconds = v; }, {size: 6})), state.form.schemaVersion === 2 ? field(t('Total declared output token cap'), text(state.form.maxOutputTokens, v => { state.form.maxOutputTokens = v; }, {size: 6})) : null),
     draftTest,

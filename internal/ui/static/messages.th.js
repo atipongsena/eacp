@@ -2,6 +2,27 @@
 // test fails when a t() call has no entry here, when an entry has other
 // placeholders than its key, or when an entry no t() call uses.
 export default {
+  'True': 'จริง',
+  'False': 'เท็จ',
+  'Tool call': 'เรียกเครื่องมือ',
+  'Model call': 'เรียกโมเดล',
+  'Fixed branch': 'ทางเลือกคงที่',
+  'Answer': 'คำตอบ',
+  'Node {id} needs a unique id.': 'โหนด {id} ต้องมี ID ที่ไม่ซ้ำ',
+  'Check connection {from} / {port} → {to}.': 'ตรวจการเชื่อม {from} / {port} → {to}',
+  'Agent graph': 'กราฟของ Agent',
+  'Connect an output to a following node input. Click both ports or drag between them.': 'เชื่อมจุดออกกับจุดเข้าของโหนดถัดไป คลิกทั้งสองจุดหรือลากระหว่างจุด',
+  'Read-only graph': 'กราฟสำหรับดูเท่านั้น',
+  'Connecting {id} / {port}: choose a following input.': 'กำลังเชื่อม {id} / {port}: เลือกจุดเข้าของโหนดถัดไป',
+  'Connections must point forward to a node with a unique id.': 'เส้นเชื่อมต้องชี้ไปข้างหน้าสู่โหนดที่มี ID ไม่ซ้ำ',
+  'Input of {id}': 'จุดเข้าของ {id}',
+  'Input': 'จุดเข้า',
+  'True / False': 'จริง / เท็จ',
+  'End of this path': 'จบเส้นทางนี้',
+  'Connections': 'เส้นเชื่อม',
+  'Cancel connection': 'ยกเลิกการเชื่อม',
+  'Selected node': 'โหนดที่เลือก',
+  'Add a node to start.': 'เพิ่มโหนดเพื่อเริ่มต้น',
   // dom.js
   'just now': 'เมื่อสักครู่',
   '{n} min ago': '{n} นาทีที่แล้ว',

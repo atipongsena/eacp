@@ -17,7 +17,7 @@ var consoleFiles = []string{
 	"api.js", "app.css", "app.js", "confirm.js", "dom.js", "i18n.js", "index.html", "messages.th.js", "router.js",
 	"session.js", "signin.js", "studio.html", "studio.js", "json.js",
 	"studio/agents.js", "studio/common.js", "studio/definition.js", "studio/hub.js", "studio/form.js", "studio/requests.js", "studio/run.js",
-	"studio/status.js", "studio/templates.js", "studio/preview.js",
+	"studio/status.js", "studio/templates.js", "studio/preview.js", "studio/graph.js",
 	"views/approvals.js", "views/common.js", "views/cost.js", "views/dependencies.js", "views/execution.js",
 	"views/fleet.js",
 	"views/incidents.js", "views/inventory.js", "views/overview.js", "views/security.js",

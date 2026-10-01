@@ -1,6 +1,13 @@
 # ADR-028: The operator console
 
 Status: Accepted (Rev 1.0, 2026-09-26; Rev 1.1, 2026-09-29; Rev 1.2, 2026-09-30; Rev 1.3, 2026-09-30). Scope: Phase 22b (MASTER_PLAN §55–§57 and §94); Rev 1.1 is Phase 26-UI (design system and language); Rev 1.2 is Phase 27a-3b (the Agent Studio page, ADR-033); Rev 1.3 is Phase 27b (the Hub on that page).
+Rev 1.4 (2026-10-01, owner accepted): Phase 27c extends the Studio form under the same safe DOM, memory-only
+session, literal English/Thai translations and confirmed-write rules. Basics, Inputs, Steps, Test and Review expose
+schema-v2 model/branch nodes and all declared capabilities. Draft tests use samples only; a confirmed real preview
+names an approved owned version and shows model spending. Stale saves retain the draft and offer a separately
+confirmed copy. Run views show node/call/action metadata, never private model output. Exact JSON parsing and
+serialization preserve decimal and large-integer branch values. PostgreSQL remains the validation authority.
+
 Related: ADR-027 (incidents and the SOC summary), ADR-016 (kill switch), ADR-022 (circuits), ADR-023 (MCP tools),
 ADR-024 (fleet operations), ADR-005 (approvals), ADR-014 (NATS carries signals).
 
@@ -208,3 +215,7 @@ sees where it is on the way to running and runs it, and a registry approver deci
 | A browser offering to save the key | Residual risk. The sign-in field is a password field with `autocomplete="off"`, but a browser may still offer to save it after sign-in. Operators decline; managed browsers should disable the password manager for the console's origin. The console itself never stores the key. |
 | Signing in to both pages | Each page signs in on its own; the key never leaves the page's memory. |
 | A Studio run list | None: the page lists only the runs started in its tab, in memory. |
+
+### Phase 27c connected node editor (owner amendment, 2026-10-01)
+
+Schema-v2 Studio forms render a deterministically layered graph and selected-node inspector. Authors connect labelled output ports to following input ports by click or drag; invalid backward/ambiguous targets are refused locally, and PostgreSQL still validates every saved path. Both branch arms and textual connections remain visible. Saved definitions use the same graph read-only. V1 stays sequential until explicitly converted. Geometry is bounded numeric CSSOM through dom.js, never arbitrary CSS; diagrams use safe DOM and existing semantic tokens/CSS glyphs, with no SVG/images or new dependency. Graph edits are unsaved form state only; all writes retain confirmation and existing authority.
