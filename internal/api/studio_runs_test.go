@@ -89,7 +89,7 @@ func TestStudioRunsThroughTheAPI(t *testing.T) {
 	runtime := "/v1/studio/runtime/runs/" + id
 	code, body = h.as("rt", "POST", runtime+"/heartbeat", map[string]any{"runtime_id": "r1", "generation": 1, "lease_seconds": 30})
 	h.want(200, code, body)
-	if body["version_active"] != true {
+	if body["version_active"] != true || body["killed"] != false {
 		t.Fatalf("heartbeat = %v", body)
 	}
 	code, body = h.as("rt", "POST", runtime+"/steps", map[string]any{"runtime_id": "r2", "generation": 1, "index": 0, "action_id": a})
@@ -171,4 +171,46 @@ func TestOperatorsRevokeEveryStudioKey(t *testing.T) {
 	if strings.Contains(string(raw), "hash") {
 		t.Fatal("hash in the response")
 	}
+}
+
+// TestARunKillThroughTheAPI: an operator kills one run (Phase 28); its next
+// heartbeat says killed and PostgreSQL has failed it. A kill of the agent
+// refuses new runs with 409.
+func TestARunKillThroughTheAPI(t *testing.T) {
+	h, agent, _ := studioRunHarness(t)
+	runs := "/v1/studio/agents/" + agent + "/runs"
+	code, run := h.as("stella", "POST", runs, map[string]any{"inputs": map[string]string{"employee_id": "E-1"}})
+	h.want(201, code, run)
+	id := str(run, "id")
+	code, body := h.as("rt", "POST", "/v1/studio/runtime/claims",
+		map[string]any{"runtime_id": "r1", "master_version": "v1", "lease_seconds": 30, "limit": 5})
+	h.want(200, code, body)
+
+	kill := map[string]any{"scope": "run", "target_id": id, "killed": true, "reason": "wrong employee"}
+	code, body = h.as("stella", "POST", "/v1/killswitch", kill)
+	h.want(403, code, body)
+	code, body = h.as("otto", "POST", "/v1/killswitch", kill)
+	h.want(200, code, body)
+	if body["scope"] != "run" || body["killed"] != true {
+		t.Fatalf("kill = %v", body)
+	}
+	beat := map[string]any{"runtime_id": "r1", "generation": 1, "lease_seconds": 30}
+	code, body = h.as("rt", "POST", "/v1/studio/runtime/runs/"+id+"/heartbeat", beat)
+	h.want(200, code, body)
+	if body["killed"] != true || body["version_active"] != false {
+		t.Fatalf("heartbeat = %v", body)
+	}
+	code, got := h.as("stella", "GET", "/v1/studio/runs/"+id, nil)
+	h.want(200, code, got)
+	if got["state"] != "FAILED" || got["failure_reason"] != "killed" {
+		t.Fatalf("run = %v", got)
+	}
+	code, body = h.as("rt", "POST", "/v1/studio/runtime/runs/"+id+"/heartbeat", beat)
+	h.want(403, code, body)
+
+	code, body = h.as("otto", "POST", "/v1/killswitch",
+		map[string]any{"scope": "agent", "target_id": agent, "killed": true, "reason": "containment"})
+	h.want(200, code, body)
+	code, body = h.as("stella", "POST", runs, map[string]any{"inputs": map[string]string{"employee_id": "E-1"}})
+	h.want(409, code, body)
 }

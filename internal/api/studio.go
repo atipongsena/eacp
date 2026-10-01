@@ -186,9 +186,10 @@ func (s *Server) studioHeartbeat(w http.ResponseWriter, r *http.Request, c ident
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	active, err := s.studio.Heartbeat(r.Context(), actor(c), id, in.Lease, in.LeaseSeconds)
+	status, err := s.studio.Heartbeat(r.Context(), actor(c), id, in.Lease, in.LeaseSeconds)
 	if err == nil {
-		writeJSON(w, http.StatusOK, map[string]bool{"version_active": active})
+		writeJSON(w, http.StatusOK, map[string]bool{"version_active": status == studio.BeatActive,
+			"killed": status == studio.BeatKilled})
 	}
 	return err
 }

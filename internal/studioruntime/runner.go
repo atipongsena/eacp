@@ -35,6 +35,10 @@ var runtimeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 // finishing the run.
 var errLost = errors.New("studioruntime: the run's lease was lost")
 
+// errKilled is a run a kill matched: PostgreSQL failed it killed at its
+// heartbeat, so this runtime stops without finishing it (Phase 28).
+var errKilled = errors.New("studioruntime: the run was killed")
+
 // Options configures a Runtime.
 type Options struct {
 	// API is the EACP API origin, such as http://controlplane-api:8080.
@@ -215,6 +219,7 @@ type execution struct {
 	c        claim
 	key      string // the agent key, once derived
 	replaced atomic.Bool
+	killed   atomic.Bool
 }
 
 // execute drives c and finishes it, unless its lease was lost or ctx ended.
@@ -239,6 +244,9 @@ func (r *Runtime) execute(parent context.Context, tenant uuid.UUID, c claim) {
 	default:
 	}
 	switch {
+	case x.killed.Load():
+		r.log.InfoContext(parent, "studio run killed", "run", c.ID.String())
+		return
 	case errors.Is(err, errLost):
 		r.log.WarnContext(parent, "studio run lease lost", "run", c.ID.String())
 		return
@@ -268,7 +276,7 @@ func (r *Runtime) execute(parent context.Context, tenant uuid.UUID, c claim) {
 }
 
 // heartbeats renews the lease every third of it until ctx ends; a lost lease
-// cancels the run, a replaced version marks it.
+// or a kill cancels the run, a replaced version marks it.
 func (x *execution) heartbeats(ctx context.Context, cancel context.CancelFunc, lost chan struct{}) {
 	t := time.NewTicker(x.r.lease / 3)
 	defer t.Stop()
@@ -278,7 +286,12 @@ func (x *execution) heartbeats(ctx context.Context, cancel context.CancelFunc, l
 			return
 		case <-t.C:
 		}
-		if _, err := x.beat(ctx); errors.Is(err, errLost) {
+		_, err := x.beat(ctx)
+		switch {
+		case errors.Is(err, errKilled):
+			cancel()
+			return
+		case errors.Is(err, errLost):
 			close(lost)
 			cancel()
 			return
@@ -287,9 +300,14 @@ func (x *execution) heartbeats(ctx context.Context, cancel context.CancelFunc, l
 }
 
 // beat renews the lease and reports whether the version is still ACTIVE.
+// A killed run is errKilled.
 func (x *execution) beat(ctx context.Context) (bool, error) {
+	if x.killed.Load() {
+		return false, errKilled
+	}
 	var out struct {
 		VersionActive bool `json:"version_active"`
+		Killed        bool `json:"killed"`
 	}
 	status, err := x.r.api.do(ctx, x.r.keys[x.tenant], "POST", "/v1/studio/runtime/runs/"+x.c.ID.String()+"/heartbeat",
 		nil, map[string]any{"runtime_id": x.r.id, "generation": x.c.Generation,
@@ -299,6 +317,10 @@ func (x *execution) beat(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	if out.Killed {
+		x.killed.Store(true)
+		return false, errKilled
 	}
 	if !out.VersionActive {
 		x.replaced.Store(true)
@@ -428,6 +450,9 @@ func (x *execution) record(ctx context.Context, i int, id uuid.UUID) error {
 // await waits for action id to settle and returns its output when want.
 func (x *execution) await(ctx context.Context, id uuid.UUID, want bool) (any, string, error) {
 	for {
+		if x.killed.Load() {
+			return nil, "", errKilled
+		}
 		if x.replaced.Load() {
 			return nil, "version_replaced", nil
 		}

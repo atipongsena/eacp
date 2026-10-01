@@ -9,7 +9,8 @@ import {t} from '../i18n.js';
 import {back, linkBack} from './common.js';
 import {toolTable} from './inventory.js';
 
-const SCOPES = ['tool', 'connector', 'agent_version', 'agent', 'team', 'action', 'tenant'];
+// run is one Studio run (ADR-016 Rev 1.1); global waits for platform authority.
+export const SCOPES = ['tool', 'connector', 'agent_version', 'agent', 'team', 'action', 'run', 'tenant'];
 const CODES = ['security_incident', 'policy_violation', 'operator_request', 'error_budget_exhausted'];
 const MAX_CONNECTORS = 50;
 

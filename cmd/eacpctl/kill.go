@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const killUsage = "usage: eacpctl kill activate|resume <tenant|team|agent|agent_version|action|connector|tool|model> <uuid> --reason <text> [--code <AGT reason>] | list"
+const killUsage = "usage: eacpctl kill activate|resume <tenant|team|agent|agent_version|action|connector|tool|model|run> <uuid> --reason <text> [--code <AGT reason>] | list"
 
 func runKill(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
 	if len(args) == 1 && args[0] == "list" {
@@ -18,7 +18,7 @@ func runKill(ctx context.Context, args []string, getenv func(string) string, out
 		return errors.New(killUsage)
 	}
 	switch args[1] {
-	case "tenant", "team", "agent", "agent_version", "action", "connector", "tool", "model":
+	case "tenant", "team", "agent", "agent_version", "action", "connector", "tool", "model", "run":
 	default:
 		return errors.New(killUsage)
 	}

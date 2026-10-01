@@ -92,7 +92,7 @@ test('every failure reason the runtime names has its own sentence; an unknown on
   setLang('en');
   const reasons = ['credential_pending', 'credential_expired', 'credential_revoked', 'version_replaced',
     'action_denied', 'action_failed', 'action_cancelled', 'action_unknown', 'result_unavailable',
-    'answer_too_large', 'deadline_exceeded'];
+    'answer_too_large', 'deadline_exceeded', 'killed'];
   assert.deepEqual(Object.keys(FAILURES).sort(), [...reasons].sort());
   const seen = new Set();
   for (const r of reasons) {

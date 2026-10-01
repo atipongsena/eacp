@@ -50,6 +50,7 @@ export const FAILURES = {
   result_unavailable: () => t('A step succeeded, but its result could not be read back.'),
   answer_too_large: () => t('The answer was too long to keep.'),
   deadline_exceeded: () => t('The run took longer than its time limit.'),
+  killed: () => t('An operator stopped this run with the kill switch; it sends no more steps.'),
 };
 
 export const failureSentence = reason => (Object.hasOwn(FAILURES, reason)

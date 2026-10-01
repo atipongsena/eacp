@@ -31,7 +31,7 @@
 //	                          block a tool, or lift its quarantine (a second registry approver)
 //	eacpctl dependency blast-radius mcp|tool|agent_version <uuid>
 //	eacpctl dependency blast-radius model|system <name>
-//	eacpctl kill activate|resume tenant|team|agent|agent_version|action|connector|tool <uuid> --reason <text> [--code <AGT reason>]
+//	eacpctl kill activate|resume tenant|team|agent|agent_version|action|connector|tool|model|run <uuid> --reason <text> [--code <AGT reason>]
 //	eacpctl kill list
 //	eacpctl fleet status|list [--environment E] [--risk R] [--owner-group UUID] [--health H] [--window 24h]
 //	eacpctl fleet operation <operation-id>

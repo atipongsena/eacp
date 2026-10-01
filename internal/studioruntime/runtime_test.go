@@ -477,6 +477,43 @@ func TestARevokedKeyFailsTheRun(t *testing.T) {
 	r.failed(id, "credential_revoked")
 }
 
+// TestAKilledRunStops: an operator kills one run while its step waits for a
+// human (Phase 28). PostgreSQL fails it killed at its next heartbeat, and the
+// runtime stops without finishing it.
+func TestAKilledRunStops(t *testing.T) {
+	r := newRig(t)
+	r.approveKeys()
+	r.f.ActivatePolicy(t, escalatePolicy)
+	id := r.start("E-1")
+	done := make(chan int)
+	go func() {
+		n, _ := r.rt.RunOnce(context.Background())
+		done <- n
+	}()
+	for deadline := time.Now().Add(20 * time.Second); r.count(`SELECT count(*) FROM eacp.studio_run_steps`) == 0; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the step was never recorded: %v %s", r.run(id), r.logs.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	code, body := r.as("otto", "POST", "/v1/killswitch",
+		map[string]any{"scope": "run", "target_id": id, "killed": true, "reason": "wrong employee"})
+	r.want(200, code, body)
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the run did not stop")
+	}
+	r.failed(id, "killed")
+	logs := r.logs.String()
+	if !strings.Contains(logs, "studio run killed") || strings.Contains(logs, "studio run finish") {
+		t.Fatalf("logs = %s", logs)
+	}
+	if got := r.conn.payloads(); len(got) != 0 {
+		t.Fatalf("connector calls = %v", got)
+	}
+}
+
 func TestADeniedStepFailsTheRun(t *testing.T) {
 	r := newRig(t)
 	r.approveKeys()

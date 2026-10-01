@@ -470,6 +470,7 @@ export default {
   'A step succeeded, but its result could not be read back.': 'ขั้นหนึ่งสำเร็จ แต่อ่านผลลัพธ์กลับมาไม่ได้',
   'The answer was too long to keep.': 'คำตอบยาวเกินกว่าจะเก็บไว้ได้',
   'The run took longer than its time limit.': 'การรันใช้เวลานานเกินเวลาจำกัด',
+  'An operator stopped this run with the kill switch; it sends no more steps.': 'ผู้ปฏิบัติการหยุดการรันนี้ด้วย kill switch จึงไม่ส่งขั้นใดอีก',
   'The run failed: {reason}.': 'การรันล้มเหลว: {reason}',
   'Waiting for the agent runtime to pick it up.': 'รอ agent runtime รับไปทำ',
   'Running: each step goes through the governed action path.': 'กำลังรัน: ทุกขั้นผ่านเส้นทาง action ที่มีการกำกับดูแล',
