@@ -28,7 +28,8 @@ const leaveAnswer = "You have 12 days of leave left."
 // in agent-runtime with a key derived from a master only the runtime holds,
 // and every side effect goes through the action path. Phase 27b adds the
 // Hub: an HR lead publishes the agent to HR, a colleague runs it, and a
-// finance author's copy starts with no permission.
+// finance author's copy starts with no permission. Phase 28 adds the run
+// kill scope: an operator kills one run and its step never runs.
 func TestStudioDemo(t *testing.T) {
 	d := newDemo(t, tenantStudio)
 	if d.p.name() != "compose" {
@@ -37,7 +38,7 @@ func TestStudioDemo(t *testing.T) {
 
 	d.step("S0. Bootstrap tenant Wonka: people, the HR department and the runtime's own principal")
 	d.tenantWithCast("wonka", "Wonka", []member{
-		{"erin", "registry_editor"}, {"rita", "registry_approver"}, {"otto", "operator"}, {"audra", "auditor"},
+		{"erin", "registry_editor"}, {"rita", "registry_approver"}, {"otto", "operator"}, {"opal", "operator"}, {"audra", "auditor"},
 		{"stella", "studio_author"}, {"carol", "approver"}, {"hana", "approver"}, {"lena", "approver"},
 		{"finn", "studio_author"},
 	})
@@ -55,7 +56,7 @@ func TestStudioDemo(t *testing.T) {
 	d.logf("policy v%v active: read-only HR lookups are allowed", policy["version"])
 
 	d.step("S1. Register the HR MCP server; the worker discovers get_leave_balance; erin and rita certify it")
-	d.certifyLeaveTool()
+	leaveTool := d.certifyLeaveTool()
 
 	d.step("S2. Start agent-runtime with a fresh master secret and its own key")
 	master := d.startRuntime()
@@ -180,13 +181,36 @@ func TestStudioDemo(t *testing.T) {
 	}
 	d.logf("finn copies it into finance: the copy is %v and cannot run (HTTP %d); it carries no permission", clone["status"], code)
 
-	d.step("S7. otto revokes every Studio key: runs stop at once")
+	d.step("S7. otto kills one run: PostgreSQL fails it killed, and its step never runs")
+	sent := len(d.hrCalls())
+	d.must(200, "otto", "POST", "/v1/killswitch", map[string]any{"scope": "tool", "target_id": leaveTool, "killed": true,
+		"reason": "hold HR lookups (demo)"})
+	held := d.runAs("stella", agent, "E-1")
+	heldAction := d.waitStep(held)
+	d.logf("with get_leave_balance killed, the run's step (action %.8s) waits %v and the run keeps running",
+		heldAction, d.actionState(heldAction))
+	d.must(200, "otto", "POST", "/v1/killswitch", map[string]any{"scope": "run", "target_id": held, "killed": true,
+		"reason": "wrong employee (demo)"})
+	d.waitRun(held, "FAILED", "killed")
+	d.logf("otto kills that run: at its next heartbeat PostgreSQL fails it killed, and the runtime stops without finishing it")
+	for _, k := range [][2]string{{"run", held}, {"tool", leaveTool}} {
+		d.must(200, "opal", "POST", "/v1/killswitch", map[string]any{"scope": k[0], "target_id": k[1], "killed": false,
+			"reason": "cleared (demo)"})
+	}
+	time.Sleep(5 * time.Second)
+	after := d.actionState(heldAction)
+	if after != "QUEUED" || len(d.hrCalls()) != sent {
+		t.Fatalf("the killed run's step ran: %v, %d calls (was %d)", after, len(d.hrCalls()), sent)
+	}
+	d.logf("opal (a second operator) clears both kills: the killed run stays failed and its step stays %v, never sent", after)
+
+	d.step("S8. otto revokes every Studio key: runs stop at once")
 	revoked := d.must(200, "otto", "POST", "/v1/studio/credentials/revoke-all", map[string]any{"reason": "suspected runtime compromise (demo)"})
 	d.logf("otto revokes %v Studio key(s)", revoked["revoked"])
 	d.waitRun(d.runAs("stella", agent, "E-1"), "FAILED", "credential_pending")
 	d.logf("the next run fails closed: credential_pending, until a new key is proposed and approved")
 
-	d.step("S8. No master, derived key or runtime key anywhere; the answer is in no log and no journal entry")
+	d.step("S9. No master, derived key or runtime key anywhere; the answer is in no log and no journal entry")
 	d.studioScan(master, key)
 	v := d.must(200, "audra", "GET", "/v1/audit/verify", nil)
 	if v["valid"] != true {
@@ -214,8 +238,8 @@ func (d *demo) runtimePrincipal() {
 
 // certifyLeaveTool registers hr-mcp, waits for the scan and certifies
 // get_leave_balance: READ_ONLY, one attempt, keeping results 10 minutes so
-// the runtime can read the output.
-func (d *demo) certifyLeaveTool() {
+// the runtime can read the output. It returns the tool's id.
+func (d *demo) certifyLeaveTool() string {
 	d.t.Helper()
 	conn := d.must(201, "erin", "POST", "/v1/connectors", map[string]any{"name": "hr-mcp", "protocol": "mcp",
 		"endpoint": "http://fakemcp-hr:8091/mcp", "secret_ref": "hr-mcp"})
@@ -229,6 +253,7 @@ func (d *demo) certifyLeaveTool() {
 		"max_attempts": 1, "result_retention_seconds": 600})
 	d.must(204, "rita", "POST", path+"/contract", map[string]any{"contract_id": c["id"]})
 	d.logf("erin certifies it READ_ONLY, one attempt, keeping results for 10 minutes; rita activates the contract")
+	return tool["id"].(string)
 }
 
 // startRuntime gives agent-runtime a fresh random master and its key, and
@@ -310,6 +335,33 @@ func (d *demo) waitRunAs(who, run, state, reason string) map[string]any {
 		}
 		if time.Now().After(deadline) {
 			d.t.Fatalf("run %s did not finish: %v\nruntime log:\n%s", run, got, d.p.runtimeLogs())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// actionState reads action id's state as audra (202 while it is not final).
+func (d *demo) actionState(id string) any {
+	d.t.Helper()
+	code, body := d.call("audra", "GET", "/v1/actions/"+id, nil)
+	if code != 200 && code != 202 {
+		d.t.Fatalf("GET /v1/actions/%s = %d %v", id, code, body)
+	}
+	return body["state"]
+}
+
+// waitStep waits until run has recorded its first step and returns the
+// step's action id.
+func (d *demo) waitStep(run string) string {
+	d.t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		got := d.must(200, "stella", "GET", "/v1/studio/runs/"+run, nil)
+		if steps, _ := got["steps"].([]any); len(steps) == 1 {
+			return steps[0].(map[string]any)["action_id"].(string)
+		}
+		if time.Now().After(deadline) {
+			d.t.Fatalf("run %s recorded no step: %v\nruntime log:\n%s", run, got, d.p.runtimeLogs())
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
