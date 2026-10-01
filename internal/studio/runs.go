@@ -20,6 +20,8 @@ type Run struct {
 	VersionID       uuid.UUID  `json:"version_id"`
 	RequestedBy     uuid.UUID  `json:"requested_by"`
 	State           string     `json:"state"`
+	Mode            string     `json:"mode"`
+	CurrentIndex    int        `json:"current_index"`
 	FailureReason   string     `json:"failure_reason,omitempty"`
 	Deadline        time.Time  `json:"deadline"`
 	CreatedAt       time.Time  `json:"created_at"`
@@ -59,10 +61,10 @@ func (s *Service) Run(ctx context.Context, a registry.Actor, id uuid.UUID, reade
 		var reason *string
 		var expires *time.Time
 		if err := tx.QueryRow(ctx, `SELECT id, agent_id, version_id, requested_by, state, failure_reason, deadline,
-				created_at, finished_at, answer_expires_at
+				created_at, finished_at, answer_expires_at, mode, current_index
 			FROM eacp.studio_runs WHERE id = $1 AND ($2 OR requested_by = $3)`, id, reader, a.PrincipalID).Scan(
 			&r.ID, &r.AgentID, &r.VersionID, &r.RequestedBy, &r.State, &reason, &r.Deadline, &r.CreatedAt,
-			&r.FinishedAt, &expires); err != nil {
+			&r.FinishedAt, &expires, &r.Mode, &r.CurrentIndex); err != nil {
 			return err
 		}
 		if reason != nil {

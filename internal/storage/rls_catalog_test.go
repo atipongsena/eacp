@@ -98,7 +98,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		t.Errorf("reviewed incident tables missing: %v", got)
 	}
 	studio := []string{"studio_agents", "studio_credentials", "studio_listing_proposals", "studio_listings",
-		"studio_run_steps", "studio_runs", "studio_save_marks", "studio_versions"}
+		"studio_run_nodes", "studio_run_steps", "studio_runs", "studio_save_marks", "studio_versions"}
 	if got := strs(`SELECT relname FROM pg_class WHERE relnamespace = 'eacp'::regnamespace
 		AND relkind = 'r' AND relname LIKE 'studio%' ORDER BY relname`); !slices.Equal(got, studio) {
 		t.Errorf("reviewed studio tables missing: %v", got)
@@ -180,6 +180,11 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.studio_listing_decide(uuid,boolean,text)",
 		"eacp.studio_listing_propose(uuid,uuid,text,text[],text)",
 		"eacp.studio_listing_retire(uuid,text,text)",
+		"eacp.studio_llm_begin(uuid,text,bigint,integer)",
+		"eacp.studio_node_begin(uuid,text,bigint,integer)",
+		"eacp.studio_node_complete(uuid,text,bigint,integer,jsonb)",
+		"eacp.studio_node_output(uuid,text,bigint,integer)",
+		"eacp.studio_preview_start(uuid,jsonb,jsonb)",
 		"eacp.studio_run_answer(uuid)",
 		"eacp.studio_run_claim(text,text,integer,integer)",
 		"eacp.studio_run_finish(uuid,text,bigint,text,text,text)",
