@@ -60,6 +60,18 @@ func TestStudioPreviewOutputRefusesExpiredRun(t *testing.T) {
 	wantState(t, err, sqlBadState)
 }
 
+func TestStudioPreviewMissingChosenSampleFailsClosed(t *testing.T) {
+	f := newFix(t)
+	v, _ := approvedDefinition(t, f, "missing-sample", example)
+	run := f.ID(t, "stella", `SELECT eacp.studio_preview_start($1,$2::jsonb,'{}'::jsonb)`, v, inputs)
+	c := f.mustClaim("r1")
+	out, err := f.object("rt", `SELECT eacp.studio_node_output($1,$2,$3,0)`, run, "r1", c.Generation)
+	ok(t, err)
+	if out["state"] != "failed" || out["failure"] != "result_unavailable" {
+		t.Fatalf("missing sample state=%v", out["state"])
+	}
+}
+
 func (f *fix) object(actor, sql string, args ...any) (map[string]any, error) {
 	var raw []byte
 	err := storage.InTenantTx(context.Background(), f.App, f.Tenant.String(), func(tx pgx.Tx) error {

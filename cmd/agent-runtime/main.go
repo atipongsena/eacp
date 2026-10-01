@@ -48,6 +48,7 @@ func main() {
 			}
 			rt, err := studioruntime.New(studioruntime.Options{
 				API: d.Config.APIURL, Keys: keys, Master: master, ID: id, Lease: d.Config.RuntimeLease,
+				Gateway:     d.Config.RuntimeLLMURL,
 				Concurrency: d.Config.RuntimeConcurrency, Poll: d.Config.RuntimePollInterval,
 				Log: d.Log, Redact: d.RedactSecrets,
 			})

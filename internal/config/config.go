@@ -136,6 +136,7 @@ type Config struct {
 	// how many runs it drives at once, how often it claims and how often it
 	// proposes due keys.
 	APIURL                string
+	RuntimeLLMURL         string
 	RuntimeKeyFile        string
 	StudioMasterFile      string
 	StudioMasterVersion   string
@@ -375,6 +376,14 @@ func Load(getenv func(string) string, opts Options) (Config, error) {
 			errs = append(errs, errors.New("EACP_API_URL: required, an http:// or https:// origin"))
 		}
 		cfg.APIURL = strings.TrimSuffix(cfg.APIURL, "/")
+		cfg.RuntimeLLMURL = get("EACP_RUNTIME_LLM_URL", "")
+		if cfg.RuntimeLLMURL != "" {
+			u, err := url.Parse(cfg.RuntimeLLMURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+				errs = append(errs, errors.New("EACP_RUNTIME_LLM_URL: must be an http:// or https:// origin without credentials, path, query or fragment"))
+			}
+			cfg.RuntimeLLMURL = strings.TrimSuffix(cfg.RuntimeLLMURL, "/")
+		}
 		cfg.RuntimeKeyFile = get("EACP_RUNTIME_KEY_FILE", "")
 		if cfg.RuntimeKeyFile == "" {
 			errs = append(errs, errors.New("EACP_RUNTIME_KEY_FILE: required by agent-runtime"))
@@ -461,6 +470,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int64("llm_max_request_bytes", c.LLMMaxRequestBytes),
 		slog.String("llm_id", c.LLMID),
 		slog.String("api_url", RedactURL(c.APIURL)),
+		slog.String("runtime_llm_url", RedactURL(c.RuntimeLLMURL)),
 		slog.String("runtime_key_file", c.RuntimeKeyFile),
 		slog.String("studio_master_file", c.StudioMasterFile),
 		slog.String("studio_master_version", c.StudioMasterVersion),

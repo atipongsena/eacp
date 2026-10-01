@@ -19,7 +19,7 @@ func TestStudioPreviewAndProgressRoutesAreFenced(t *testing.T) {
 	h.want(200, code, claim)
 	base := "/v1/studio/runtime/runs/" + str(run, "id")
 	lease := map[string]any{"runtime_id": "r1", "generation": 1, "index": 0}
-	for _, suffix := range []string{"/nodes/begin", "/nodes/complete", "/nodes/output", "/llm/begin"} {
+	for _, suffix := range []string{"/nodes/begin", "/nodes/action", "/nodes/complete", "/nodes/output", "/llm/begin"} {
 		code, body = h.as("stella", "POST", base+suffix, lease)
 		h.want(403, code, body)
 	}

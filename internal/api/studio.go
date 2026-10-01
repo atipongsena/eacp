@@ -39,6 +39,7 @@ func (s *Server) registerStudio(mux *http.ServeMux) {
 	mux.Handle("POST /v1/studio/runtime/runs/{id}/finish", p(studioRuntime, s.studioFinish))
 	mux.Handle("POST /v1/studio/versions/{id}/previews", p(studioAuthor, s.studioPreview))
 	mux.Handle("POST /v1/studio/runtime/runs/{id}/nodes/begin", p(studioRuntime, s.studioNode("begin")))
+	mux.Handle("POST /v1/studio/runtime/runs/{id}/nodes/action", p(studioRuntime, s.studioNode("action")))
 	mux.Handle("POST /v1/studio/runtime/runs/{id}/nodes/complete", p(studioRuntime, s.studioNode("complete")))
 	mux.Handle("POST /v1/studio/runtime/runs/{id}/nodes/output", p(studioRuntime, s.studioNode("output")))
 	mux.Handle("POST /v1/studio/runtime/runs/{id}/llm/begin", p(studioRuntime, s.studioNode("llm")))

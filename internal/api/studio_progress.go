@@ -37,6 +37,9 @@ func (s *Server) studioNode(operation string) handler {
 		if operation == "complete" {
 			return noContent(w, s.studio.CompleteNode(r.Context(), actor(c), id, in))
 		}
+		if operation == "action" {
+			return noContent(w, s.studio.NodeAction(r.Context(), actor(c), id, in))
+		}
 		var out json.RawMessage
 		if operation == "output" {
 			out, err = s.studio.NodeOutput(r.Context(), actor(c), id, in)

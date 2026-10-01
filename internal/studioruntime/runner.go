@@ -43,6 +43,8 @@ var errKilled = errors.New("studioruntime: the run was killed")
 type Options struct {
 	// API is the EACP API origin, such as http://controlplane-api:8080.
 	API string
+	// Gateway is the optional LLM gateway origin. V1 needs only the API.
+	Gateway string
 	// Keys are the runtime's own principal keys, one per tenant.
 	Keys map[uuid.UUID]string
 	// Master derives every agent key (ADR-033 §2).
@@ -66,6 +68,7 @@ type Options struct {
 // Runtime runs Studio agents.
 type Runtime struct {
 	api         *client
+	gateway     *client
 	keys        map[uuid.UUID]string
 	tenants     []uuid.UUID
 	master      *Master
@@ -81,7 +84,7 @@ type Runtime struct {
 func New(o Options) (*Runtime, error) {
 	u, err := url.Parse(o.API)
 	switch {
-	case o.API == "" || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+	case o.API == "" || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery:
 		return nil, errors.New("studioruntime: the API is an http:// or https:// origin")
 	case len(o.Keys) == 0:
 		return nil, errors.New("studioruntime: no runtime key")
@@ -92,6 +95,14 @@ func New(o Options) (*Runtime, error) {
 	}
 	r := &Runtime{api: newClient(strings.TrimSuffix(o.API, "/")), keys: o.Keys, master: o.Master, id: o.ID,
 		lease: o.Lease, concurrency: o.Concurrency, poll: o.Poll, log: o.Log, redact: o.Redact}
+	if o.Gateway != "" {
+		u, err := url.Parse(o.Gateway)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+			return nil, errors.New("studioruntime: the gateway is an http:// or https:// origin")
+		}
+		r.gateway = newClient(strings.TrimSuffix(o.Gateway, "/"))
+		r.gateway.http.Timeout = 0 // The run context bounds long provider calls.
+	}
 	if r.lease <= 0 {
 		r.lease = 30 * time.Second
 	}
@@ -147,6 +158,9 @@ type claim struct {
 	Steps        []recorded        `json:"steps"`
 	CredentialID *uuid.UUID        `json:"credential_id"`
 	Credential   string            `json:"credential"`
+	Mode         string            `json:"mode"`
+	CurrentIndex int               `json:"current_index"`
+	Nodes        []node            `json:"nodes"`
 }
 
 type recorded struct {
@@ -157,7 +171,8 @@ type recorded struct {
 // definition is what the runtime reads of a saved definition; PostgreSQL
 // validated all of it (migration 00027).
 type definition struct {
-	Steps []step `json:"steps"`
+	SchemaVersion int    `json:"schema_version"`
+	Steps         []step `json:"steps"`
 }
 
 type step struct {
@@ -170,6 +185,18 @@ type step struct {
 	Resource          string          `json:"resource"`
 	Payload           json.RawMessage `json:"payload"`
 	Text              string          `json:"text"`
+	Next              string          `json:"next"`
+	Then              string          `json:"then"`
+	Else              string          `json:"else"`
+	Model             string          `json:"model"`
+	Instruction       string          `json:"instruction"`
+	Input             json.RawMessage `json:"input"`
+	MaxOutputTokens   int64           `json:"max_output_tokens"`
+	Condition         struct {
+		Left     json.RawMessage `json:"left"`
+		Operator string          `json:"operator"`
+		Right    json.RawMessage `json:"right"`
+	} `json:"condition"`
 }
 
 // RunOnce claims up to Concurrency runs across its tenants and drives each
@@ -341,6 +368,9 @@ func (x *execution) steps(ctx context.Context) (answer, reason string, err error
 	}
 	x.key, _ = x.r.master.Key(x.tenant, *c.CredentialID)
 	x.r.redact(x.key)
+	if c.Definition.SchemaVersion == 2 || c.Mode == "preview" {
+		return x.stepsV2(ctx)
+	}
 	env := Env{Inputs: c.Inputs, Outputs: map[string]any{}}
 	for i, st := range c.Definition.Steps {
 		active, err := x.beat(ctx)
@@ -387,7 +417,7 @@ func (x *execution) needed(i int) bool {
 	steps := x.c.Definition.Steps
 	ref := "{{steps." + steps[i].ID + ".output"
 	for _, s := range steps[i+1:] {
-		if strings.Contains(string(s.Payload), ref) || strings.Contains(s.Text, ref) {
+		if strings.Contains(string(s.Payload), ref) || strings.Contains(s.Text, ref) || strings.Contains(string(s.Input), ref) || strings.Contains(s.Instruction, ref) || strings.Contains(string(s.Condition.Left), ref) || strings.Contains(string(s.Condition.Right), ref) {
 			return true
 		}
 	}

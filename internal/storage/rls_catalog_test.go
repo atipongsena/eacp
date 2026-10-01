@@ -187,6 +187,7 @@ func TestEveryTableFollowsTheRLSConventionAndCrossTenantPathsAreReviewed(t *test
 		"eacp.studio_listing_retire(uuid,text,text)",
 		"eacp.studio_llm_begin(uuid,text,bigint,integer)",
 		"eacp.studio_llm_settle(uuid,text,integer,bigint,bigint,bigint,bigint,boolean,jsonb,text)",
+		"eacp.studio_node_action(uuid,text,bigint,integer,uuid)",
 		"eacp.studio_node_begin(uuid,text,bigint,integer)",
 		"eacp.studio_node_complete(uuid,text,bigint,integer,jsonb)",
 		"eacp.studio_node_output(uuid,text,bigint,integer)",

@@ -30,8 +30,17 @@ func (s *Service) Preview(ctx context.Context, a registry.Actor, version uuid.UU
 // NodeRequest names a node under the runtime's current lease.
 type NodeRequest struct {
 	Lease
-	Index  int             `json:"index"`
-	Result json.RawMessage `json:"result,omitempty"`
+	Index    int             `json:"index"`
+	Result   json.RawMessage `json:"result,omitempty"`
+	ActionID uuid.UUID       `json:"action_id,omitempty"`
+}
+
+// NodeAction records an action before waiting, without advancing the cursor.
+func (s *Service) NodeAction(ctx context.Context, a registry.Actor, run uuid.UUID, n NodeRequest) error {
+	return s.change(ctx, a, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `SELECT eacp.studio_node_action($1,$2,$3,$4,$5)`, run, n.RuntimeID, n.Generation, n.Index, n.ActionID)
+		return err
+	})
 }
 
 // BeginNode returns only durable progress metadata. LLM intents use the

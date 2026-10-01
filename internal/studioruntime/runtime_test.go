@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,18 +119,19 @@ func (w teeWriter) Write(p []byte) (int, error) {
 // rig is a real API, a real worker with the in-test connector, stella's
 // approved leave-bot and the runtime.
 type rig struct {
-	t         *testing.T
-	f         *registrytest.Fixture
-	srv       *httptest.Server
-	keys      map[string]string
-	conn      *connector
-	master    *studioruntime.Master
-	rt        *studioruntime.Runtime
-	logs      *lockedBuffer // the API, the worker and the runtime
-	responses *lockedBuffer
-	redacted  *redactions
-	agent     string
-	version   string
+	t           *testing.T
+	f           *registrytest.Fixture
+	srv         *httptest.Server
+	keys        map[string]string
+	conn        *connector
+	master      *studioruntime.Master
+	rt          *studioruntime.Runtime
+	logs        *lockedBuffer // the API, the worker and the runtime
+	responses   *lockedBuffer
+	redacted    *redactions
+	agent       string
+	version     string
+	actionPosts atomic.Int64
 }
 
 type redactions struct {
@@ -160,6 +162,9 @@ func newRig(t *testing.T) *rig {
 	mux := http.NewServeMux()
 	api.New(f.App, log).Register(mux)
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == "POST" && req.URL.Path == "/v1/actions" {
+			r.actionPosts.Add(1)
+		}
 		mux.ServeHTTP(teeWriter{w, r.responses}, req)
 	}))
 	t.Cleanup(r.srv.Close)
