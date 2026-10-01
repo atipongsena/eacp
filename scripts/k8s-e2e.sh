@@ -62,10 +62,8 @@ entry spiffe://eacp.test/ns/eacp/sa/eacp-worker -parentID spiffe://eacp.test/k8s
 work=$(mktemp -d)
 pki=$(winpath "$work/pki") # kubectl and go on Windows need a native path
 tunnel=
-gateway_tunnel=
 cleanup() {
 	[ -n "$tunnel" ] && kill "$tunnel" 2>/dev/null || true
-	[ -n "$gateway_tunnel" ] && kill "$gateway_tunnel" 2>/dev/null || true
 	rm -rf "$work"
 }
 trap cleanup EXIT
@@ -164,13 +162,8 @@ else
 		exit 1
 	}
 	echo "    API at $api"
-	k -n eacp port-forward svc/eacp-llm-gateway --address 127.0.0.1 0:8083 >"$work/gateway-url" 2>"$work/gateway-tunnel.log" &
-	gateway_tunnel=$!
-	for _ in $(seq 90); do grep -q 'Forwarding from 127.0.0.1:' "$work/gateway-url" 2>/dev/null && break; sleep 1; done
-	gateway_port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$work/gateway-url" | head -n1)
-	[ -n "$gateway_port" ] || { cat "$work/gateway-tunnel.log" >&2; exit 1; }
 	status=0
-	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" EACP_DEMO_LLM="http://127.0.0.1:$gateway_port" \
+	EACP_DEMO=1 EACP_DEMO_PLATFORM=k8s EACP_DEMO_API="$api" EACP_DEMO_KUBE_CONTEXT="$PROFILE" \
 		go test -count=1 -v -timeout 40m -run "${TESTS:-TestSliceADemo|TestKubernetesDisruption|TestJITDemo|TestFederatedJITDemo|TestPrivateKeyJWTDemo|TestVaultDemo|TestSPIFFEDemo|TestTokenExchangeDemo|TestAWSDemo|TestStudioDemo}" ./test/demo || status=$?
 fi
 

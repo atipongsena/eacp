@@ -126,16 +126,16 @@ func (d *demo) builderDemo(department string, master *studioruntime.Master) {
 		wrong[k] = v
 	}
 	wrong["model"] = "triage"
-	if status = d.builderHTTP(key, env("EACP_DEMO_LLM", "http://127.0.0.1:18083"), "/v1/messages", headers, wrong); status != 403 {
+	if status = d.builderModelHTTP(key, headers, wrong); status != 403 {
 		d.t.Fatalf("a model outside the immutable intent was allowed: HTTP %d", status)
 	}
 	if d.studioProviderCalls() != before {
 		d.t.Fatal("model denial reached the provider")
 	}
-	if status = d.builderHTTP(key, env("EACP_DEMO_LLM", "http://127.0.0.1:18083"), "/v1/messages", headers, body); status != 200 {
+	if status = d.builderModelHTTP(key, headers, body); status != 200 {
 		d.t.Fatalf("crash fixture model: HTTP %d", status)
 	}
-	if status = d.builderHTTP(key, env("EACP_DEMO_LLM", "http://127.0.0.1:18083"), "/v1/messages", headers, body); status != 409 {
+	if status = d.builderModelHTTP(key, headers, body); status != 409 {
 		d.t.Fatalf("consumed intent was reusable: HTTP %d", status)
 	}
 	d.p.start("agent-runtime")
@@ -219,6 +219,21 @@ func (d *demo) studioProviderCalls() int {
 		d.t.Fatal("invalid provider audit")
 	}
 	return len(result.Calls)
+}
+
+func (d *demo) builderModelHTTP(key string, headers map[string]string, body any) int {
+	d.t.Helper()
+	origin := env("EACP_DEMO_LLM", "http://127.0.0.1:18083")
+	if k, ok := d.p.(*k8sPlatform); ok {
+		var cleanup func()
+		var err error
+		origin, cleanup, err = k.forwardOrigin("eacp", "eacp-llm-gateway", 8083)
+		if err != nil {
+			d.t.Fatal("gateway forwarding did not start")
+		}
+		defer cleanup()
+	}
+	return d.builderHTTP(key, origin, "/v1/messages", headers, body)
 }
 
 // builderHTTP keeps the derived key in memory and performs one HTTP send.

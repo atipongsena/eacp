@@ -482,10 +482,11 @@ func (k *k8sPlatform) studioNetworkProof() {
 	k.t.Helper()
 	pod := "studio-probe-" + randomSuffix()
 	script := `set -eu
-nc -z -w 3 eacp-api 8080
-nc -z -w 3 eacp-llm-gateway 8083
-for target in postgres.eacp-deps.svc.cluster.local:5432 nats.eacp-deps.svc.cluster.local:4222 eacp-pdp:8443 fakemcp-hr.eacp-deps.svc.cluster.local:8091 fakellm.eacp-deps.svc.cluster.local:8093; do
+nc -z -w 3 eacp-api.eacp.svc.cluster.local 8080
+nc -z -w 3 eacp-llm-gateway.eacp.svc.cluster.local 8083
+for target in postgres.eacp-deps.svc.cluster.local:5432 nats.eacp-deps.svc.cluster.local:4222 eacp-pdp.eacp.svc.cluster.local:8443 fakemcp-hr.eacp-deps.svc.cluster.local:8091 fakellm.eacp-deps.svc.cluster.local:8093; do
   host=${target%:*}; port=${target##*:}
+  echo "checking runtime isolation: $target"
   nslookup "$host" >/dev/null
   if nc -z -w 3 "$host" "$port"; then echo "unexpected runtime access: $target"; exit 1; fi
 done
@@ -537,21 +538,23 @@ func (k *k8sPlatform) erpAudit(token string) ([]byte, error) {
 	return k.forwardedGet("fakeerp", 8090, "/v1/audit", token)
 }
 
-func (k *k8sPlatform) forwardedGet(service string, target int, path, token string) ([]byte, error) {
-	cmd := exec.Command("kubectl", "--context", k.context, "-n", "eacp-deps", "port-forward", "svc/"+service,
+// forwardOrigin selects a current pod for this operation. A forwarding session
+// cannot survive the selected pod's termination during the disruption demo.
+func (k *k8sPlatform) forwardOrigin(namespace, service string, target int) (string, func(), error) {
+	cmd := exec.Command("kubectl", "--context", k.context, "-n", namespace, "port-forward", "svc/"+service,
 		"--address", "127.0.0.1", fmt.Sprintf("0:%d", target))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	defer func() {
+	cleanup := func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-	}()
+	}
 	port := make(chan string, 1)
 	go func() {
 		s := bufio.NewScanner(stdout)
@@ -567,9 +570,19 @@ func (k *k8sPlatform) forwardedGet(service string, target int, path, token strin
 	select {
 	case p = <-port:
 	case <-time.After(30 * time.Second):
-		return nil, errors.New("kubectl port-forward to dependency did not start")
+		cleanup()
+		return "", nil, errors.New("kubectl port-forward did not start")
 	}
-	req, err := http.NewRequest("GET", "http://127.0.0.1:"+p+path, nil)
+	return "http://127.0.0.1:" + p, cleanup, nil
+}
+
+func (k *k8sPlatform) forwardedGet(service string, target int, path, token string) ([]byte, error) {
+	origin, cleanup, err := k.forwardOrigin("eacp-deps", service, target)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	req, err := http.NewRequest("GET", origin+path, nil)
 	if err != nil {
 		return nil, err
 	}
