@@ -90,6 +90,20 @@ func (f *fix) mustClaim(id string) claimed {
 	return got[0]
 }
 
+// claimOf claims as runtime id and returns the claim of run.
+func claimOf(t *testing.T, f *fix, id string, run uuid.UUID) claimed {
+	t.Helper()
+	got, err := f.claim(id, 10)
+	ok(t, err)
+	for _, c := range got {
+		if c.ID == run {
+			return c
+		}
+	}
+	t.Fatalf("run %s not claimed: %+v", run, got)
+	return claimed{}
+}
+
 // action submits the run's step index as the agent version, with key and subject.
 func (f *fix) action(version uuid.UUID, key, subject string) uuid.UUID {
 	f.t.Helper()
@@ -215,12 +229,11 @@ func TestAStepIsTheRunsOwnAction(t *testing.T) {
 	version, agent := f.approvedAgent("leave-bot")
 	run := f.ID(t, "stella", startSQL, agent, inputs)
 	f.mustClaim("r1")
-	other, _ := f.approvedAgent("other-bot")
+	// An action PostgreSQL bound to another run (kill_schema_test.go tests the binding itself).
+	run2, _ := f.running(agent)
 	for name, a := range map[string]uuid.UUID{
-		"another version": f.action(other, stepKey(run, 0), stella),
-		"another subject": f.action(version, stepKey(run, 0)+"x", "abe@tenant-a.test"),
-		"another key":     f.action(version, "my-own-key", stella),
-		"unknown action":  uuid.New(),
+		"another run":    f.action(version, stepKey(run2, 0), stella),
+		"unknown action": uuid.New(),
 	} {
 		err := f.Exec("rt", stepSQL, run, "r1", int64(1), 0, a)
 		if err == nil {
@@ -242,7 +255,7 @@ func TestAStepIsTheRunsOwnAction(t *testing.T) {
 		_, err := tx.Exec(context.Background(), `UPDATE eacp.studio_runs SET leased_until = now() - interval '1 second'`)
 		return err
 	})
-	if c := f.mustClaim("r2"); len(c.Steps) != 1 || c.Steps[0]["action_id"] != a.String() {
+	if c := claimOf(t, f, "r2", run); len(c.Steps) != 1 || c.Steps[0]["action_id"] != a.String() {
 		t.Fatalf("resumed steps = %v", c.Steps)
 	}
 }
@@ -588,23 +601,17 @@ func TestAHeartbeatSaysWhetherTheVersionIsStillActive(t *testing.T) {
 	run := f.ID(t, "stella", startSQL, agent, inputs)
 	f.mustClaim("r1")
 	active := func() bool {
-		var b bool
-		ctx := context.Background()
-		ok(t, storage.InTenantTx(ctx, f.App, f.Tenant.String(), func(tx pgx.Tx) error {
-			if err := storage.SetActor(ctx, tx, f.P["rt"]); err != nil {
-				return err
-			}
-			return tx.QueryRow(ctx, heartbeatSQL, run, "r1", int64(1)).Scan(&b)
-		}))
-		return b
+		s, err := f.beat(run, 1)
+		ok(t, err)
+		return s == "active"
 	}
 	if !active() {
 		t.Fatal("an active version reads as replaced")
 	}
 	v2 := f.mustSave("stella", agent, "", example)
 	ok(t, f.decide("rita", v2, true, "second version"))
-	if active() {
-		t.Fatalf("version %s was replaced but reads as active", version)
+	if got, err := f.beat(run, 1); err != nil || got != "replaced" {
+		t.Fatalf("version %s was replaced but the heartbeat says %q, %v", version, got, err)
 	}
 	ok(t, f.Exec("rt", finishSQL, run, "r1", int64(1), "FAILED", nil, "credential_revoked"))
 }

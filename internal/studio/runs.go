@@ -125,15 +125,26 @@ type Lease struct {
 	Generation int64  `json:"generation"`
 }
 
-// Heartbeat extends the runtime's lease on run and reports whether the
-// run's version is still ACTIVE.
-func (s *Service) Heartbeat(ctx context.Context, a registry.Actor, run uuid.UUID, l Lease, seconds int) (bool, error) {
-	var active bool
+// What a heartbeat reports (eacp.studio_run_heartbeat).
+const (
+	// BeatActive: the lease is extended and the run's version is ACTIVE.
+	BeatActive = "active"
+	// BeatReplaced: the run's version is no longer ACTIVE.
+	BeatReplaced = "replaced"
+	// BeatKilled: a kill matches the run and PostgreSQL failed it killed
+	// (Phase 28); the runtime holds nothing more.
+	BeatKilled = "killed"
+)
+
+// Heartbeat extends the runtime's lease on run and reports BeatActive,
+// BeatReplaced or BeatKilled.
+func (s *Service) Heartbeat(ctx context.Context, a registry.Actor, run uuid.UUID, l Lease, seconds int) (string, error) {
+	var status string
 	err := s.change(ctx, a, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT eacp.studio_run_heartbeat($1, $2, $3, $4)`,
-			run, l.RuntimeID, l.Generation, seconds).Scan(&active)
+			run, l.RuntimeID, l.Generation, seconds).Scan(&status)
 	})
-	return active, err
+	return status, err
 }
 
 // Step records the action of run's step index.

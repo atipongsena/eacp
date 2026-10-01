@@ -303,14 +303,25 @@ func TestAnotherTenantSeesAndChangesNothingAfterAFullFlow(t *testing.T) {
 	v.f.AddPrincipal(t, "rt", "service", "studio_runtime")
 	studioAgent := v.f.ID(t, "alice", `SELECT agent_id FROM eacp.agent_versions WHERE id = $1`, studioVersion)
 	studioRun := v.f.ID(t, "stella", `SELECT eacp.studio_run_start($1, '{}'::jsonb)`, studioAgent)
+	for _, sql := range []string{
+		`SELECT eacp.studio_credential_propose($1, gen_random_uuid(), decode(repeat('cd', 32), 'hex'), 'v1')`,
+		`SELECT eacp.studio_run_claim('r1', 'v1', 30, 1)`,
+	} {
+		var args []any
+		if strings.Contains(sql, "$1") {
+			args = []any{studioVersion}
+		}
+		if err := v.f.Exec("rt", sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	// PostgreSQL binds the step's action to the claimed run (Phase 28).
 	studioAction := v.f.AgentID(t, studioVersion, registrytest.ReceivedActionSQL, studioVersion,
 		fmt.Sprintf("studio:%s:0", studioRun), "stella@tenant-a.test", "hr.balance")
 	for _, step := range []struct {
 		sql  string
 		args []any
 	}{
-		{`SELECT eacp.studio_credential_propose($1, gen_random_uuid(), decode(repeat('cd', 32), 'hex'), 'v1')`, []any{studioVersion}},
-		{`SELECT eacp.studio_run_claim('r1', 'v1', 30, 1)`, nil},
 		{`SELECT eacp.studio_run_step($1, 'r1', 1, 0, $2)`, []any{studioRun, studioAction}},
 		{`SELECT eacp.studio_run_finish($1, 'r1', 1, 'SUCCEEDED', 'done', NULL)`, []any{studioRun}},
 	} {
