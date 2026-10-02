@@ -4,7 +4,7 @@
 # Every input is pinned: the base image by tag, Python packages (including
 # the ACS engine wheel) by hash, and the OPA binary by checksum.
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 ADD --checksum=sha256:69da5179ee403d10fa11bab6cfb4ffb0d23dba5f9b682fa977db772a1da5670f \
     https://github.com/open-policy-agent/opa/releases/download/v1.20.2/opa_linux_amd64_static /usr/local/bin/opa
 RUN chmod 0755 /usr/local/bin/opa
