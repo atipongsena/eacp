@@ -7,7 +7,7 @@ This guide is for the people who use EACP day to day. It is organised by role, s
 | You are | You will | Read |
 |---|---|---|
 | An administrator or platform engineer | Set up people, systems, agents, policies and budgets | [For administrators](#for-administrators) |
-| An agent developer | Send actions from an agent and call models | [For agent developers](#for-agent-developers) |
+| An agent developer | Send actions from an agent, call models and accept actions from remote A2A agents | [For agent developers](#for-agent-developers) |
 | An employee building an agent for their team | Save, get approved and run an Agent Studio agent | [For employees: Agent Studio](#for-employees-agent-studio) |
 | An approver | Vote on requests that need a person | [For approvers](#for-approvers) |
 | An operator or on-call engineer | Settle unknown outcomes, stop things and work incidents | [For operators](#for-operators) |
@@ -58,7 +58,7 @@ flowchart LR
 
 ### Who does what
 
-EACP has six roles. One person can hold several, but many steps need **two different people**, so no single person
+EACP has eight roles. One person can hold several, but many steps need **two different people**, so no single person
 can grant themselves power or approve their own work.
 
 | Role | Can |
@@ -69,6 +69,11 @@ can grant themselves power or approve their own work.
 | `operator` | Read actions and evidence, settle unknown outcomes, use the kill switch, open and close circuits, work incidents. |
 | `approver` | Vote on actions that a policy sent to people. |
 | `auditor` | Read actions and evidence, and verify the audit chain. |
+| `studio_author` | Build, save and run agents in Agent Studio, and propose them for the Hub. |
+| `studio_runtime` | Held alone by the agent runtime's service account: it proposes keys for approved Studio agents. |
+
+A department lead is not a role: an administrator marks someone as the lead when adding them to the department's
+group, and the lead publishes the department's agents in the Hub.
 
 The two-person rules you will meet most often:
 
@@ -83,6 +88,7 @@ The two-person rules you will meet most often:
 | Clearing a kill switch | A second operator. |
 | Retrying an action whose outcome was unknown | A second operator confirms it. |
 | Applying a Governance-as-Code change set | A second person approves it. |
+| Approving a Studio agent or publishing it in the Hub | Someone other than its author or owner. |
 
 EACP enforces these in the database, so a script or a direct API call cannot skip them.
 
@@ -406,6 +412,63 @@ model name and sizes, never your prompt), the kill switch and the budget. A refu
 the provider. The gateway never stores a prompt or a response. [Example 02](../examples/02-llm-gateway/README.md) runs
 this end to end.
 
+### Receive actions from a remote A2A agent
+
+A remote agent that speaks A2A 1.0 can send EACP an action instead of calling `POST /v1/actions`. It is still an EACP
+agent: it gets the same review, the same policy, approvals and budgets, and its own key.
+
+1. An administrator turns the endpoint on with `EACP_A2A_PUBLIC_URL`, an HTTPS URL ending in `/a2a` (plain HTTP is
+   accepted only in development and test). Blank, the default, turns discovery and the endpoint off.
+2. Register the remote agent like any other agent, with an active version, an allowlist and an approved key
+   ([Register an agent](#register-an-agent)). The key decides the tenant and the agent; a person's key is refused here.
+3. The remote agent reads the card at `/.well-known/agent-card.json` and sends `SendMessage` with exactly one JSON
+   data part: an action request, not a chat prompt.
+
+Save the request as `request.json`, with a subject and a tool your registry has approved:
+
+```json
+{
+  "jsonrpc": "2.0", "id": "rpc-1", "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "delegation-1", "role": "ROLE_USER",
+      "parts": [{"mediaType": "application/json", "data": {
+        "subject": "requester@example.test", "operation": "purchase",
+        "target": "erp", "tool": "erp.create_po", "tool_schema_version": "1",
+        "resource": "po", "payload": {"amount": 100, "currency": "THB"}
+      }}]
+    },
+    "configuration": {"returnImmediately": true}
+  }
+}
+```
+
+```bash
+curl -sS "$EACP_API_URL/.well-known/agent-card.json"
+curl -sS "$EACP_API_URL/a2a" -H "Authorization: Bearer $AGENT_KEY" \
+  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' --data-binary @request.json
+```
+
+The answer is `result.task`; its `id` and `contextId` are the action's id. Follow it with `GetTask` and
+`params: {"id": "<task id>"}`, and stop it with `CancelTask` and the same params. Always send `A2A-Version: 1.0`. The
+same `messageId` with the same content returns the same action, like an `Idempotency-Key`; different content with the
+same `messageId` is a conflict. The action lives one hour from the first send, and a retry does not extend it.
+
+| Task state | The action's states |
+|---|---|
+| `TASK_STATE_SUBMITTED` | `RECEIVED` |
+| `TASK_STATE_WORKING` | Waiting for approvers, queued, running, retrying, unknown outcome or waiting for an operator |
+| `TASK_STATE_COMPLETED` | `SUCCEEDED`; a retained output appears in `artifacts` while the agent may still read it |
+| `TASK_STATE_REJECTED` | `DENIED` |
+| `TASK_STATE_FAILED` | `FAILED` or `EXPIRED` |
+| `TASK_STATE_CANCELED` | `CANCELLED` |
+
+An approval or an unknown outcome keeps the task working; decide them with the ordinary approval and operator tools.
+A kill can keep a queued task working while nothing is dispatched. A cancel after dispatch may answer that the task
+cannot be cancelled even though the request was recorded, and that never proves nothing happened. Text and file parts,
+tenant selectors, references, history, streaming, push notifications and multi-turn conversations are refused.
+`DEMO=I bash scripts/demo.sh` runs all of this with the A2A reference client.
+
 ## For employees: Agent Studio
 
 ### Build an agent from a template
@@ -453,6 +516,15 @@ call instead of sending it again. Invalid output fails closed. A run/model kill 
 After you save, the agent's page shows where it is and who acts next: a registry approver who is not you approves the
 tools it asks for, the agent runtime proposes the agent's key within a minute, and a registry approver approves that
 key. Then it is ready and shows a form with its inputs.
+
+```mermaid
+flowchart LR
+  save["You save<br/>a version"] --> tools["A registry approver<br/>approves its tools"]
+  tools --> propose["The agent runtime<br/>proposes its key"]
+  propose --> key["A registry approver<br/>approves the key"]
+  key --> ready["Ready: you run it"]
+  ready --> publish["Optional: publish<br/>to the Hub"]
+```
 
 ![Agent Studio: an agent that is ready, with its stages and its run form](images/studio-agent.png)
 
@@ -643,35 +715,3 @@ zero. Soft limits and spend alerts only warn. The hard stop is the budget, set b
 
 For how EACP works inside, read [ARCHITECTURE.md](ARCHITECTURE.md). For what it defends against, read
 [THREAT_MODEL.md](security/THREAT_MODEL.md). The decisions behind each rule are in [docs/adr](adr/).
-
-## Inbound A2A
-
-An administrator enables `EACP_A2A_PUBLIC_URL` with an explicit HTTPS endpoint ending in `/a2a` (HTTP only in development/test). Blank is disabled. Register and approve the remote caller as an ordinary EACP agent with an approved key, active version and allowlist; no new authentication trust is created. The key determines tenant and agent. Principal keys cannot use this interface.
-
-Save this structured request as `request.json`, replacing its subject/tool with existing approved registry values. The single JSON data part is an action request, not a chat prompt. Action lifetime is fixed at one hour. Keep your holder-generated agent key in memory or the ignored example key file; never print it.
-```json
-{
-  "jsonrpc": "2.0", "id": "rpc-1", "method": "SendMessage",
-  "params": {
-    "message": {
-      "messageId": "delegation-1", "role": "ROLE_USER",
-      "parts": [{"mediaType": "application/json", "data": {
-        "subject": "requester@example.test", "operation": "purchase",
-        "target": "erp", "tool": "erp.create_po", "tool_schema_version": "1",
-        "resource": "po", "payload": {"amount": 100, "currency": "THB"}
-      }}]
-    },
-    "configuration": {"returnImmediately": true}
-  }
-}
-```
-
-```bash
-curl -sS "$API/.well-known/agent-card.json"
-curl -sS "$API/a2a" -H "Authorization: Bearer $AGENT_KEY" \
-  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' --data-binary @request.json
-```
-
-The response is `result.task`, whose `id` and `contextId` equal the action UUID. Poll `GetTask` with `params: {"id": "<task UUID>"}`; `CancelTask` has the same params. Keep `A2A-Version: 1.0`. Identical `messageId` and action content reuse the action; changed content/version conflicts. The original deadline stays fixed. Get/Cancel return the task directly under `result`, without history or submitted content. Retained completed output appears in `artifacts` only while the calling agent may read it under ADR-034; successful tasks without retained output have no artifact.
-
-Approval and unknown outcomes remain working. A kill can keep a queued task working while preventing dispatch. Cancellation after dispatch may return task-not-cancelable even though a cancel request was recorded; it does not prove absence of an effect. Use the ordinary approval/operator APIs for decisions and resolution. Text/file parts, tenant selectors, references, nonzero history, streaming, push and multi-turn conversations are refused.

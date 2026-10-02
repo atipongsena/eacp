@@ -10,6 +10,15 @@ EACP เป็นด่านกลางระหว่าง AI agent กั�
 เช่น ออกใบสั่งซื้อ ลงบัญชี ส่งงานต่อให้ agent ตัวอื่น หรือเรียก model ที่เสียเงิน ต้องขอผ่าน EACP ก่อนทุกครั้ง EACP จะดูว่าใครขอ
 ขอทำอะไร policy ว่าอย่างไร ต้องรอใครอนุมัติ พอได้ครบแล้วค่อยสั่งทำตามที่อนุมัติไว้เป๊ะๆ และจดทุกขั้นตอนเก็บไว้ใน PostgreSQL
 
+agent เข้ามาหา EACP ได้สี่ทาง และทุกทางไปจบที่เส้นทางคำขอที่ถูกควบคุมเส้นเดียวกัน:
+
+| ทางเข้า | ใครใช้ | อ่านต่อ |
+|---|---|---|
+| Action API (`POST /v1/actions`) | agent ที่เขียนด้วยภาษาหรือ framework อะไรก็ได้ | [ส่งคำขอ](docs/USER_GUIDE.th.md#ส่งคำขอ) |
+| LLM gateway | agent ที่เรียก model ผ่าน SDK ของ Anthropic หรือ OpenAI | [เรียกโมเดล](docs/USER_GUIDE.th.md#เรียกโมเดลผ่าน-gateway) |
+| Agent Studio (`/studio/`) | พนักงานที่อยากสร้าง agent เล็กๆ ให้ทีมโดยไม่ต้องเขียนโค้ด | [Agent Studio](#agent-studio-สร้าง-agent-โดยไม่ต้องเขียนโค้ด) |
+| Inbound A2A (`/a2a`, เปิดเมื่อต้องการ) | agent ภายนอกที่พูดโปรโตคอล A2A 1.0 | [Inbound A2A](#inbound-a2a-ให้-agent-อื่นส่งคำขอเข้ามา) |
+
 ## EACP คืออะไร แก้ปัญหาอะไร
 
 พอปล่อยให้ AI agent เข้าไปแตะระบบขององค์กร ปัญหาที่เจอมักเป็นแบบที่ API gateway ทั่วไปไม่ได้ออกแบบมารับ:
@@ -72,10 +81,12 @@ EACP คั่นอยู่ระหว่างสองฝั่งที่
 flowchart LR
   subgraph agents["ฝั่งที่ agent รัน"]
     agent["AI agent<br/>(framework อะไรก็ได้)<br/>ถือ: key ของตัวเองใน EACP"]
+    runtime["Agent runtime<br/>รัน agent ของ Studio<br/>ถือ: key ที่ derive ให้แต่ละ agent"]
+    remote["agent ภายนอกแบบ A2A<br/>ถือ: key ของตัวเองใน EACP"]
   end
-  people["คน<br/>admin, ผู้อนุมัติ, operator"]
+  people["คน<br/>console และ Studio"]
   subgraph eacp["EACP"]
-    api["Control plane API<br/>และ console"]
+    api["Control plane API<br/>console, Studio, /a2a"]
     gateway["LLM gateway<br/>ถือ: key ของผู้ให้บริการ model"]
     pdp["ตัวตัดสิน policy<br/>(AGT sidecar)"]
     pg[("PostgreSQL<br/>ตัดสินและจดบันทึก")]
@@ -88,6 +99,9 @@ flowchart LR
   llm["ผู้ให้บริการ model"]
   agent -->|"key ของตัวเอง"| api
   agent -->|"key ของตัวเอง"| gateway
+  runtime -->|"key ของ agent ใน Studio"| api
+  runtime -->|"key ของ agent ใน Studio"| gateway
+  remote -->|"A2A 1.0, key ของตัวเอง"| api
   people --> api
   api --> pg
   api -->|"mTLS"| pdp
@@ -99,9 +113,12 @@ flowchart LR
   gateway --->|"key ของ provider อยู่ที่นี่ที่เดียว"| llm
 ```
 
-- **Control plane API** ([`cmd/controlplane-api`](cmd/controlplane-api)) เป็นตัวให้บริการ API `/v1` และ console
-  ตรวจตัวตนทั้ง agent และคน ถาม policy จัดการการอนุมัติ แล้วปล่อยงานไปทำ งานเบื้องหลังของมันคอยเก็บกวาดงานที่หมดเวลา
-  ส่งสัญญาณ และเปิด incident
+- **Control plane API** ([`cmd/controlplane-api`](cmd/controlplane-api)) เป็นตัวให้บริการ API `/v1`, operator console ที่ `/ui/`,
+  Agent Studio ที่ `/studio/` และ endpoint ของ inbound A2A ที่ `/a2a` (ถ้าเปิดไว้) ตรวจตัวตนทั้ง agent และคน ถาม policy
+  จัดการการอนุมัติ แล้วปล่อยงานไปทำ งานเบื้องหลังของมันคอยเก็บกวาดงานที่หมดเวลา ส่งสัญญาณ และเปิด incident
+- **Agent runtime** ([`cmd/agent-runtime`](cmd/agent-runtime)) รัน agent ที่คนสร้างใน Agent Studio มันเป็นแค่ client ของ API
+  ธรรมดา ไม่มีฐานข้อมูล ไม่มีรหัสผ่านของระบบ ไม่มี key ของผู้ให้บริการ model มัน derive key ของ agent แต่ละตัวที่อนุมัติแล้ว
+  จาก master secret เก็บไว้ในหน่วยความจำเท่านั้น และส่งทุกขั้นผ่าน action API หรือ LLM gateway
 - **Execution worker** ([`cmd/execution-worker`](cmd/execution-worker)) เป็นตัวเดียวที่ถือรหัสผ่านของระบบปลายทาง มันรับงานที่ถูกปล่อยแล้ว
   โดยจองงานไว้ (lease) จดบันทึกก่อนเรียกทุกครั้ง แล้วค่อยเรียกระบบปลายทาง ถ้าไม่รู้ผลก็ไปตรวจย้อนให้
 - **LLM gateway** ([`cmd/llm-gateway`](cmd/llm-gateway)) ให้ agent เรียก model ด้วย SDK ตัวเดิมที่ใช้อยู่ ก่อนส่งทุกครั้งจะเช็กใน
@@ -247,6 +264,78 @@ operator รับเรื่อง มอบหมาย จดโน้ต �
 ยอดใช้วันนี้และเดือนนี้แยกตามหน่วยเงิน agent ที่ใช้เยอะที่สุด จำนวนครั้งที่ถูกงบแบบ hard limit ขวาง และ alert ที่ยังเปิดอยู่
 ค่าใช้จ่ายคำนวณใน PostgreSQL จากตารางราคา ส่วน alert เรื่องค่าใช้จ่ายมีไว้เตือนอย่างเดียว ไม่ได้ขวางงาน
 
+## Agent Studio: สร้าง agent โดยไม่ต้องเขียนโค้ด
+
+Agent Studio ที่ `/studio/` ให้พนักงานสร้าง agent เล็กๆ ให้ทีมผ่านฟอร์ม ใช้ได้ทั้งภาษาไทยและอังกฤษ ไม่ต้องเขียนโค้ด
+และไม่ได้กลายเป็นผู้มีอำนาจใหม่ในระบบ ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md))
+agent ของ Studio ก็คือ agent ธรรมดาใน registry PostgreSQL คำนวณจากนิยามของมันว่าใช้ tool และ model อะไรได้บ้างแบบตรงตัว
+ต้องมีอีกคนอนุมัติ และทุกขั้นที่มันทำเป็นคำขอธรรมดา หรือการเรียก model ที่ถูกนับค่าใช้จ่าย
+
+```mermaid
+flowchart LR
+  author["ผู้สร้าง<br/>บันทึก version"] --> approve["registry approver<br/>(ไม่ใช่ผู้สร้าง)<br/>อนุมัติ tool ที่ขอ"]
+  approve --> propose["agent runtime<br/>เสนอ key ของ agent"]
+  propose --> key["registry approver<br/>อนุมัติ key"]
+  key --> ready["พร้อมใช้"]
+  ready --> run["รัน<br/>โดยเจ้าของ หรือคนที่<br/>Hub listing เข้าถึง"]
+  run --> steps["แต่ละขั้น:<br/>คำขอที่ผ่าน policy<br/>หรือเรียก model ผ่าน LLM gateway"]
+  steps --> answer["คำตอบ<br/>เห็นเฉพาะคนที่รัน<br/>เก็บไว้หนึ่งชั่วโมง"]
+  ready -.-> hub["Hub listing<br/>หัวหน้าแผนกอนุมัติ<br/>หรืออนุมัติให้ทั้งองค์กร"]
+  hub -.-> run
+```
+
+builder เต็มรูปแบบวาด agent เป็นกราฟของ node ที่ต่อกัน ได้แก่ การเรียก tool, ขั้น model ที่มี JSON output schema แบบปิด,
+branch ที่เทียบค่าแบบมีชนิดตรงตัว และคำตอบ model มีหน้าที่แค่จัดประเภท ไม่เคยเป็นคนเลือก branch หรือเลือก tool
+
+```mermaid
+flowchart LR
+  input(["อินพุต<br/>employee_id"]) --> lookup["เรียก tool<br/>hr-mcp.get_leave_balance"]
+  lookup --> classify["ขั้น model<br/>คืนค่า {eligible: boolean}"]
+  classify --> choose{"branch<br/>eligible eq true"}
+  choose -->|"True"| yes(["คำตอบ: มีสิทธิ์<br/>ตรวจนโยบาย HR"])
+  choose -->|"False"| no(["คำตอบ: ให้ HR<br/>ช่วยตรวจ"])
+```
+
+![Agent Studio: ขั้น model และ branch ใน builder เต็มรูปแบบ](docs/images/studio-builder.png)
+
+เมื่อ agent พร้อมแล้ว หน้าของมันจะบอกว่าใครทำอะไรไปแล้วในแต่ละขั้น และมีฟอร์มให้รัน หน้าของแต่ละ run แสดงคำขอของแต่ละขั้น
+และคำตอบ ซึ่งมีแค่คนที่รันเท่านั้นที่อ่านได้
+
+![Agent Studio: run หนึ่งรอบและคำตอบ](docs/images/studio-run.png)
+
+Hub ใช้แชร์ agent ให้แผนกหรือทั้งองค์กร และไม่ได้ให้สิทธิ์อะไรเพิ่ม listing ต้องมีคนที่ไม่ใช่เจ้าของเป็นคนอนุมัติ และทุกคนรัน agent
+ในนามตัวเอง ภายใต้ policy การอนุมัติ งบ และ kill switch ชุดเดียวกัน operator หยุด run ทีละรอบได้ด้วย kill scope `run`
+
+![Agent Studio: Hub](docs/images/studio-hub.png)
+
+## Inbound A2A: ให้ agent อื่นส่งคำขอเข้ามา
+
+agent ภายนอกที่พูด [A2A 1.0](https://a2a-protocol.org/) ส่งคำขอที่มีโครงสร้างมาให้ EACP ผ่าน JSON-RPC ได้
+([ADR-030](docs/adr/ADR-030-a2a-delegation.md) Rev 1.1) endpoint นี้ปิดอยู่จนกว่าผู้ดูแลจะตั้ง `EACP_A2A_PUBLIC_URL`
+agent ภายนอกต้องลงทะเบียนเป็น agent ธรรมดาของ EACP มี key และ allowlist ที่อนุมัติแล้ว task ของ A2A เป็นแค่อีกมุมมองหนึ่ง
+ของคำขอธรรมดา จึงไม่มีอะไรใหม่ที่มาตัดสินแทน
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant R as agent ภายนอก (A2A)
+  participant API as Control plane API (/a2a)
+  participant E as Action engine
+  participant DB as PostgreSQL
+  R->>API: GET /.well-known/agent-card.json
+  R->>API: SendMessage (คำขอ JSON หนึ่งรายการ, key ของตัวเอง)
+  API->>E: ส่งคำขอในนาม agent ภายนอก
+  E->>DB: ตรวจ อนุมัติ งบ และ kill ชุดเดียวกัน
+  API-->>R: task (id = id ของคำขอ), working
+  R->>API: GetTask
+  API->>DB: อ่านคำขอ
+  API-->>R: completed พร้อม output ที่เก็บไว้เป็น artifact
+```
+
+ถ้ารออนุมัติหรือยังไม่รู้ผล task จะค้างเป็น `working` ไม่เคยรายงานการตัดสินที่ PostgreSQL ยังไม่ได้ตัดสิน การยกเลิกถือว่าจบก็ต่อเมื่อ
+PostgreSQL บันทึก `CANCELLED` แล้ว ส่วนการที่ EACP ส่งงานต่อให้ agent อื่น (outbound) ใช้โปรโตคอลเดียวกันในทิศกลับกัน
+ผ่าน execution worker
+
 ## ลองใช้เลย
 
 ต้องมี Docker ที่มี Compose v2, Go, Python 3, Bash (บน Windows ใช้ Git Bash), `curl` และ `jq`
@@ -289,14 +378,21 @@ audit chain: 100 entries, verified: true
 อยากดู console ให้เปิด `http://localhost:8080/ui/` แล้ว sign in ด้วย `OPERATOR_KEY` จาก `examples/.env` ใน
 [examples/](examples/README.th.md) ยังมีตัวอย่างเรียก LLM ผ่าน gateway ด้วย Anthropic SDK ตัวทางการ และตัวอย่าง Governance-as-Code
 ที่ต้องให้อีกคนอนุมัติ ส่วน demo ที่ยาวกว่านี้ เช่น worker ตายกลางทาง PDP หรือ NATS ล่ม MCP เปลี่ยนนิยาม tool เอง kill switch
-และ credential แบบ just-in-time อยู่ใน [DEMO.th.md](docs/DEMO.th.md)
+และ credential แบบ just-in-time อยู่ใน [DEMO.th.md](docs/DEMO.th.md) มีสอง demo ที่โชว์ส่วนใหม่ล่าสุดตั้งแต่ต้นจนจบบน stack แยก:
+
+```bash
+DEMO=S bash scripts/demo.sh   # Agent Studio: build, approve, run, share in the Hub, kill a run
+DEMO=I bash scripts/demo.sh   # Inbound A2A: a remote agent's action through approvals, retries and kills
+```
 
 ถ้าจะเอา EACP ไปใช้กับ agent ของตัวเอง อ่าน[คู่มือการใช้งาน](docs/USER_GUIDE.th.md) ได้เลย แบ่งตามบทบาท admin ตั้งค่าคน ระบบ agent
-policy และงบ นักพัฒนา agent ส่งคำขอและเรียก model ผู้อนุมัติโหวต operator ตัดสินผลที่ไม่แน่ชัด กด kill switch และดูแล incident
+policy และงบ นักพัฒนา agent ส่งคำขอ เรียก model และต่อ agent ภายนอกแบบ A2A พนักงานสร้าง agent ใน Agent Studio ผู้อนุมัติโหวต
+operator ตัดสินผลที่ไม่แน่ชัด กด kill switch และดูแล incident
 
-## สิบโมดูล
+## สิบเอ็ดโมดูล
 
-[master plan](docs/MASTER_PLAN.md) แบ่ง EACP เป็นสิบโมดูล แต่ละโมดูลมี ADR ของตัวเองที่บันทึกว่าตัดสินใจอะไรไว้
+[master plan](docs/MASTER_PLAN.md) แบ่ง EACP เป็นสิบโมดูล และ Agent Studio มาเป็นโมดูลที่สิบเอ็ด แต่ละโมดูลมี ADR ของตัวเอง
+ที่บันทึกว่าตัดสินใจอะไรไว้
 
 1. **Agent registry** ทะเบียนคน role agent version allowlist และ API key โดยกฎที่ต้องใช้สองคนเขียนเป็น trigger ใน PostgreSQL
    ([ADR-003](docs/adr/ADR-003-agent-registry-identity-and-capability.md))
@@ -309,7 +405,7 @@ policy และงบ นักพัฒนา agent ส่งคำขอแ�
    [ADR-012](docs/adr/ADR-012-budget-reservation.md), [ADR-019](docs/adr/ADR-019-credential-custody.md),
    [ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md))
 4. **ทะเบียน tool และ connector** HTTP connector ที่มี contract บอกว่า error แต่ละแบบแปลว่าอะไร MCP server ที่ระบบไปค้นหา tool
-   และทำ fingerprint ให้เอง และ agent แบบ A2A
+   และทำ fingerprint ให้เอง และ agent แบบ A2A ทั้งสองทิศ คือ EACP ส่งงานต่อให้ agent เหล่านั้น และ agent เหล่านั้นส่งคำขอเข้ามาได้
    ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md), [ADR-030](docs/adr/ADR-030-a2a-delegation.md))
    contract เปิดให้ agent ที่เรียก และเฉพาะ agent นั้น อ่านผลลัพธ์ของการเรียกที่สำเร็จได้ภายในเวลาที่กำหนด
    ([ADR-034](docs/adr/ADR-034-result-channel.md))
@@ -327,8 +423,10 @@ policy และงบ นักพัฒนา agent ส่งคำขอแ�
    ([ADR-026](docs/adr/ADR-026-governance-as-code.md))
 10. **ศูนย์ดูแลความปลอดภัยของ agent (SOC)** incident สรุปภาพรวม SOC และ operator console
     ([ADR-027](docs/adr/ADR-027-incidents-and-agent-soc.md), [ADR-028](docs/adr/ADR-028-operator-console.md))
-
-11. **Agent Studio** ฟอร์ม EN/TH ขั้น model ที่กำกับ branch แบบมีชนิดแม่นยำ template สามแบบ preview ที่อนุมัติ Hub และการหยุด run ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.4) PostgreSQL ถือ capability/progress และ compose/Kubernetes ใช้ demo เต็มเดียวกัน
+11. **Agent Studio** ฟอร์มและ builder แบบ node ที่ต่อกัน ใช้ได้ทั้งไทยและอังกฤษ มี template สามแบบ ขั้น model และ branch
+    ที่เทียบค่าแบบมีชนิดตรงตัว preview ของ version ที่อนุมัติแล้ว agent runtime กับ key ที่ derive ให้ Hub และ kill scope `run`
+    PostgreSQL คำนวณ capability ทุกอย่างและถือความคืบหน้าของแต่ละ run
+    ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md), [ADR-016](docs/adr/ADR-016-distributed-kill-switch.md))
 
 ความสามารถทั้งหมดแยกทีละ phase พร้อม test และ API route อยู่ใน [FEATURES.th.md](docs/FEATURES.th.md)
 
@@ -357,7 +455,10 @@ policy และงบ นักพัฒนา agent ส่งคำขอแ�
 
 ## ตอนนี้อยู่ตรงไหน และอะไรที่ยังไม่มี
 
-EACP ยังพัฒนาอยู่ ทุกอย่างที่เล่ามาข้างบนมีอยู่จริงและผ่าน test แล้ว แต่ยังไม่เคยออก release [Inbound A2A](docs/USER_GUIDE.th.md#inbound-a2a) รับคำขอที่มีโครงสร้างด้วย EACP agent key ที่อนุมัติแล้วได้ โดย route ที่เปิดใช้งานตามต้องการใช้ action engine เดิมร่วมกัน
+EACP ยังพัฒนาอยู่ ทุกอย่างที่เล่ามาข้างบนมีอยู่จริงและผ่าน test แล้ว แต่ยังไม่เคยออก release phase ล่าสุดเพิ่ม
+builder เต็มรูปแบบของ Studio แบบ node ที่ต่อกัน (Phase 27c) kill scope `run` (Phase 28) และ
+[inbound A2A](docs/USER_GUIDE.th.md#รับคำขอจาก-agent-ภายนอกผ่าน-a2a) (Phase 29) demo ของ Studio (ซึ่งรวมการ kill run)
+และ demo ของ inbound A2A ผ่านทั้งบน compose และบน Kubernetes cluster จริง
 
 ส่วนที่ยังไม่ได้ทำ:
 

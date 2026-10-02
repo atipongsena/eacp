@@ -263,15 +263,15 @@ immutable mode and private tool samples, so PostgreSQL refuses tool actions. Loc
 Optional Helm gateway packaging preserves the runtime's API/gateway boundary and provider credential custody.
 See [ADR-033 Rev 1.4](adr/ADR-033-agent-studio-and-runtime-credentials.md) and [ADR-031](adr/ADR-031-llm-gateway.md).
 
+## Inbound A2A
+
+Phase 29's optional `/a2a` transport and static Agent Card live in controlplane-api ([ADR-030 Rev 1.1](adr/ADR-030-a2a-delegation.md)). Existing approved agent authentication binds all calls. `SendMessage` calls the shared action engine; the action UUID is the task ID, and the existing idempotency constraint handles replay. Get/Cancel use ordinary agent ownership and core transitions. No new table, task store, lease, database role, service or network boundary is introduced.
+
+PostgreSQL retains capability, lifecycle, approval, budget, kill and dispatch authority. Uncertainty stays nonterminal, and output is read only through ADR-034. Discovery contains no tenant capability catalogue; request history and private content never become task metadata or ingress logs. Compose defaults off; Helm's `api.a2aPublicURL` is opt-in and changes no network policy. The isolated development demos explicitly enable it.
+
 ## Where to read next
 
 - [ADR index](adr/README.md): the normative decisions.
 - [Threat model](security/THREAT_MODEL.md): assets, boundaries and threats.
 - [INVARIANTS.md](INVARIANTS.md): each guarantee and the test that enforces it.
 - [MASTER_PLAN.md](MASTER_PLAN.md): scope, slices and phases.
-
-## Inbound A2A
-
-Phase 29's optional `/a2a` transport and static Agent Card live in controlplane-api ([ADR-030 Rev 1.1](adr/ADR-030-a2a-delegation.md)). Existing approved agent authentication binds all calls. `SendMessage` calls the shared action engine; the action UUID is the task ID, and the existing idempotency constraint handles replay. Get/Cancel use ordinary agent ownership and core transitions. No new table, task store, lease, database role, service or network boundary is introduced.
-
-PostgreSQL retains capability, lifecycle, approval, budget, kill and dispatch authority. Uncertainty stays nonterminal, and output is read only through ADR-034. Discovery contains no tenant capability catalogue; request history and private content never become task metadata or ingress logs. Compose defaults off; Helm's `api.a2aPublicURL` is opt-in and changes no network policy. The isolated development demos explicitly enable it.

@@ -12,6 +12,15 @@ another agent, call a paid model), the request goes through EACP. EACP checks wh
 asks the policy, waits for the people who must approve, executes the action exactly as approved, and keeps evidence
 of every step in PostgreSQL.
 
+Agents reach EACP in four ways, and every one ends in the same governed action path:
+
+| Way in | Who uses it | Read |
+|---|---|---|
+| The action API (`POST /v1/actions`) | Agents written in any language or framework | [Send an action](docs/USER_GUIDE.md#send-an-action) |
+| The LLM gateway | Agents calling a model with the Anthropic or OpenAI SDK | [Call a model](docs/USER_GUIDE.md#call-a-model-through-the-gateway) |
+| Agent Studio (`/studio/`) | Employees building a small agent for their team, without code | [Agent Studio](#agent-studio-agents-without-code) |
+| Inbound A2A (`/a2a`, opt-in) | Remote agents that speak the A2A 1.0 protocol | [Inbound A2A](#inbound-a2a-other-agents-ask-eacp) |
+
 ## What EACP is and the problem it solves
 
 Giving an AI agent access to enterprise systems goes wrong in ways ordinary API gateways were not built for:
@@ -76,10 +85,12 @@ each part holds.
 flowchart LR
   subgraph agents["Where agents run"]
     agent["AI agent<br/>(any framework)<br/>holds: its own EACP key"]
+    runtime["Agent runtime<br/>runs Studio agents<br/>holds: derived agent keys"]
+    remote["Remote A2A agent<br/>holds: its own EACP key"]
   end
-  people["People<br/>admins, approvers, operators"]
+  people["People<br/>console and Studio"]
   subgraph eacp["EACP"]
-    api["Control plane API<br/>and console"]
+    api["Control plane API<br/>console, Studio, /a2a"]
     gateway["LLM gateway<br/>holds: model provider keys"]
     pdp["Policy decision point<br/>(AGT sidecar)"]
     pg[("PostgreSQL<br/>decides and records")]
@@ -92,6 +103,9 @@ flowchart LR
   llm["Model providers"]
   agent -->|"its own EACP key"| api
   agent -->|"its own EACP key"| gateway
+  runtime -->|"the Studio agent's key"| api
+  runtime -->|"the Studio agent's key"| gateway
+  remote -->|"A2A 1.0, its own EACP key"| api
   people --> api
   api --> pg
   api -->|"mTLS"| pdp
@@ -103,9 +117,13 @@ flowchart LR
   gateway --->|"provider keys only here"| llm
 ```
 
-- **Control plane API** ([`cmd/controlplane-api`](cmd/controlplane-api)) serves the `/v1` API and the operator
-  console. It authenticates agents and people, runs governance and approvals, and releases actions. Its background
-  loops sweep expired work, relay signals and open incidents.
+- **Control plane API** ([`cmd/controlplane-api`](cmd/controlplane-api)) serves the `/v1` API, the operator
+  console at `/ui/`, Agent Studio at `/studio/` and, when enabled, the inbound A2A endpoint at `/a2a`. It
+  authenticates agents and people, runs governance and approvals, and releases actions. Its background loops sweep
+  expired work, relay signals and open incidents.
+- **Agent runtime** ([`cmd/agent-runtime`](cmd/agent-runtime)) runs the agents people build in Agent Studio. It is
+  an ordinary API client: no database, no system credential, no model provider key. It derives each approved agent's
+  key from a master secret, holds it in memory only, and sends every step through the action API or the LLM gateway.
 - **Execution worker** ([`cmd/execution-worker`](cmd/execution-worker)) is the only process that holds connector
   credentials. It claims released actions under a fenced lease, records a dispatch intent before every call, calls
   the target, and reconciles outcomes it could not observe.
@@ -258,6 +276,79 @@ affected if it misbehaves. Stale or unknown evidence widens the answer rather th
 Spend today and this month by unit, the top agents, hard budget blocks and open alerts. Costs are computed in
 PostgreSQL from a price card; cost alerts observe and never block.
 
+## Agent Studio: agents without code
+
+Agent Studio at `/studio/` lets an employee build a small agent for their team in a form, in English or Thai, without
+writing code and without becoming a new authority ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md)).
+A Studio agent is an ordinary registry agent: PostgreSQL derives exactly which tools and models it may use from its
+definition, a second person approves it, and every step it takes is an ordinary action or a metered model call.
+
+```mermaid
+flowchart LR
+  author["Author<br/>saves a version"] --> approve["Registry approver<br/>(not the author)<br/>approves its tools"]
+  approve --> propose["Agent runtime<br/>proposes the agent's key"]
+  propose --> key["Registry approver<br/>approves the key"]
+  key --> ready["Ready"]
+  ready --> run["A run<br/>by the owner or anyone<br/>its Hub listing reaches"]
+  run --> steps["Each step:<br/>an action through the policy,<br/>or a call through the LLM gateway"]
+  steps --> answer["The answer<br/>for the requester only,<br/>kept one hour"]
+  ready -.-> hub["Hub listing<br/>approved by a department lead<br/>or for the whole organisation"]
+  hub -.-> run
+```
+
+The full builder draws an agent as a graph of connected nodes: tool calls, model steps with a closed JSON output
+schema, exact typed branches and answers. A model only classifies; it never chooses a branch or a tool.
+
+```mermaid
+flowchart LR
+  input(["Input<br/>employee_id"]) --> lookup["Tool call<br/>hr-mcp.get_leave_balance"]
+  lookup --> classify["Model step<br/>returns {eligible: boolean}"]
+  classify --> choose{"Branch<br/>eligible eq true"}
+  choose -->|"True"| yes(["Answer: eligible,<br/>check HR policy"])
+  choose -->|"False"| no(["Answer: ask HR<br/>to check"])
+```
+
+![Agent Studio: model and branch steps in the full builder](docs/images/studio-builder.png)
+
+When the agent is ready, its page shows who acted at each stage and a form to run it. A run shows each step's action
+and the answer, which only the person who ran it can read.
+
+![Agent Studio: a run and its answer](docs/images/studio-run.png)
+
+The Hub shares an agent with a department or the whole organisation. It grants nothing else: a listing is approved by
+someone other than its owner, and everyone runs the agent as themselves, under the same policy, approvals, budgets
+and kill switches. Operators can stop one run with the `run` kill scope.
+
+![Agent Studio: the Hub](docs/images/studio-hub.png)
+
+## Inbound A2A: other agents ask EACP
+
+A remote agent that speaks [A2A 1.0](https://a2a-protocol.org/) can send EACP a structured action over JSON-RPC
+([ADR-030](docs/adr/ADR-030-a2a-delegation.md) Rev 1.1). The endpoint is off unless an administrator sets
+`EACP_A2A_PUBLIC_URL`. The remote agent is registered as an ordinary EACP agent with its own approved key and
+allowlist; the A2A task is a view of an ordinary action, so nothing new decides.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant R as Remote A2A agent
+  participant API as Control plane API (/a2a)
+  participant E as Action engine
+  participant DB as PostgreSQL
+  R->>API: GET /.well-known/agent-card.json
+  R->>API: SendMessage (one JSON action, its EACP key)
+  API->>E: submit, as the remote agent
+  E->>DB: the same checks, approvals, budget and kills
+  API-->>R: task (id = the action id), working
+  R->>API: GetTask
+  API->>DB: read the action
+  API-->>R: completed, with the retained output as an artifact
+```
+
+An approval or an unknown outcome keeps the task `working`; it never reports a decision PostgreSQL has not made. A
+cancel is final only once PostgreSQL records `CANCELLED`. EACP's own outbound delegation to other agents uses the
+same protocol in the other direction, from the execution worker.
+
 ## Quick start
 
 You need Docker with Compose v2, Go, Python 3, Bash (Git Bash on Windows), `curl` and `jq`.
@@ -301,15 +392,23 @@ audit chain: 100 entries, verified: true
 To look around in the console, open `http://localhost:8080/ui/` and sign in with the `OPERATOR_KEY` from
 `examples/.env`. [examples/](examples/README.md) also has an LLM call through the gateway with the official Anthropic
 SDK, and a Governance-as-Code bundle approved by a second person. [DEMO.md](docs/DEMO.md) describes the longer demos:
-killed workers, PDP and NATS outages, MCP drift, kill switches and just-in-time credentials.
+killed workers, PDP and NATS outages, MCP drift, kill switches and just-in-time credentials. Two of them show the
+newest parts end to end on an isolated stack:
+
+```bash
+DEMO=S bash scripts/demo.sh   # Agent Studio: build, approve, run, share in the Hub, kill a run
+DEMO=I bash scripts/demo.sh   # Inbound A2A: a remote agent's action through approvals, retries and kills
+```
 
 To use EACP for your own agents, read the [user guide](docs/USER_GUIDE.md). It is organised by role: administrators
-set up people, systems, agents, policies and budgets; agent developers send actions and call models; approvers vote;
-operators settle unknown outcomes, stop things with the kill switch and work incidents.
+set up people, systems, agents, policies and budgets; agent developers send actions, call models and connect remote
+A2A agents; employees build agents in Agent Studio; approvers vote; operators settle unknown outcomes, stop things
+with the kill switch and work incidents.
 
-## The ten modules
+## The eleven modules
 
-The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is built and decided in its ADRs.
+The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules, and Agent Studio became the eleventh. Each is
+built and decided in its ADRs.
 
 1. **Agent registry.** Principals, roles, agents, versions, allowlists and API keys, with two-person rules enforced
    by PostgreSQL triggers ([ADR-003](docs/adr/ADR-003-agent-registry-identity-and-capability.md)).
@@ -322,8 +421,8 @@ The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is bu
    [ADR-012](docs/adr/ADR-012-budget-reservation.md), [ADR-019](docs/adr/ADR-019-credential-custody.md),
    [ADR-022](docs/adr/ADR-022-backpressure-bulkheads-circuit-breakers-retry-budgets.md)).
 4. **Tool and connector registry.** HTTP connectors with contracts that state what a failure means, MCP servers whose
-   tools are discovered and fingerprinted, and A2A agents
-   ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md), [ADR-030](docs/adr/ADR-030-a2a-delegation.md)).
+   tools are discovered and fingerprinted, and A2A agents in both directions: EACP delegates to them, and they can
+   send EACP actions ([ADR-023](docs/adr/ADR-023-mcp-registry-and-tool-fingerprint.md), [ADR-030](docs/adr/ADR-030-a2a-delegation.md)).
    A contract may let the calling agent, and no one else, read a successful call's output for a limited time
    ([ADR-034](docs/adr/ADR-034-result-channel.md)).
 5. **Dependency graph.** Recorded dependencies and a conservative blast radius
@@ -340,8 +439,10 @@ The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is bu
    ([ADR-026](docs/adr/ADR-026-governance-as-code.md)).
 10. **Agent security operations center.** Incidents, the SOC summary and the operator console
     ([ADR-027](docs/adr/ADR-027-incidents-and-agent-soc.md), [ADR-028](docs/adr/ADR-028-operator-console.md)).
-
-11. **Agent Studio.** English/Thai form, governed model steps, exact typed branches, three templates, approved previews, the Hub and run containment ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md) Rev 1.4). PostgreSQL owns capability/progress; compose and Kubernetes share the full demo.
+11. **Agent Studio.** A form and a connected-node builder in English and Thai, three templates, model steps and exact
+    typed branches, approved-version previews, the agent runtime with derived keys, the Hub and the `run` kill scope.
+    PostgreSQL derives every capability and owns each run's progress
+    ([ADR-033](docs/adr/ADR-033-agent-studio-and-runtime-credentials.md), [ADR-016](docs/adr/ADR-016-distributed-kill-switch.md)).
 
 [FEATURES.md](docs/FEATURES.md) lists every capability phase by phase, with its tests and API routes.
 
@@ -373,7 +474,9 @@ The [master plan](docs/MASTER_PLAN.md) divides EACP into ten modules. Each is bu
 ## Status and what is not built yet
 
 EACP is under active development. Everything described above exists and is tested, and a release has not been cut
-yet. [Inbound A2A](docs/USER_GUIDE.md#inbound-a2a) now accepts a structured governed action using an approved EACP agent key; the optional routes share the ordinary action engine.
+yet. The most recent phases added the full Studio builder with connected nodes (Phase 27c), the `run` kill scope
+(Phase 28) and [inbound A2A](docs/USER_GUIDE.md#receive-actions-from-a-remote-a2a-agent) (Phase 29). The Studio demo,
+which includes the run kill, and the inbound A2A demo both pass on compose and on a live Kubernetes cluster.
 
 Not built yet:
 

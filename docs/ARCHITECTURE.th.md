@@ -245,15 +245,15 @@ runtime ที่ถือ lease อยู่ ล้างเมื่อจบ�
 ในหน้าเว็บไม่เรียกอะไร Helm gateway ที่เปิดตามต้องการรักษาขอบเขต API/gateway ของ runtime และการถือ credential
 provider ดู [ADR-033 Rev 1.4](adr/ADR-033-agent-studio-and-runtime-credentials.md) และ [ADR-031](adr/ADR-031-llm-gateway.md)
 
+## Inbound A2A
+
+transport `/a2a` และ static Agent Card แบบเปิดเลือกใช้ของ Phase 29 อยู่ใน controlplane-api ([ADR-030 Rev 1.1](adr/ADR-030-a2a-delegation.md)) ทุก call ผูกกับ agent authentication ที่อนุมัติแล้ว `SendMessage` เรียก action engine ร่วม; action UUID เป็น task ID และ constraint idempotency เดิมจัดการ replay Get/Cancel ใช้ ownership และ core transitions ปกติ ไม่เพิ่มตาราง task store, lease, database role, service หรือ network boundary
+
+PostgreSQL ยังคงเป็น authority ของ capability, lifecycle, approval, budget, kill และ dispatch ผลที่ไม่แน่ชัดยังไม่เป็น terminal และอ่าน output ผ่าน ADR-034 เท่านั้น discovery ไม่มี capability catalogue ของ tenant; request history และ private content ไม่อยู่ใน task metadata หรือ ingress logs Compose ปิดโดย default; `api.a2aPublicURL` ของ Helm เปิดแบบ opt-in และไม่เปลี่ยน network policy demo development แยกเปิดใช้งานอย่างชัดเจน
+
 ## อ่านต่อ
 
 - [ดัชนี ADR](adr/README.md): การตัดสินใจเชิงบรรทัดฐาน
 - [Threat model](security/THREAT_MODEL.th.md): ทรัพย์สิน ขอบเขต และภัยคุกคาม
 - [INVARIANTS.md](INVARIANTS.md): การรับประกันแต่ละข้อและ test ที่บังคับใช้
 - [MASTER_PLAN.md](MASTER_PLAN.md): ขอบเขต slice และ phase
-
-## Inbound A2A
-
-transport `/a2a` และ static Agent Card แบบเปิดเลือกใช้ของ Phase 29 อยู่ใน controlplane-api ([ADR-030 Rev 1.1](adr/ADR-030-a2a-delegation.md)) ทุก call ผูกกับ agent authentication ที่อนุมัติแล้ว `SendMessage` เรียก action engine ร่วม; action UUID เป็น task ID และ constraint idempotency เดิมจัดการ replay Get/Cancel ใช้ ownership และ core transitions ปกติ ไม่เพิ่มตาราง task store, lease, database role, service หรือ network boundary
-
-PostgreSQL ยังคงเป็น authority ของ capability, lifecycle, approval, budget, kill และ dispatch ผลที่ไม่แน่ชัดยังไม่เป็น terminal และอ่าน output ผ่าน ADR-034 เท่านั้น discovery ไม่มี capability catalogue ของ tenant; request history และ private content ไม่อยู่ใน task metadata หรือ ingress logs Compose ปิดโดย default; `api.a2aPublicURL` ของ Helm เปิดแบบ opt-in และไม่เปลี่ยน network policy demo development แยกเปิดใช้งานอย่างชัดเจน

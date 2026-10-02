@@ -7,7 +7,7 @@
 | คุณคือ | งานที่ทำ | อ่านส่วนนี้ |
 |---|---|---|
 | ผู้ดูแลระบบ หรือทีม platform | ตั้งค่าคน ระบบ agent policy และงบ | [สำหรับผู้ดูแลระบบ](#สำหรับผู้ดูแลระบบ) |
-| นักพัฒนา agent | ให้ agent ส่งคำขอและเรียกใช้โมเดล | [สำหรับนักพัฒนา-agent](#สำหรับนักพัฒนา-agent) |
+| นักพัฒนา agent | ให้ agent ส่งคำขอ เรียกใช้โมเดล และรับคำขอจาก agent ภายนอกแบบ A2A | [สำหรับนักพัฒนา-agent](#สำหรับนักพัฒนา-agent) |
 | พนักงานที่สร้าง agent ให้ทีม | บันทึก ขออนุมัติ และรัน agent ของ Agent Studio | [สำหรับพนักงาน: Agent Studio](#สำหรับพนักงาน-agent-studio) |
 | ผู้อนุมัติ | โหวตคำขอที่ต้องให้คนตัดสิน | [สำหรับผู้อนุมัติ](#สำหรับผู้อนุมัติ) |
 | operator หรือคนเข้าเวร | ปิดเรื่องที่ไม่รู้ผล หยุดสิ่งที่ผิดปกติ และดูแล incident | [สำหรับ-operator](#สำหรับ-operator) |
@@ -58,7 +58,7 @@ flowchart LR
 
 ### ใครทำอะไร
 
-EACP มีหกบทบาท คนหนึ่งถือได้หลายบทบาท แต่หลายขั้นตอนต้องใช้**คนสองคนที่ไม่ใช่คนเดียวกัน**
+EACP มีแปดบทบาท คนหนึ่งถือได้หลายบทบาท แต่หลายขั้นตอนต้องใช้**คนสองคนที่ไม่ใช่คนเดียวกัน**
 จะได้ไม่มีใครให้สิทธิ์ตัวเอง หรืออนุมัติงานที่ตัวเองทำได้
 
 | บทบาท | ทำอะไรได้ |
@@ -69,6 +69,11 @@ EACP มีหกบทบาท คนหนึ่งถือได้หล�
 | `operator` | ดู action และ evidence ปิดเรื่องที่ไม่รู้ผล ใช้ kill switch เปิดปิด circuit และดูแล incident |
 | `approver` | โหวตคำขอที่ policy ส่งมาให้คนตัดสิน |
 | `auditor` | ดู action และ evidence และตรวจ audit chain |
+| `studio_author` | สร้าง บันทึก และรัน agent ใน Agent Studio และเสนอ agent เข้า Hub |
+| `studio_runtime` | ถือโดย service account ของ agent runtime เพียงบทบาทเดียว ใช้เสนอ key ให้ agent ของ Studio ที่อนุมัติแล้ว |
+
+หัวหน้าแผนกไม่ใช่บทบาท ผู้ดูแลระบบเป็นคนกำหนดว่าใครเป็นหัวหน้าตอนเพิ่มคนนั้นเข้ากลุ่มของแผนก และหัวหน้าเป็นคนเผยแพร่ agent
+ของแผนกใน Hub
 
 กฎสองคนที่จะเจอบ่อย
 
@@ -83,6 +88,7 @@ EACP มีหกบทบาท คนหนึ่งถือได้หล�
 | ยกเลิก kill switch | operator อีกคน |
 | สั่งลองใหม่กับ action ที่ไม่รู้ผล | operator อีกคนยืนยัน |
 | ใช้ change set ของ Governance-as-Code | อีกคนอนุมัติ |
+| อนุมัติ agent ของ Studio หรือเผยแพร่ใน Hub | คนที่ไม่ใช่ผู้สร้างหรือเจ้าของ |
 
 กฎพวกนี้บังคับอยู่ในฐานข้อมูล สคริปต์หรือการเรียก API ตรงๆ ก็ข้ามไม่ได้
 
@@ -398,6 +404,62 @@ gateway รองรับ Anthropic Messages API (`/v1/messages`) และ Ope
 kill switch และงบ ถ้าถูกปฏิเสธจะได้ 403 และคำขอไม่ถึงผู้ให้บริการเลย gateway ไม่เก็บ prompt หรือคำตอบไว้
 ลองดูตั้งแต่ต้นจนจบได้ใน[ตัวอย่างที่ 02](../examples/02-llm-gateway/README.th.md)
 
+### รับคำขอจาก agent ภายนอกผ่าน A2A
+
+agent ภายนอกที่พูด A2A 1.0 ส่งคำขอมาให้ EACP แทนการเรียก `POST /v1/actions` ได้ แต่มันก็ยังเป็น agent ของ EACP
+ต้องผ่านการตรวจแบบเดียวกัน policy การอนุมัติ และงบชุดเดียวกัน และมี key ของตัวเอง
+
+1. ผู้ดูแลเปิด endpoint ด้วย `EACP_A2A_PUBLIC_URL` ซึ่งต้องเป็น HTTPS URL ที่ลงท้ายด้วย `/a2a` (HTTP ธรรมดาใช้ได้เฉพาะ
+   development และ test) ถ้าเว้นว่าง (ค่าเริ่มต้น) จะปิดทั้ง card และ endpoint
+2. ลงทะเบียน agent ภายนอกเหมือน agent ทั่วไป มี version ที่ active, allowlist และ key ที่อนุมัติแล้ว
+   ([ลงทะเบียน agent](#ลงทะเบียน-agent)) key เป็นตัวกำหนด tenant และ agent ส่วน key ของคนใช้ที่นี่ไม่ได้
+3. agent ภายนอกอ่าน card ที่ `/.well-known/agent-card.json` แล้วส่ง `SendMessage` ที่มี JSON data part เดียว
+   ซึ่งเป็นคำขอ ไม่ใช่ข้อความแชต
+
+บันทึกคำขอเป็น `request.json` โดยใช้ subject และ tool ที่อนุมัติไว้ใน registry ของคุณ:
+
+```json
+{
+  "jsonrpc": "2.0", "id": "rpc-1", "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "delegation-1", "role": "ROLE_USER",
+      "parts": [{"mediaType": "application/json", "data": {
+        "subject": "requester@example.test", "operation": "purchase",
+        "target": "erp", "tool": "erp.create_po", "tool_schema_version": "1",
+        "resource": "po", "payload": {"amount": 100, "currency": "THB"}
+      }}]
+    },
+    "configuration": {"returnImmediately": true}
+  }
+}
+```
+
+```bash
+curl -sS "$EACP_API_URL/.well-known/agent-card.json"
+curl -sS "$EACP_API_URL/a2a" -H "Authorization: Bearer $AGENT_KEY" \
+  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' --data-binary @request.json
+```
+
+คำตอบคือ `result.task` ซึ่ง `id` และ `contextId` เท่ากับ id ของคำขอ ติดตามด้วย `GetTask` และ `params: {"id": "<task id>"}`
+และหยุดด้วย `CancelTask` ที่ใช้ params เดียวกัน ส่ง `A2A-Version: 1.0` ทุกครั้ง `messageId` เดิมกับเนื้อหาเดิมจะได้คำขอเดิม
+เหมือน `Idempotency-Key` ถ้าเนื้อหาเปลี่ยนแต่ใช้ `messageId` เดิมจะ conflict คำขอมีอายุหนึ่งชั่วโมงนับจากการส่งครั้งแรก
+และการส่งซ้ำไม่ได้ต่ออายุให้
+
+| สถานะของ task | สถานะของคำขอ |
+|---|---|
+| `TASK_STATE_SUBMITTED` | `RECEIVED` |
+| `TASK_STATE_WORKING` | รออนุมัติ รอคิว กำลังทำ รอลองใหม่ ไม่รู้ผล หรือรอ operator |
+| `TASK_STATE_COMPLETED` | `SUCCEEDED` ถ้ามี output ที่เก็บไว้ จะอยู่ใน `artifacts` ตราบที่ agent ยังมีสิทธิ์อ่าน |
+| `TASK_STATE_REJECTED` | `DENIED` |
+| `TASK_STATE_FAILED` | `FAILED` หรือ `EXPIRED` |
+| `TASK_STATE_CANCELED` | `CANCELLED` |
+
+ถ้ารออนุมัติหรือไม่รู้ผล task จะยังเป็น working ให้ตัดสินด้วยเครื่องมือของผู้อนุมัติและ operator ตามปกติ kill อาจทำให้ task
+ที่รอคิวค้างเป็น working โดยไม่มีอะไรถูกส่งออกไป การยกเลิกหลังส่งงานไปแล้วอาจได้คำตอบว่ายกเลิกไม่ได้ ทั้งที่บันทึกคำขอยกเลิกไว้แล้ว
+และไม่ได้พิสูจน์ว่าไม่มีอะไรเกิดขึ้น ส่วน text part, file part, การเลือก tenant, reference, history, streaming,
+push notification และการคุยหลายรอบจะถูกปฏิเสธ `DEMO=I bash scripts/demo.sh` รันทั้งหมดนี้ด้วย A2A reference client
+
 ## สำหรับพนักงาน: Agent Studio
 
 ### สร้าง agent จาก template
@@ -443,6 +505,15 @@ output ไม่ถูกต้องทำให้ล้มเหลวแบ�
 
 หลังบันทึก หน้าของ agent จะบอกว่าตอนนี้อยู่ขั้นไหนและใครต้องทำอะไรต่อ: ผู้อนุมัติทะเบียนที่ไม่ใช่คุณอนุมัติเครื่องมือที่มันขอใช้
 agent runtime เสนอ key ของ agent ภายในหนึ่งนาที และผู้อนุมัติทะเบียนอนุมัติ key นั้น จากนั้นมันจะพร้อมและแสดงฟอร์มให้กรอกข้อมูล
+
+```mermaid
+flowchart LR
+  save["คุณบันทึก<br/>version"] --> tools["ผู้อนุมัติทะเบียน<br/>อนุมัติ tool ที่ขอ"]
+  tools --> propose["agent runtime<br/>เสนอ key"]
+  propose --> key["ผู้อนุมัติทะเบียน<br/>อนุมัติ key"]
+  key --> ready["พร้อม: คุณรันได้"]
+  ready --> publish["ถ้าต้องการ: เผยแพร่<br/>ใน Hub"]
+```
 
 ![Agent Studio: agent ที่พร้อมแล้ว พร้อมขั้นตอนและฟอร์มสำหรับรัน](images/studio-agent.png)
 
@@ -628,35 +699,3 @@ soft limit กับการแจ้งเตือนมีไว้เตื
 
 ถ้าอยากรู้ว่า EACP ทำงานข้างในอย่างไร อ่าน [ARCHITECTURE.th.md](ARCHITECTURE.th.md) ถ้าอยากรู้ว่ามันป้องกันอะไร อ่าน
 [THREAT_MODEL.th.md](security/THREAT_MODEL.th.md) เหตุผลเบื้องหลังกฎแต่ละข้ออยู่ใน [docs/adr](adr/)
-
-## Inbound A2A
-
-ผู้ดูแลเปิด `EACP_A2A_PUBLIC_URL` ด้วย HTTPS endpoint ที่กำหนดชัดเจนและลงท้าย `/a2a` (HTTP เฉพาะ development/test) ค่าว่างหมายถึงปิด ลงทะเบียนและอนุมัติ remote caller เป็น EACP agent ปกติที่มี key อนุมัติแล้ว version active และ allowlist ไม่สร้างระบบ trust สำหรับ authentication ใหม่ key เป็นตัวกำหนด tenant และ agent; principal key ใช้ interface นี้ไม่ได้
-
-บันทึก structured request นี้เป็น `request.json` แล้วแทน subject/tool ด้วยค่าที่ได้รับอนุมัติใน registry JSON data part หนึ่งรายการคือ action request ไม่ใช่ chat prompt อายุ action คงที่หนึ่งชั่วโมง เก็บ agent key ที่ผู้ถือสร้างเองใน memory หรือไฟล์ key ของตัวอย่างที่ git ignore; ห้ามพิมพ์ key
-```json
-{
-  "jsonrpc": "2.0", "id": "rpc-1", "method": "SendMessage",
-  "params": {
-    "message": {
-      "messageId": "delegation-1", "role": "ROLE_USER",
-      "parts": [{"mediaType": "application/json", "data": {
-        "subject": "requester@example.test", "operation": "purchase",
-        "target": "erp", "tool": "erp.create_po", "tool_schema_version": "1",
-        "resource": "po", "payload": {"amount": 100, "currency": "THB"}
-      }}]
-    },
-    "configuration": {"returnImmediately": true}
-  }
-}
-```
-
-```bash
-curl -sS "$API/.well-known/agent-card.json"
-curl -sS "$API/a2a" -H "Authorization: Bearer $AGENT_KEY" \
-  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' --data-binary @request.json
-```
-
-คำตอบเป็น `result.task` โดย `id` และ `contextId` ตรงกับ action UUID poll ด้วย `GetTask` และ `params: {"id": "<task UUID>"}`; `CancelTask` ใช้ params เดียวกัน ส่ง `A2A-Version: 1.0` ทุกครั้ง `messageId` และ action content เดิมใช้ action เดิม แต่ content/version เปลี่ยนจะ conflict deadline เดิมไม่เปลี่ยน Get/Cancel คืน task ใต้ `result` โดยตรง ไม่มี history หรือ content ที่ส่งมา output ที่เก็บของงานสำเร็จอยู่ใน `artifacts` เฉพาะขณะที่ calling agent ยังอ่านได้ตาม ADR-034 งานสำเร็จที่ไม่เก็บ output จะไม่มี artifact
-
-Approval และผลที่ไม่แน่ชัดยังเป็น working Kill อาจคง queued task เป็น working แต่กัน dispatch cancellation หลัง dispatch อาจตอบ task-not-cancelable แม้บันทึก cancel request แล้ว จึงไม่พิสูจน์ว่าไม่มี effect ใช้ approval/operator API เดิมตัดสินใจและ resolve ไม่รับ text/file parts, tenant selectors, references, history ที่ไม่ใช่ศูนย์, streaming, push หรือ multi-turn conversations
